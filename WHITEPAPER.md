@@ -1593,10 +1593,14 @@ The opportunity is vast: an $80B+ market for CDN, edge security, and serverless 
 ---
 
 **Document Version**: 1.0
+
 **Last Updated**: November 2025
-**Contact**: info@aegis.network
-**Website**: https://aegis.network (placeholder)
-**GitHub**: https://github.com/aegis-network (placeholder)
+
+**Contact**: dimitrymd@gmail.com
+
+**Website**: COMING SOON
+
+**GitHub**: https://github.com/FunwayHQ/project-aegis
 
 **Disclaimer**: This whitepaper is for informational purposes only. It does not constitute investment advice, a prospectus, or an offer to sell securities. $AEGIS tokens are utility tokens for network services. Cryptocurrency investments are highly speculative and carry risk of total loss. Consult legal and financial advisors before participating. Regulatory landscape is evolving; token mechanics may change to maintain compliance.
 
