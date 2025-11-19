@@ -4,9 +4,11 @@ import { Staking } from "../target/types/staking";
 import { expect } from "chai";
 import {
   createMint,
-  createAccount,
   mintTo,
   getAccount,
+  TOKEN_PROGRAM_ID,
+  ACCOUNT_SIZE,
+  createInitializeAccountInstruction,
 } from "@solana/spl-token";
 
 describe("staking", () => {
@@ -42,17 +44,40 @@ describe("staking", () => {
     await provider.sendAndConfirm(tx);
   }
 
-  // Helper to create token account
+  // Helper to create token account manually
+  async function createTokenAccount(
+    owner: anchor.web3.PublicKey,
+    payer: anchor.web3.Keypair
+  ): Promise<anchor.web3.PublicKey> {
+    const tokenAccount = anchor.web3.Keypair.generate();
+
+    const lamports = await provider.connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE);
+
+    const transaction = new anchor.web3.Transaction().add(
+      anchor.web3.SystemProgram.createAccount({
+        fromPubkey: payer.publicKey,
+        newAccountPubkey: tokenAccount.publicKey,
+        space: ACCOUNT_SIZE,
+        lamports,
+        programId: TOKEN_PROGRAM_ID,
+      }),
+      createInitializeAccountInstruction(
+        tokenAccount.publicKey,
+        mint,
+        owner,
+        TOKEN_PROGRAM_ID
+      )
+    );
+
+    await provider.sendAndConfirm(transaction, [payer, tokenAccount]);
+    return tokenAccount.publicKey;
+  }
+
+  // Helper to create token account for operator
   async function createTokenAccountForOperator(
     operator: anchor.web3.Keypair
   ): Promise<anchor.web3.PublicKey> {
-    const tokenAccount = await createAccount(
-      provider.connection,
-      operator,
-      mint,
-      operator.publicKey
-    );
-    return tokenAccount;
+    return createTokenAccount(operator.publicKey, operator);
   }
 
   before(async () => {
@@ -66,34 +91,16 @@ describe("staking", () => {
       9 // 9 decimals
     );
 
-    // Create a temporary keypair for stake vault (not PDA-owned yet)
-    const stakeVaultKeypair = anchor.web3.Keypair.generate();
-    await fundAccount(stakeVaultKeypair.publicKey);
-
-    stakeVault = await createAccount(
-      provider.connection,
-      stakeVaultKeypair,
-      mint,
+    // Create stake vault token account
+    stakeVault = await createTokenAccount(
       provider.wallet.publicKey,
-      undefined,
-      undefined,
-      undefined,
-      anchor.utils.token.TOKEN_PROGRAM_ID
+      provider.wallet.payer
     );
 
-    // Create a temporary keypair for treasury
-    const treasuryKeypair = anchor.web3.Keypair.generate();
-    await fundAccount(treasuryKeypair.publicKey);
-
-    treasury = await createAccount(
-      provider.connection,
-      treasuryKeypair,
-      mint,
+    // Create treasury token account
+    treasury = await createTokenAccount(
       provider.wallet.publicKey,
-      undefined,
-      undefined,
-      undefined,
-      anchor.utils.token.TOKEN_PROGRAM_ID
+      provider.wallet.payer
     );
 
     console.log("Mint:", mint.toString());
