@@ -261,18 +261,18 @@ We run a bug bounty program for responsible disclosure:
 - **High**: Up to 50,000 $AEGIS
 - **Medium**: Up to 10,000 $AEGIS
 
-Email: security@aegis.network
+Email: dimitrymd@gmail.com
 
 ### Responsible Disclosure
-Please report security vulnerabilities privately to security@aegis.network. Do not open public issues for security concerns.
+Please report security vulnerabilities privately to dimitrymd@gmail.com. Do not open public issues for security concerns.
 
 ## Community
 
-- **Website**: [aegis.network](https://aegis.network) (placeholder)
-- **Discord**: [discord.gg/aegis](https://discord.gg/aegis) (placeholder)
-- **Twitter**: [@AegisNetwork](https://twitter.com/AegisNetwork) (placeholder)
-- **Forum**: [forum.aegis.network](https://forum.aegis.network) (placeholder)
-- **Documentation**: [docs.aegis.network](https://docs.aegis.network) (placeholder)
+- **Website**: COMING SOON
+- **Discord**: COMING SOON
+- **Twitter**: COMING SOON
+- **Forum**: COMING SOON
+- **Documentation**: COMING SOON
 
 ## License
 
