@@ -1,0 +1,14 @@
+# AEGIS Reverse Proxy Configuration
+# Sprint 3: HTTP Proxy & TLS Termination
+
+# HTTP listener address
+http_addr = "0.0.0.0:8080"
+
+# HTTPS listener address (optional - requires TLS cert/key)
+# https_addr = "0.0.0.0:8443"
+
+# Origin server to proxy requests to
+origin = "http://httpbin.org"
+
+# Enable access logging
+log_requests = true

@@ -1,22 +1,18 @@
 [toolchain]
-anchor_version = "0.32.1"
 package_manager = "yarn"
 
 [features]
 resolution = true
 skip-lint = false
 
-[programs.devnet]
-staking = "Ba5sohaR6jH1t8ukfxbW3XEcpZJaoQ446F8HmeVTjXie"
-
 [programs.localnet]
-staking = "Ba5sohaR6jH1t8ukfxbW3XEcpZJaoQ446F8HmeVTjXie"
+rewards = "3j4guuzvNESX5iMUFcfihRGsjEjKmjaEBD4p8GGxNs8c"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
+cluster = "Devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]

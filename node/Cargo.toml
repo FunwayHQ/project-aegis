@@ -6,15 +6,40 @@ authors = ["AEGIS Team"]
 description = "AEGIS decentralized edge node - Sprint 1 HTTP server proof-of-concept"
 
 [dependencies]
+# HTTP server and proxy
 tokio = { version = "1.35", features = ["full"] }
-hyper = { version = "0.14", features = ["full"] }
+hyper = { version = "0.14", features = ["full", "server", "http1", "http2", "client"] }
+hyper-rustls = { version = "0.24", features = ["http2"] }
+rustls = "0.21"
+rustls-pemfile = "1.0"
+
+# HTTP client for proxying
+reqwest = { version = "0.11", features = ["rustls-tls"] }
+
+# Configuration and serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+
+# Logging and error handling
 tracing = "0.1"
-tracing-subscriber = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 anyhow = "1.0"
+log = "0.4"
+env_logger = "0.11"
+chrono = "0.4"
+
+# TLS and async utilities
+async-trait = "0.1"
+futures = "0.3"
+
+# Note: Pingora migration pending resolution of sfv crate compatibility issues
+# pingora = "0.4"
 
 [[bin]]
 name = "aegis-node"
 path = "src/main.rs"
+
+[[bin]]
+name = "aegis-proxy"
+path = "src/main_proxy.rs"

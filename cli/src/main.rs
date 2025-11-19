@@ -2,6 +2,7 @@ mod commands;
 mod config;
 mod wallet;
 mod errors;
+mod contracts;
 
 use clap::{Parser, Subcommand};
 use colored::Colorize;

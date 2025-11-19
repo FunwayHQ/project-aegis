@@ -224,23 +224,15 @@ pub mod staking {
         );
 
         let operator = ctx.accounts.stake_account.operator;
-        let bump = ctx.accounts.stake_account.bump;
 
         // Transfer slashed tokens to treasury
-        let seeds = &[
-            b"stake",
-            operator.as_ref(),
-            &[bump],
-        ];
-        let signer = &[&seeds[..]];
-
         let cpi_accounts = Transfer {
             from: ctx.accounts.stake_vault.to_account_info(),
             to: ctx.accounts.treasury.to_account_info(),
-            authority: ctx.accounts.stake_account.to_account_info(),
+            authority: ctx.accounts.authority.to_account_info(),
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
-        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
         token::transfer(cpi_ctx, amount)?;
 
         // Update stake account

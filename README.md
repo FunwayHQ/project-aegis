@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./AEGIS-logo.svg" alt="AEGIS Logo" width="400"/>
+</p>
+
 # AEGIS - Decentralized Global Edge Network
 
 > **Building the world's most resilient, community-owned internet infrastructure**

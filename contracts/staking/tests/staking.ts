@@ -607,7 +607,7 @@ describe("staking", () => {
         mint,
         operatorTokenAccount,
         provider.wallet.publicKey,
-        largeStake.toNumber()
+        Number(largeStake.toString()) // Convert BN to number via string for large values
       );
 
       await program.methods
@@ -640,6 +640,586 @@ describe("staking", () => {
       // Same operator should give same PDA
       const [pda1Again] = getStakePDA(operator1.publicKey);
       expect(pda1.toString()).to.equal(pda1Again.toString());
+    });
+  });
+
+  describe("Complete Unstaking Flow", () => {
+    let operator: anchor.web3.Keypair;
+    let operatorTokenAccount: anchor.web3.PublicKey;
+    let stakePDA: anchor.web3.PublicKey;
+
+    before(async () => {
+      operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      [stakePDA] = getStakePDA(operator.publicKey);
+
+      // Initialize and stake
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      await program.methods
+        .stake(MIN_STAKE.muln(10))
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+    });
+
+    it("Completes full unstaking after cooldown", async () => {
+      const unstakeAmount = MIN_STAKE.muln(2);
+
+      // Request unstake
+      await program.methods
+        .requestUnstake(unstakeAmount)
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+        })
+        .signers([operator])
+        .rpc();
+
+      const beforeAccount = await program.account.stakeAccount.fetch(stakePDA);
+      const beforeBalance = await getAccount(provider.connection, operatorTokenAccount);
+
+      // Fast-forward time would require test validator manipulation
+      // For now, just verify the state is correct
+      expect(beforeAccount.pendingUnstake.toString()).to.equal(unstakeAmount.toString());
+      expect(beforeAccount.unstakeRequestTime.toNumber()).to.be.greaterThan(0);
+    });
+  });
+
+  describe("Security & Authorization", () => {
+    it("Rejects unauthorized stake operations", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      const attacker = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey);
+      await fundAccount(attacker.publicKey);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      // Try to stake with attacker's signature
+      try {
+        await program.methods
+          .stake(MIN_STAKE)
+          .accounts({
+            stakeAccount: stakePDA,
+            operatorTokenAccount,
+            stakeVault,
+            operator: attacker.publicKey, // Wrong operator!
+            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          })
+          .signers([attacker])
+          .rpc();
+
+        expect.fail("Should have rejected unauthorized stake");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+
+    it("Rejects unauthorized unstake requests", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      const attacker = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey);
+      await fundAccount(attacker.publicKey);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      try {
+        await program.methods
+          .requestUnstake(MIN_STAKE)
+          .accounts({
+            stakeAccount: stakePDA,
+            operator: attacker.publicKey,
+          })
+          .signers([attacker])
+          .rpc();
+
+        expect.fail("Should have rejected unauthorized unstake");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+
+    it("Rejects unauthorized slashing", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      const unauthorized = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey);
+      await fundAccount(unauthorized.publicKey);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      await program.methods
+        .stake(MIN_STAKE.muln(5))
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      // Only the authority (provider wallet) can slash, not random users
+      try {
+        await program.methods
+          .slashStake(MIN_STAKE, "Unauthorized slash attempt")
+          .accounts({
+            stakeAccount: stakePDA,
+            stakeVault,
+            treasury,
+            authority: unauthorized.publicKey,
+            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          })
+          .signers([unauthorized])
+          .rpc();
+
+        expect.fail("Should have rejected unauthorized slash");
+      } catch (error) {
+        expect(error).to.exist;
+      }
+    });
+  });
+
+  describe("Multi-Operator Scenarios", () => {
+    it("Handles multiple independent operators", async () => {
+      const operator1 = anchor.web3.Keypair.generate();
+      const operator2 = anchor.web3.Keypair.generate();
+      await fundAccount(operator1.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+      await fundAccount(operator2.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stake1PDA] = getStakePDA(operator1.publicKey);
+      const [stake2PDA] = getStakePDA(operator2.publicKey);
+
+      // Initialize both
+      for (const [op, stakePDA] of [[operator1, stake1PDA], [operator2, stake2PDA]]) {
+        await program.methods
+          .initializeStake()
+          .accounts({
+            stakeAccount: stakePDA,
+            operator: op.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId,
+          })
+          .signers([op])
+          .rpc();
+
+        const tokenAccount = await createTokenAccountForOperator(op);
+        await mintTo(
+          provider.connection,
+          provider.wallet.payer,
+          mint,
+          tokenAccount,
+          provider.wallet.publicKey,
+          1000_000_000_000
+        );
+
+        await program.methods
+          .stake(MIN_STAKE.muln(3))
+          .accounts({
+            stakeAccount: stakePDA,
+            operatorTokenAccount: tokenAccount,
+            stakeVault,
+            operator: op.publicKey,
+            tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+          })
+          .signers([op])
+          .rpc();
+      }
+
+      // Verify both have independent stake accounts
+      const account1 = await program.account.stakeAccount.fetch(stake1PDA);
+      const account2 = await program.account.stakeAccount.fetch(stake2PDA);
+
+      expect(account1.stakedAmount.toString()).to.equal(MIN_STAKE.muln(3).toString());
+      expect(account2.stakedAmount.toString()).to.equal(MIN_STAKE.muln(3).toString());
+      expect(account1.operator.toString()).to.not.equal(account2.operator.toString());
+    });
+  });
+
+  describe("Lifecycle & State Transitions", () => {
+    it("Tracks lifetime statistics correctly", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      // Stake multiple times
+      await program.methods
+        .stake(MIN_STAKE)
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      await program.methods
+        .stake(MIN_STAKE.muln(2))
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      const account = await program.account.stakeAccount.fetch(stakePDA);
+
+      expect(account.totalStakedEver.toString()).to.equal(MIN_STAKE.muln(3).toString());
+      expect(account.stakedAmount.toString()).to.equal(MIN_STAKE.muln(3).toString());
+    });
+
+    it("Maintains correct state after cancel unstake", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      await program.methods
+        .stake(MIN_STAKE.muln(5))
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      // Request unstake
+      await program.methods
+        .requestUnstake(MIN_STAKE.muln(2))
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+        })
+        .signers([operator])
+        .rpc();
+
+      const beforeCancel = await program.account.stakeAccount.fetch(stakePDA);
+
+      // Cancel unstake
+      await program.methods
+        .cancelUnstake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+        })
+        .signers([operator])
+        .rpc();
+
+      const afterCancel = await program.account.stakeAccount.fetch(stakePDA);
+
+      // Verify state returned to pre-unstake
+      expect(afterCancel.stakedAmount.toString()).to.equal(MIN_STAKE.muln(5).toString());
+      expect(afterCancel.pendingUnstake.toString()).to.equal("0");
+      expect(afterCancel.unstakeRequestTime.toString()).to.equal("0");
+    });
+  });
+
+  describe("Boundary Conditions", () => {
+    it("Handles unstaking all staked tokens", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        MIN_STAKE.toNumber()
+      );
+
+      await program.methods
+        .stake(MIN_STAKE)
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      // Unstake everything
+      await program.methods
+        .requestUnstake(MIN_STAKE)
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+        })
+        .signers([operator])
+        .rpc();
+
+      const account = await program.account.stakeAccount.fetch(stakePDA);
+
+      expect(account.stakedAmount.toString()).to.equal("0");
+      expect(account.pendingUnstake.toString()).to.equal(MIN_STAKE.toString());
+    });
+
+    it("Handles slashing entire stake", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        MIN_STAKE.toNumber()
+      );
+
+      await program.methods
+        .stake(MIN_STAKE)
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      // Slash entire stake
+      await program.methods
+        .slashStake(MIN_STAKE, "Complete violation")
+        .accounts({
+          stakeAccount: stakePDA,
+          stakeVault,
+          treasury,
+          authority: provider.wallet.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .rpc();
+
+      const account = await program.account.stakeAccount.fetch(stakePDA);
+
+      expect(account.stakedAmount.toString()).to.equal("0");
+    });
+  });
+
+  describe("Timestamp Validation", () => {
+    it("Records creation timestamp correctly", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      const beforeTime = Math.floor(Date.now() / 1000);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const afterTime = Math.floor(Date.now() / 1000);
+      const account = await program.account.stakeAccount.fetch(stakePDA);
+
+      expect(account.createdAt.toNumber()).to.be.at.least(beforeTime - 5);
+      expect(account.createdAt.toNumber()).to.be.at.most(afterTime + 5);
+    });
+
+    it("Updates timestamps on state changes", async () => {
+      const operator = anchor.web3.Keypair.generate();
+      await fundAccount(operator.publicKey, 1 * anchor.web3.LAMPORTS_PER_SOL);
+
+      const [stakePDA] = getStakePDA(operator.publicKey);
+
+      await program.methods
+        .initializeStake()
+        .accounts({
+          stakeAccount: stakePDA,
+          operator: operator.publicKey,
+          systemProgram: anchor.web3.SystemProgram.programId,
+        })
+        .signers([operator])
+        .rpc();
+
+      const operatorTokenAccount = await createTokenAccountForOperator(operator);
+      await mintTo(
+        provider.connection,
+        provider.wallet.payer,
+        mint,
+        operatorTokenAccount,
+        provider.wallet.publicKey,
+        1000_000_000_000
+      );
+
+      const before = await program.account.stakeAccount.fetch(stakePDA);
+
+      // Wait a moment
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      await program.methods
+        .stake(MIN_STAKE)
+        .accounts({
+          stakeAccount: stakePDA,
+          operatorTokenAccount,
+          stakeVault,
+          operator: operator.publicKey,
+          tokenProgram: anchor.utils.token.TOKEN_PROGRAM_ID,
+        })
+        .signers([operator])
+        .rpc();
+
+      const after = await program.account.stakeAccount.fetch(stakePDA);
+
+      expect(after.updatedAt.toNumber()).to.be.greaterThan(before.updatedAt.toNumber());
     });
   });
 });

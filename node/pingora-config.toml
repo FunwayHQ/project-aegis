@@ -1,0 +1,20 @@
+# AEGIS Pingora Proxy Configuration
+# Sprint 3: HTTP Proxy & TLS
+
+# HTTP listener (port 80 equivalent for testing)
+http_addr = "0.0.0.0:8080"
+
+# HTTPS listener (port 443 equivalent for testing)
+https_addr = "0.0.0.0:8443"
+
+# Origin server to proxy requests to
+origin = "http://httpbin.org"
+
+# TLS certificate and key paths (optional)
+# Generate self-signed cert for testing:
+#   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+# tls_cert_path = "cert.pem"
+# tls_key_path = "key.pem"
+
+# Number of worker threads
+threads = 4

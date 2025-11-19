@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./AEGIS-logo.svg" alt="AEGIS Logo" width="500"/>
+</p>
+
 # Project AEGIS DECENTRALIZED
 
 ## A Blockchain-Powered Global Edge Network for the Decentralized Internet
