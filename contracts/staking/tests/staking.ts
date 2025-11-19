@@ -32,8 +32,8 @@ describe("staking", () => {
     );
   }
 
-  // Helper to fund account with SOL
-  async function fundAccount(publicKey: anchor.web3.PublicKey, lamports: number = 0.1 * anchor.web3.LAMPORTS_PER_SOL) {
+  // Helper to fund account with SOL (increased to 2 SOL for tests)
+  async function fundAccount(publicKey: anchor.web3.PublicKey, lamports: number = 2 * anchor.web3.LAMPORTS_PER_SOL) {
     const tx = new anchor.web3.Transaction().add(
       anchor.web3.SystemProgram.transfer({
         fromPubkey: provider.wallet.publicKey,
