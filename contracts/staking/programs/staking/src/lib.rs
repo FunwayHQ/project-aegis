@@ -119,27 +119,28 @@ pub mod staking {
 
     /// Execute unstake after cooldown period
     pub fn execute_unstake(ctx: Context<ExecuteUnstake>) -> Result<()> {
-        let stake_account = &mut ctx.accounts.stake_account;
         let clock = Clock::get()?;
 
         require!(
-            stake_account.pending_unstake > 0,
+            ctx.accounts.stake_account.pending_unstake > 0,
             StakingError::NoPendingUnstake
         );
 
-        let cooldown_end = stake_account.unstake_request_time + UNSTAKE_COOLDOWN_PERIOD;
+        let cooldown_end = ctx.accounts.stake_account.unstake_request_time + UNSTAKE_COOLDOWN_PERIOD;
         require!(
             clock.unix_timestamp >= cooldown_end,
             StakingError::CooldownNotComplete
         );
 
-        let amount = stake_account.pending_unstake;
+        let amount = ctx.accounts.stake_account.pending_unstake;
+        let operator = ctx.accounts.stake_account.operator;
+        let bump = ctx.accounts.stake_account.bump;
 
         // Transfer tokens from vault back to operator
         let seeds = &[
             b"stake",
-            stake_account.operator.as_ref(),
-            &[stake_account.bump],
+            operator.as_ref(),
+            &[bump],
         ];
         let signer = &[&seeds[..]];
 
@@ -153,6 +154,7 @@ pub mod staking {
         token::transfer(cpi_ctx, amount)?;
 
         // Update stake account
+        let stake_account = &mut ctx.accounts.stake_account;
         stake_account.pending_unstake = 0;
         stake_account.unstake_request_time = 0;
         stake_account.total_unstaked_ever = stake_account
@@ -161,10 +163,10 @@ pub mod staking {
             .ok_or(StakingError::Overflow)?;
         stake_account.updated_at = clock.unix_timestamp;
 
-        msg!("Unstaked {} tokens for operator: {}", amount, stake_account.operator);
+        msg!("Unstaked {} tokens for operator: {}", amount, operator);
 
         emit!(UnstakedEvent {
-            operator: stake_account.operator,
+            operator,
             amount,
             remaining_staked: stake_account.staked_amount,
             timestamp: clock.unix_timestamp,
@@ -214,26 +216,21 @@ pub mod staking {
         require!(amount > 0, StakingError::InvalidAmount);
         require!(reason.len() <= 128, StakingError::ReasonTooLong);
 
-        let stake_account = &mut ctx.accounts.stake_account;
         let clock = Clock::get()?;
 
         require!(
-            stake_account.staked_amount >= amount,
+            ctx.accounts.stake_account.staked_amount >= amount,
             StakingError::InsufficientStakedBalance
         );
 
-        // Reduce staked amount
-        stake_account.staked_amount = stake_account
-            .staked_amount
-            .checked_sub(amount)
-            .ok_or(StakingError::Underflow)?;
-        stake_account.updated_at = clock.unix_timestamp;
+        let operator = ctx.accounts.stake_account.operator;
+        let bump = ctx.accounts.stake_account.bump;
 
         // Transfer slashed tokens to treasury
         let seeds = &[
             b"stake",
-            stake_account.operator.as_ref(),
-            &[stake_account.bump],
+            operator.as_ref(),
+            &[bump],
         ];
         let signer = &[&seeds[..]];
 
@@ -246,11 +243,19 @@ pub mod staking {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
         token::transfer(cpi_ctx, amount)?;
 
+        // Update stake account
+        let stake_account = &mut ctx.accounts.stake_account;
+        stake_account.staked_amount = stake_account
+            .staked_amount
+            .checked_sub(amount)
+            .ok_or(StakingError::Underflow)?;
+        stake_account.updated_at = clock.unix_timestamp;
+
         msg!("Slashed {} tokens from operator: {} - Reason: {}",
-            amount, stake_account.operator, reason);
+            amount, operator, reason);
 
         emit!(StakeSlashedEvent {
-            operator: stake_account.operator,
+            operator,
             amount,
             reason,
             remaining_staked: stake_account.staked_amount,
