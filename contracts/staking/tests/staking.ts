@@ -66,20 +66,34 @@ describe("staking", () => {
       9 // 9 decimals
     );
 
-    // Create stake vault (program-owned token account)
+    // Create a temporary keypair for stake vault (not PDA-owned yet)
+    const stakeVaultKeypair = anchor.web3.Keypair.generate();
+    await fundAccount(stakeVaultKeypair.publicKey);
+
     stakeVault = await createAccount(
       provider.connection,
-      provider.wallet.payer,
+      stakeVaultKeypair,
       mint,
-      provider.wallet.publicKey // Will be transferred to PDA authority
+      provider.wallet.publicKey,
+      undefined,
+      undefined,
+      undefined,
+      anchor.utils.token.TOKEN_PROGRAM_ID
     );
 
-    // Create treasury
+    // Create a temporary keypair for treasury
+    const treasuryKeypair = anchor.web3.Keypair.generate();
+    await fundAccount(treasuryKeypair.publicKey);
+
     treasury = await createAccount(
       provider.connection,
-      provider.wallet.payer,
+      treasuryKeypair,
       mint,
-      provider.wallet.publicKey
+      provider.wallet.publicKey,
+      undefined,
+      undefined,
+      undefined,
+      anchor.utils.token.TOKEN_PROGRAM_ID
     );
 
     console.log("Mint:", mint.toString());
