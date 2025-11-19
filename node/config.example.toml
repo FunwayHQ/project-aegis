@@ -1,0 +1,31 @@
+# AEGIS Node Configuration Example
+# Copy this to config.toml and customize for your setup
+
+[server]
+# Host address to bind to
+# Use "0.0.0.0" to accept connections from any IP
+# Use "127.0.0.1" for localhost only
+host = "127.0.0.1"
+
+# Port to listen on
+port = 8080
+
+# Maximum concurrent connections
+max_connections = 10000
+
+[cache]
+# Enable caching (Sprint 4 feature)
+enabled = false
+
+# Default cache TTL in seconds
+default_ttl = 3600
+
+# Maximum cache size in megabytes
+max_size_mb = 1024
+
+[security]
+# Enable eBPF/XDP packet filtering (Sprint 7 feature)
+ebpf_enabled = false
+
+# Enable Web Application Firewall (Sprint 8 feature)
+waf_enabled = false

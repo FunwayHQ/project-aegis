@@ -1,0 +1,201 @@
+# AEGIS Project - Comprehensive .gitignore
+# Covers Rust, Solana/Anchor, Node.js, and development tools
+
+###################
+# Rust/Cargo
+###################
+**/target/
+**/*.rs.bk
+**/*.pdb
+Cargo.lock
+
+###################
+# Solana/Anchor
+###################
+.anchor/
+**/target-sbpf/
+**/target/deploy/*.so
+**/target/idl/
+**/target/types/
+test-ledger/
+validator-ledger/
+.solana-data/
+
+# Keypairs (CRITICAL: Never commit real keypairs!)
+**/*-keypair.json
+**/id.json
+**/*wallet*.json
+**/.keys/
+*.key
+*.pem
+
+# Allow necessary JSON config files
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!Anchor.toml
+!Cargo.toml
+
+###################
+# Node.js/TypeScript
+###################
+node_modules/
+**/node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+logs/
+
+# Yarn
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+###################
+# IDE & Editors
+###################
+# VSCode
+.vscode/
+*.code-workspace
+.history/
+
+# JetBrains
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Vim
+*.swp
+*.swo
+*~
+.*.sw?
+
+# Emacs
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# Sublime
+*.sublime-project
+*.sublime-workspace
+
+###################
+# Operating Systems
+###################
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux
+.directory
+.Trash-*
+
+###################
+# Environment & Secrets
+###################
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+secrets/
+credentials/
+.aegis-cli/
+config.local.toml
+
+###################
+# Testing & Coverage
+###################
+coverage/
+.nyc_output/
+*.lcov
+*.profdata
+*.profraw
+test-results/
+test-output/
+junit.xml
+
+###################
+# Temporary Files
+###################
+tmp/
+temp/
+*.tmp
+*.temp
+.cache/
+
+###################
+# Dependencies
+###################
+# Python (if used)
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+
+###################
+# Build Artifacts
+###################
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+###################
+# Project Specific
+###################
+# Local development
+.local/
+.dev/
+
+# Benchmarks
+benchmarks/results/
+
+# DragonflyDB/Redis
+*.rdb
+dump.rdb
+
+# K3s/Kubernetes
+kubeconfig.local
+
+###################
+# Archives
+###################
+*.zip
+*.tar.gz
+*.rar
+*.7z
+
+###################
+# Misc
+###################
+.pytest_cache/
+.tox/
+*.bak
+*.orig
