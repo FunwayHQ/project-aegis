@@ -1,0 +1,51 @@
+# AEGIS eBPF/XDP DDoS Protection Configuration
+# Sprint 7: Kernel-Level DDoS Mitigation
+
+[ebpf]
+# Enable eBPF/XDP protection (Linux only)
+enabled = true
+
+# Network interface to attach XDP program
+# Common interfaces: eth0, ens33, wlan0
+# For testing: lo (loopback)
+interface = "eth0"
+
+# XDP mode: "native" (driver level, fastest) or "skb" (compatible mode)
+# native: Requires driver support, best performance
+# skb: Works everywhere, slightly slower
+xdp_mode = "skb"
+
+[ddos]
+# SYN flood threshold (packets per second from single IP)
+# Default: 100 SYN/sec per IP
+# Adjust based on your traffic patterns
+syn_flood_threshold = 100
+
+# Global SYN threshold (total packets per second)
+# Protects against distributed SYN floods
+global_syn_threshold = 10000
+
+# Whitelist: IPs that are never rate-limited
+# Add trusted infrastructure (load balancers, monitoring, etc.)
+whitelist_ips = [
+    "127.0.0.1",        # Localhost
+    "192.168.1.0/24",   # Local network (example)
+    # Add your trusted IPs here
+]
+
+[logging]
+# Log dropped packets (can be verbose under attack)
+log_drops = true
+
+# Log interval for statistics (seconds)
+log_interval_seconds = 60
+
+# Log level: "info", "warn", "error", "debug"
+log_level = "info"
+
+[monitoring]
+# Expose eBPF stats via /metrics endpoint
+expose_metrics = true
+
+# Update metrics every N seconds
+metrics_update_interval = 5

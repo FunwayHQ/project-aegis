@@ -7,3 +7,6 @@ pub mod pingora_proxy;
 pub mod proxy;
 pub mod cache;
 pub mod metrics;
+
+#[cfg(target_os = "linux")]
+pub mod ebpf_loader;

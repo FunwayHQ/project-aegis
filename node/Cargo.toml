@@ -40,6 +40,13 @@ redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 # System metrics
 sysinfo = "0.30"
 
+# eBPF/XDP (Linux only)
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { version = "0.12", features = ["async_tokio"] }
+aya-log = "0.2"
+nix = { version = "0.29", features = ["user"] }
+ctrlc = "3.4"
+
 [[bin]]
 name = "aegis-node"
 path = "src/main.rs"
@@ -51,3 +58,8 @@ path = "src/main_proxy.rs"
 [[bin]]
 name = "aegis-pingora"
 path = "src/main_pingora.rs"
+
+[[bin]]
+name = "aegis-ebpf-loader"
+path = "src/main_ebpf.rs"
+required-features = []
