@@ -147,8 +147,61 @@ impl ProxyHttp for AegisProxy {
         Ok(peer)
     }
 
-    // Note: Response caching will be added in future iteration
-    // For now, we demonstrate cache lookup only (read-through pattern)
+    /// Response filter - cache the response body
+    async fn response_filter(
+        &self,
+        session: &mut Session,
+        upstream_response: &mut pingora::proxy::HttpResponse,
+        ctx: &mut Self::CTX,
+    ) -> Result<()> {
+        // Only cache if:
+        // 1. Caching is enabled
+        // 2. We have a cache key (GET request)
+        // 3. This was a cache miss (don't re-cache hits)
+        // 4. Response is successful (2xx status)
+        if !self.caching_enabled || ctx.cache_key.is_none() || ctx.cache_hit {
+            return Ok(());
+        }
+
+        let status = upstream_response.status.as_u16();
+        if status < 200 || status >= 300 {
+            return Ok(()); // Only cache successful responses
+        }
+
+        // Cache will be stored during body processing
+        // Mark that we should cache this response
+        Ok(())
+    }
+
+    /// Cache response body chunks as they arrive
+    async fn upstream_response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<pingora::http::ResponseBody>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<std::time::Duration>> {
+        // If we should cache this response and we have a complete body
+        if end_of_stream && ctx.cache_key.is_some() && !ctx.cache_hit {
+            if let Some(cache_key) = &ctx.cache_key {
+                if let (Some(cache), Some(body_data)) = (&self.cache_client, body) {
+                    // Get the body bytes
+                    if let Some(bytes) = body_data.as_ref() {
+                        let mut cache_lock = cache.lock().await;
+
+                        // Store in cache with configured TTL
+                        if let Err(e) = cache_lock.set(cache_key, bytes, Some(self.cache_ttl)).await {
+                            log::warn!("Failed to cache response for {}: {}", cache_key, e);
+                        } else {
+                            log::debug!("CACHE STORED: {}", cache_key);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
 
     /// Access logging after request completes
     async fn logging(

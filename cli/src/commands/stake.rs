@@ -1,7 +1,8 @@
 use anyhow::Result;
 use colored::Colorize;
+use anchor_client::Cluster;
 use solana_sdk::signature::Signer;
-use crate::wallet;
+use crate::{contracts, wallet};
 use crate::errors::CliError;
 
 const MINIMUM_STAKE: u64 = 100_000_000_000; // 100 AEGIS tokens
@@ -20,10 +21,60 @@ pub async fn execute(amount: u64) -> Result<()> {
     println!("  Operator: {}", keypair.pubkey().to_string().bright_yellow());
     println!("  Amount:   {} AEGIS", format_tokens(amount));
 
-    // TODO: Call Staking contract when implemented
     println!();
-    println!("{}", "⚠ Staking contract not yet deployed".yellow());
-    println!("{}", "  This will be implemented after contract deployment".dimmed());
+    println!("{}", "Checking stake account...".dimmed());
+
+    // First, check if stake account exists, if not initialize it
+    let stake_exists = contracts::get_stake_info(&keypair.pubkey(), Cluster::Devnet).await.is_ok();
+
+    if !stake_exists {
+        println!("{}", "  Initializing stake account...".dimmed());
+        match contracts::initialize_stake_account(&keypair, Cluster::Devnet).await {
+            Ok(sig) => {
+                println!("  ✓ Stake account initialized: {}", sig.bright_green());
+            }
+            Err(e) => {
+                println!("{}", "❌ Failed to initialize stake account".bright_red());
+                println!("  Error: {}", e);
+                return Err(e);
+            }
+        }
+    } else {
+        println!("  ✓ Stake account already exists".green());
+    }
+
+    println!();
+    println!("{}", "Sending stake transaction to Solana Devnet...".dimmed());
+
+    // Call the Staking contract
+    match contracts::stake_tokens(&keypair, amount, Cluster::Devnet).await {
+        Ok(signature) => {
+            println!();
+            println!("{}", "✅ Tokens staked successfully!".bright_green());
+            println!();
+            println!("  Transaction: {}", signature.bright_yellow());
+            println!(
+                "  Explorer: {}",
+                format!("https://explorer.solana.com/tx/{}?cluster=devnet", signature).bright_blue()
+            );
+            println!();
+            println!("{}", format!("You have staked {} AEGIS tokens!", format_tokens(amount)).bright_green());
+            println!();
+            println!("{}", "Note: Unstaking has a 7-day cooldown period".yellow());
+        }
+        Err(e) => {
+            println!();
+            println!("{}", "❌ Staking failed".bright_red());
+            println!("  Error: {}", e);
+            println!();
+            println!("{}", "Troubleshooting:".bright_yellow());
+            println!("  • Ensure you have SOL for transaction fees");
+            println!("  • Check your wallet has at least {} AEGIS tokens", format_tokens(amount));
+            println!("  • Verify your node is registered");
+            println!("  • Ensure you're connected to Solana Devnet");
+            return Err(e);
+        }
+    }
 
     Ok(())
 }

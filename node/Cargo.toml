@@ -37,6 +37,9 @@ futures = "0.3"
 # Cache - Redis/DragonflyDB client
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 
+# System metrics
+sysinfo = "0.30"
+
 [[bin]]
 name = "aegis-node"
 path = "src/main.rs"

@@ -1,7 +1,8 @@
 use anyhow::Result;
 use colored::Colorize;
+use anchor_client::Cluster;
 use solana_sdk::signature::Signer;
-use crate::wallet;
+use crate::{contracts, wallet};
 use crate::errors::CliError;
 
 const MINIMUM_STAKE: u64 = 100_000_000_000; // 100 AEGIS tokens (with 9 decimals)
@@ -22,14 +23,45 @@ pub async fn execute(metadata_url: String, stake: Option<u64>) -> Result<()> {
     println!("  Operator: {}", keypair.pubkey().to_string().bright_yellow());
     println!("  Metadata: {}", metadata_url);
 
-    if let Some(stake_amount) = stake {
-        println!("  Initial Stake: {} AEGIS", format_tokens(stake_amount));
-    }
+    let stake_amount = stake.unwrap_or(MINIMUM_STAKE);
+    println!("  Initial Stake: {} AEGIS", format_tokens(stake_amount));
 
-    // TODO: Call Node Registry contract when implemented
     println!();
-    println!("{}", "⚠ Node Registry contract not yet deployed".yellow());
-    println!("{}", "  This will be implemented after contract deployment".dimmed());
+    println!("{}", "Sending transaction to Solana Devnet...".dimmed());
+
+    // Call the Node Registry contract
+    match contracts::register_node(
+        &keypair,
+        metadata_url.clone(),
+        stake_amount,
+        Cluster::Devnet,
+    )
+    .await
+    {
+        Ok(signature) => {
+            println!();
+            println!("{}", "✅ Node registered successfully!".bright_green());
+            println!();
+            println!("  Transaction: {}", signature.bright_yellow());
+            println!(
+                "  Explorer: {}",
+                format!("https://explorer.solana.com/tx/{}?cluster=devnet", signature).bright_blue()
+            );
+            println!();
+            println!("{}", "Your node is now registered on the AEGIS network!".bright_green());
+        }
+        Err(e) => {
+            println!();
+            println!("{}", "❌ Registration failed".bright_red());
+            println!("  Error: {}", e);
+            println!();
+            println!("{}", "Troubleshooting:".bright_yellow());
+            println!("  • Ensure you have SOL for transaction fees");
+            println!("  • Check your wallet has at least {} AEGIS tokens", format_tokens(stake_amount));
+            println!("  • Verify you're connected to Solana Devnet");
+            return Err(e);
+        }
+    }
 
     Ok(())
 }

@@ -1,12 +1,16 @@
 mod server;
 mod config;
+mod metrics;
 
 use hyper::service::{make_service_fn, service_fn};
 use hyper::Server;
 use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::info;
 
 use config::Config;
+use metrics::MetricsCollector;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,14 +23,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("╔════════════════════════════════════════════╗");
     info!("║  AEGIS Decentralized Edge Network Node    ║");
-    info!("║  Sprint 1: HTTP Server Proof-of-Concept   ║");
+    info!("║  Sprint 5: Health Metrics & Monitoring    ║");
     info!("╚════════════════════════════════════════════╝");
     info!("");
     info!("Starting server on http://{}", addr);
     info!("Endpoints:");
-    info!("  - GET /          - Node information");
-    info!("  - GET /health    - Health check (JSON)");
-    info!("  - GET /metrics   - Node metrics (JSON)");
+    info!("  - GET /                - Node information");
+    info!("  - GET /health          - Health check (JSON)");
+    info!("  - GET /metrics         - Node metrics (JSON)");
+    info!("  - GET /metrics?format=prometheus - Prometheus metrics");
+    info!("");
+
+    // Create metrics collector
+    let metrics_collector = Arc::new(MetricsCollector::new());
+
+    // Set initial proxy status
+    metrics_collector.set_proxy_status("running").await;
+    metrics_collector.set_cache_status("disconnected").await; // Will be updated when cache connects
+
+    // Spawn background task to update system metrics every 5 seconds
+    let collector_clone = Arc::clone(&metrics_collector);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            collector_clone.update_system_metrics().await;
+            collector_clone.calculate_rps().await;
+        }
+    });
+
+    info!("Metrics collector initialized - updating every 5 seconds");
     info!("");
 
     let make_svc = make_service_fn(|_conn| async {

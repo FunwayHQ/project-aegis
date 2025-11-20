@@ -6,3 +6,4 @@ pub mod config;
 pub mod pingora_proxy;
 pub mod proxy;
 pub mod cache;
+pub mod metrics;

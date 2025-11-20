@@ -54,6 +54,13 @@ enum Commands {
     /// Claim accumulated rewards
     ClaimRewards,
 
+    /// Display real-time node metrics
+    Metrics {
+        /// Node URL (defaults to http://127.0.0.1:8080)
+        #[arg(long)]
+        node_url: Option<String>,
+    },
+
     /// Wallet management commands
     Wallet {
         #[command(subcommand)]
@@ -100,7 +107,7 @@ async fn main() -> Result<()> {
     // Print banner
     println!("{}", "╔════════════════════════════════════════════╗".bright_cyan());
     println!("{}", "║     AEGIS CLI - Node Operator Tool        ║".bright_cyan());
-    println!("{}", "║          Sprint 2: Registration & Staking  ║".bright_cyan());
+    println!("{}", "║       Sprint 5: Metrics & Monitoring       ║".bright_cyan());
     println!("{}", "╚════════════════════════════════════════════╝".bright_cyan());
     println!();
 
@@ -124,6 +131,9 @@ async fn main() -> Result<()> {
         }
         Commands::ClaimRewards => {
             commands::claim_rewards::execute().await?;
+        }
+        Commands::Metrics { node_url } => {
+            commands::metrics::execute(node_url).await?;
         }
         Commands::Wallet { action } => match action {
             WalletCommands::Create => wallet::create().await?,

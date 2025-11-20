@@ -1,6 +1,8 @@
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::convert::Infallible;
+use std::sync::Arc;
 use tracing::{info, warn};
+use crate::metrics::MetricsCollector;
 
 /// Server statistics (will be enhanced in future sprints)
 #[derive(Debug, Clone)]
@@ -63,7 +65,70 @@ fn handle_health() -> Result<Response<Body>, Infallible> {
         .unwrap())
 }
 
-/// Metrics endpoint - performance data
+/// Metrics endpoint - performance data (enhanced for Sprint 5)
+pub async fn handle_metrics_with_collector(
+    collector: Arc<MetricsCollector>,
+    format: &str,
+) -> Result<Response<Body>, Infallible> {
+    // Update system metrics before returning
+    collector.update_system_metrics().await;
+    collector.calculate_rps().await;
+
+    let metrics = collector.get_metrics().await;
+
+    match format {
+        "prometheus" => {
+            let prometheus_text = metrics.to_prometheus_format();
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "text/plain; version=0.0.4")
+                .body(Body::from(prometheus_text))
+                .unwrap())
+        }
+        _ => {
+            // Default: JSON format
+            let json = serde_json::json!({
+                "system": {
+                    "cpu_usage_percent": metrics.cpu_usage_percent,
+                    "memory_used_mb": metrics.memory_used_mb,
+                    "memory_total_mb": metrics.memory_total_mb,
+                    "memory_percent": metrics.memory_percent,
+                },
+                "network": {
+                    "active_connections": metrics.active_connections,
+                    "requests_total": metrics.requests_total,
+                    "requests_per_second": metrics.requests_per_second,
+                },
+                "performance": {
+                    "avg_latency_ms": metrics.avg_latency_ms,
+                    "p50_latency_ms": metrics.p50_latency_ms,
+                    "p95_latency_ms": metrics.p95_latency_ms,
+                    "p99_latency_ms": metrics.p99_latency_ms,
+                },
+                "cache": {
+                    "hit_rate": metrics.cache_hit_rate,
+                    "hits": metrics.cache_hits,
+                    "misses": metrics.cache_misses,
+                    "memory_mb": metrics.cache_memory_mb,
+                },
+                "status": {
+                    "proxy": metrics.proxy_status,
+                    "cache": metrics.cache_status,
+                    "uptime_seconds": metrics.uptime_seconds,
+                },
+                "timestamp": metrics.timestamp,
+            });
+
+            Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header("Content-Type", "application/json")
+                .body(Body::from(json.to_string()))
+                .unwrap())
+        }
+    }
+}
+
+/// Metrics endpoint - performance data (legacy, for backward compatibility)
 fn handle_metrics() -> Result<Response<Body>, Infallible> {
     let stats = ServerStats::default();
 
