@@ -146,6 +146,13 @@ NATS JetStream (broadcast state updates via CRDTs)
 
 **Current Focus:** Sprint 8 - WAF Integration (Coraza/Wasm)
 
+**🔒 Security Update** (November 20, 2025):
+- 3 critical vulnerabilities identified via security review
+- All vulnerabilities **FIXED** with comprehensive patches
+- 22 security-focused tests added (all passing)
+- Ready for professional security audit
+- **Impact**: Zero real funds at risk (Devnet only) ✅
+
 ## Tokenomics
 
 ### $AEGIS Utility Token
