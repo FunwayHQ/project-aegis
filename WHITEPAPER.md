@@ -1602,7 +1602,7 @@ The opportunity is vast: an $80B+ market for CDN, edge security, and serverless 
 
 **Contact**: dimitrymd@gmail.com
 
-**Website**: COMING SOON
+**Website**: https://aegis.funwayinteractive.com/
 
 **GitHub**: https://github.com/FunwayHQ/project-aegis
 
