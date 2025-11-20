@@ -45,6 +45,9 @@ enum Commands {
         amount: Option<u64>,
     },
 
+    /// Execute unstake after cooldown period completes
+    ExecuteUnstake,
+
     /// Check node and wallet status
     Status,
 
@@ -122,6 +125,9 @@ async fn main() -> Result<()> {
         }
         Commands::Unstake { amount } => {
             commands::unstake::execute(amount).await?;
+        }
+        Commands::ExecuteUnstake => {
+            commands::execute_unstake::execute().await?;
         }
         Commands::Status => {
             commands::status::execute().await?;

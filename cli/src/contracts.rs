@@ -175,11 +175,13 @@ pub struct OperatorRewards {
     pub last_claim_time: i64,
 }
 
-// Instruction discriminators (calculated from instruction names)
-const REGISTER_NODE_DISCRIMINATOR: [u8; 8] = [0xb9, 0x9e, 0x6e, 0x4f, 0xe5, 0x6a, 0x8c, 0x5a]; // sha256("global:register_node")[..8]
-const INITIALIZE_STAKE_DISCRIMINATOR: [u8; 8] = [0x5a, 0xf0, 0x7b, 0x8f, 0x4e, 0x3d, 0x2c, 0x1a]; // Placeholder
-const STAKE_DISCRIMINATOR: [u8; 8] = [0xc8, 0xd6, 0x9e, 0x3f, 0x4a, 0x2b, 0x1c, 0x5d]; // Placeholder
-const REQUEST_UNSTAKE_DISCRIMINATOR: [u8; 8] = [0x7d, 0x4b, 0x9f, 0x2e, 0x6c, 0x1a, 0x3f, 0x8e]; // Placeholder
+// Instruction discriminators (extracted from deployed contract IDLs)
+const REGISTER_NODE_DISCRIMINATOR: [u8; 8] = [102, 85, 117, 114, 194, 188, 211, 168]; // from registry.json
+const INITIALIZE_STAKE_DISCRIMINATOR: [u8; 8] = [33, 175, 216, 4, 116, 130, 164, 177]; // from staking.json
+const STAKE_DISCRIMINATOR: [u8; 8] = [206, 176, 202, 18, 200, 209, 179, 108]; // from staking.json
+const REQUEST_UNSTAKE_DISCRIMINATOR: [u8; 8] = [44, 154, 110, 253, 160, 202, 54, 34]; // from staking.json
+const EXECUTE_UNSTAKE_DISCRIMINATOR: [u8; 8] = [136, 166, 210, 104, 134, 184, 142, 230]; // from staking.json
+const CLAIM_REWARDS_DISCRIMINATOR: [u8; 8] = [149, 95, 181, 242, 94, 90, 158, 162]; // SHA256("global:claim_rewards")[0..8]
 
 /// Register a new node on the network
 pub async fn register_node(
@@ -363,6 +365,167 @@ pub async fn request_unstake(
         AccountMeta::new(stake_account, false),
         AccountMeta::new_readonly(operator.pubkey(), true),
         AccountMeta::new_readonly(solana_sdk::sysvar::clock::ID, false),
+    ];
+
+    // Create instruction
+    let instruction = Instruction {
+        program_id,
+        accounts,
+        data: instruction_data,
+    };
+
+    // Send transaction
+    let recent_blockhash = rpc_client.get_latest_blockhash()?;
+    let transaction = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&operator.pubkey()),
+        &[operator],
+        recent_blockhash,
+    );
+
+    let signature = rpc_client.send_and_confirm_transaction(&transaction)?;
+    Ok(signature.to_string())
+}
+
+/// Execute unstake after cooldown period
+pub async fn execute_unstake(
+    operator: &Keypair,
+    cluster: Cluster,
+) -> Result<String> {
+    let rpc_client = get_rpc_client(&cluster);
+    let program_id = Pubkey::from_str(STAKING_PROGRAM_ID)?;
+    let token_program_id = Pubkey::from_str(TOKEN_PROGRAM_ID)?;
+
+    // Derive PDA for stake account
+    let (stake_account, _bump) = Pubkey::find_program_address(
+        &[b"stake", operator.pubkey().as_ref()],
+        &program_id,
+    );
+
+    // Derive stake vault PDA
+    let (stake_vault, _vault_bump) = Pubkey::find_program_address(
+        &[b"stake_vault"],
+        &program_id,
+    );
+
+    // Get operator's token account
+    let operator_token_account = spl_associated_token_account::get_associated_token_address(
+        &operator.pubkey(),
+        &token_program_id,
+    );
+
+    // Build instruction data
+    let mut instruction_data = Vec::new();
+    instruction_data.extend_from_slice(&EXECUTE_UNSTAKE_DISCRIMINATOR);
+
+    // Build accounts
+    let accounts = vec![
+        AccountMeta::new(stake_account, false),
+        AccountMeta::new(stake_vault, false),
+        AccountMeta::new(operator_token_account, false),
+        AccountMeta::new_readonly(operator.pubkey(), true),
+        AccountMeta::new_readonly(spl_token::ID, false),
+    ];
+
+    // Create instruction
+    let instruction = Instruction {
+        program_id,
+        accounts,
+        data: instruction_data,
+    };
+
+    // Send transaction
+    let recent_blockhash = rpc_client.get_latest_blockhash()?;
+    let transaction = solana_sdk::transaction::Transaction::new_signed_with_payer(
+        &[instruction],
+        Some(&operator.pubkey()),
+        &[operator],
+        recent_blockhash,
+    );
+
+    let signature = rpc_client.send_and_confirm_transaction(&transaction)?;
+    Ok(signature.to_string())
+}
+
+/// Get AEGIS token balance for a wallet
+pub async fn get_token_balance(
+    owner: &Pubkey,
+    cluster: Cluster,
+) -> Result<f64> {
+    let rpc_client = get_rpc_client(&cluster);
+    let token_mint = Pubkey::from_str(TOKEN_PROGRAM_ID)?;
+
+    // Get associated token account
+    let token_account = spl_associated_token_account::get_associated_token_address(
+        owner,
+        &token_mint,
+    );
+
+    // Try to get token account balance
+    match rpc_client.get_token_account_balance(&token_account) {
+        Ok(balance) => Ok(balance.ui_amount.unwrap_or(0.0)),
+        Err(_) => Ok(0.0), // Account doesn't exist yet
+    }
+}
+
+/// Get SOL balance for a wallet
+pub async fn get_sol_balance(
+    owner: &Pubkey,
+    cluster: Cluster,
+) -> Result<f64> {
+    let rpc_client = get_rpc_client(&cluster);
+
+    match rpc_client.get_balance(owner) {
+        Ok(lamports) => Ok(lamports as f64 / 1_000_000_000.0), // Convert lamports to SOL
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Claim accumulated rewards
+pub async fn claim_rewards(
+    operator: &Keypair,
+    cluster: Cluster,
+) -> Result<String> {
+    let rpc_client = get_rpc_client(&cluster);
+    let program_id = Pubkey::from_str(REWARDS_PROGRAM_ID)?;
+    let token_program_id = Pubkey::from_str(TOKEN_PROGRAM_ID)?;
+
+    // Derive reward pool PDA
+    let (reward_pool, _pool_bump) = Pubkey::find_program_address(
+        &[b"reward_pool"],
+        &program_id,
+    );
+
+    // Derive operator rewards PDA
+    let (operator_rewards, _rewards_bump) = Pubkey::find_program_address(
+        &[b"operator_rewards", operator.pubkey().as_ref()],
+        &program_id,
+    );
+
+    // Derive reward vault PDA (token account)
+    let (reward_vault, _vault_bump) = Pubkey::find_program_address(
+        &[b"reward_vault"],
+        &program_id,
+    );
+
+    // Get operator's token account
+    let operator_token_account = spl_associated_token_account::get_associated_token_address(
+        &operator.pubkey(),
+        &token_program_id,
+    );
+
+    // Build instruction data
+    let mut instruction_data = Vec::new();
+    instruction_data.extend_from_slice(&CLAIM_REWARDS_DISCRIMINATOR);
+
+    // Build accounts (order must match ClaimRewards struct)
+    let accounts = vec![
+        AccountMeta::new(reward_pool, false),
+        AccountMeta::new(operator_rewards, false),
+        AccountMeta::new(reward_vault, false),
+        AccountMeta::new(operator_token_account, false),
+        AccountMeta::new_readonly(operator.pubkey(), true),
+        AccountMeta::new_readonly(spl_token::ID, false),
     ];
 
     // Create instruction
