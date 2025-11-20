@@ -2,13 +2,14 @@ use async_trait::async_trait;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use std::time::Instant;
-use crate::cache::{CacheClient, generate_cache_key};
+use crate::cache::{CacheClient, CacheControl, generate_cache_key};
 
 /// Proxy context - tracks request metadata
 pub struct ProxyContext {
     pub start_time: Instant,
     pub cache_hit: bool,
     pub cache_key: Option<String>,
+    pub cache_ttl: Option<u64>, // Custom TTL from Cache-Control
 }
 
 /// AEGIS Pingora-based reverse proxy
@@ -75,6 +76,7 @@ impl ProxyHttp for AegisProxy {
             start_time: Instant::now(),
             cache_hit: false,
             cache_key: None,
+            cache_ttl: None,
         }
     }
 
@@ -147,10 +149,10 @@ impl ProxyHttp for AegisProxy {
         Ok(peer)
     }
 
-    /// Response filter - cache the response body
+    /// Response filter - check Cache-Control headers and determine if we should cache
     async fn response_filter(
         &self,
-        session: &mut Session,
+        _session: &mut Session,
         upstream_response: &mut pingora::proxy::HttpResponse,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
@@ -168,8 +170,29 @@ impl ProxyHttp for AegisProxy {
             return Ok(()); // Only cache successful responses
         }
 
+        // Check Cache-Control header from upstream
+        if let Some(cache_control_value) = upstream_response.headers.get("cache-control") {
+            if let Ok(header_str) = cache_control_value.to_str() {
+                let cache_control = CacheControl::parse(header_str);
+
+                // Respect Cache-Control directives
+                if !cache_control.should_cache() {
+                    log::debug!("Cache-Control prevents caching: {}", header_str);
+                    // Clear cache key to prevent caching in body filter
+                    ctx.cache_key = None;
+                    return Ok(());
+                }
+
+                // Use max-age from Cache-Control if present
+                if let Some(ttl) = cache_control.effective_ttl(self.cache_ttl) {
+                    // Store custom TTL in context for body filter
+                    ctx.cache_ttl = Some(ttl);
+                    log::debug!("Cache-Control allows caching with TTL: {}s", ttl);
+                }
+            }
+        }
+
         // Cache will be stored during body processing
-        // Mark that we should cache this response
         Ok(())
     }
 
@@ -189,11 +212,15 @@ impl ProxyHttp for AegisProxy {
                     if let Some(bytes) = body_data.as_ref() {
                         let mut cache_lock = cache.lock().await;
 
-                        // Store in cache with configured TTL
-                        if let Err(e) = cache_lock.set(cache_key, bytes, Some(self.cache_ttl)).await {
+                        // Use TTL from Cache-Control if present, otherwise use default
+                        let ttl = ctx.cache_ttl.or(Some(self.cache_ttl));
+
+                        // Store in cache with appropriate TTL
+                        if let Err(e) = cache_lock.set(cache_key, bytes, ttl).await {
                             log::warn!("Failed to cache response for {}: {}", cache_key, e);
                         } else {
-                            log::debug!("CACHE STORED: {}", cache_key);
+                            let ttl_value = ttl.unwrap_or(self.cache_ttl);
+                            log::debug!("CACHE STORED: {} (TTL: {}s)", cache_key, ttl_value);
                         }
                     }
                 }

@@ -130,6 +130,69 @@ pub fn generate_cache_key(method: &str, uri: &str) -> String {
     format!("aegis:cache:{}:{}", method, uri)
 }
 
+/// Cache-Control header directives
+#[derive(Debug, Clone, Default)]
+pub struct CacheControl {
+    pub no_cache: bool,
+    pub no_store: bool,
+    pub max_age: Option<u64>,
+    pub private: bool,
+    pub public: bool,
+}
+
+impl CacheControl {
+    /// Parse Cache-Control header value
+    pub fn parse(header_value: &str) -> Self {
+        let mut control = CacheControl::default();
+
+        for directive in header_value.split(',') {
+            let directive = directive.trim().to_lowercase();
+
+            if directive == "no-cache" {
+                control.no_cache = true;
+            } else if directive == "no-store" {
+                control.no_store = true;
+            } else if directive == "private" {
+                control.private = true;
+            } else if directive == "public" {
+                control.public = true;
+            } else if directive.starts_with("max-age=") {
+                if let Some(age_str) = directive.strip_prefix("max-age=") {
+                    control.max_age = age_str.parse().ok();
+                }
+            }
+        }
+
+        control
+    }
+
+    /// Determine if response should be cached
+    pub fn should_cache(&self) -> bool {
+        // Don't cache if no-store or no-cache directives present
+        if self.no_store || self.no_cache {
+            return false;
+        }
+
+        // Don't cache if marked private (we're a shared cache)
+        if self.private {
+            return false;
+        }
+
+        // Cache if public or no directives
+        true
+    }
+
+    /// Get effective TTL based on Cache-Control
+    pub fn effective_ttl(&self, default_ttl: u64) -> Option<u64> {
+        if !self.should_cache() {
+            return None;
+        }
+
+        // Use max-age if specified, otherwise use default
+        Some(self.max_age.unwrap_or(default_ttl))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -212,5 +275,132 @@ mod tests {
 
         let stats = cache.get_stats().await.unwrap();
         assert!(stats.total_commands > 0 || stats.total_commands == 0);
+    }
+
+    // Cache-Control header tests
+    #[test]
+    fn test_cache_control_no_cache() {
+        let control = CacheControl::parse("no-cache");
+        assert!(control.no_cache);
+        assert!(!control.should_cache());
+    }
+
+    #[test]
+    fn test_cache_control_no_store() {
+        let control = CacheControl::parse("no-store");
+        assert!(control.no_store);
+        assert!(!control.should_cache());
+    }
+
+    #[test]
+    fn test_cache_control_private() {
+        let control = CacheControl::parse("private");
+        assert!(control.private);
+        assert!(!control.should_cache()); // Shared cache shouldn't cache private
+    }
+
+    #[test]
+    fn test_cache_control_public() {
+        let control = CacheControl::parse("public");
+        assert!(control.public);
+        assert!(control.should_cache());
+    }
+
+    #[test]
+    fn test_cache_control_max_age() {
+        let control = CacheControl::parse("max-age=3600");
+        assert_eq!(control.max_age, Some(3600));
+        assert!(control.should_cache());
+        assert_eq!(control.effective_ttl(60), Some(3600));
+    }
+
+    #[test]
+    fn test_cache_control_multiple_directives() {
+        let control = CacheControl::parse("public, max-age=300");
+        assert!(control.public);
+        assert_eq!(control.max_age, Some(300));
+        assert!(control.should_cache());
+        assert_eq!(control.effective_ttl(60), Some(300));
+    }
+
+    #[test]
+    fn test_cache_control_no_cache_with_max_age() {
+        let control = CacheControl::parse("no-cache, max-age=3600");
+        assert!(control.no_cache);
+        assert_eq!(control.max_age, Some(3600));
+        assert!(!control.should_cache()); // no-cache takes precedence
+    }
+
+    #[test]
+    fn test_cache_control_empty() {
+        let control = CacheControl::parse("");
+        assert!(!control.no_cache);
+        assert!(!control.no_store);
+        assert!(!control.private);
+        assert!(control.should_cache()); // No restrictions = cacheable
+    }
+
+    #[test]
+    fn test_cache_control_case_insensitive() {
+        let control = CacheControl::parse("NO-CACHE, MAX-AGE=300");
+        assert!(control.no_cache);
+        assert_eq!(control.max_age, Some(300));
+    }
+
+    #[test]
+    fn test_cache_control_whitespace() {
+        let control = CacheControl::parse("public , max-age=300 ");
+        assert!(control.public);
+        assert_eq!(control.max_age, Some(300));
+    }
+
+    #[test]
+    fn test_cache_control_effective_ttl() {
+        // No directives - use default
+        let control1 = CacheControl::parse("");
+        assert_eq!(control1.effective_ttl(60), Some(60));
+
+        // max-age specified - use it
+        let control2 = CacheControl::parse("max-age=120");
+        assert_eq!(control2.effective_ttl(60), Some(120));
+
+        // no-cache - no TTL
+        let control3 = CacheControl::parse("no-cache");
+        assert_eq!(control3.effective_ttl(60), None);
+
+        // no-store - no TTL
+        let control4 = CacheControl::parse("no-store");
+        assert_eq!(control4.effective_ttl(60), None);
+    }
+
+    #[test]
+    fn test_cache_control_max_age_zero() {
+        let control = CacheControl::parse("max-age=0");
+        assert_eq!(control.max_age, Some(0));
+        assert_eq!(control.effective_ttl(60), Some(0));
+    }
+
+    #[test]
+    fn test_cache_control_invalid_max_age() {
+        let control = CacheControl::parse("max-age=invalid");
+        assert_eq!(control.max_age, None);
+        assert_eq!(control.effective_ttl(60), Some(60)); // Falls back to default
+    }
+
+    #[test]
+    fn test_cache_control_real_world_examples() {
+        // Common real-world Cache-Control headers
+        let examples = vec![
+            ("public, max-age=31536000", true, Some(31536000)), // 1 year
+            ("private, max-age=0", false, None),
+            ("no-cache, no-store, must-revalidate", false, None),
+            ("public, max-age=3600, immutable", true, Some(3600)),
+        ];
+
+        for (header, should_cache, expected_ttl) in examples {
+            let control = CacheControl::parse(header);
+            assert_eq!(control.should_cache(), should_cache, "Failed for: {}", header);
+            assert_eq!(control.effective_ttl(60), expected_ttl, "Failed TTL for: {}", header);
+        }
     }
 }
