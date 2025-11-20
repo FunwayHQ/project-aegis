@@ -207,26 +207,26 @@ const functionCid = await client.deployEdgeFunction({
 
 ## Development Roadmap
 
-### Phase 1: Foundation (Q1 2024) ✓
+### Phase 1: Foundation (Q1 2026) ✓
 - [x] Solana smart contracts ($AEGIS token, registry, staking)
 - [x] River proxy with DragonflyDB caching
 - [x] Basic node operator CLI
 - [x] Devnet deployment
 
-### Phase 2: Security & State (Q2 2024)
+### Phase 2: Security & State (Q2 2026)
 - [ ] eBPF/XDP DDoS protection
 - [ ] Coraza WAF integration (Wasm)
 - [ ] Bot management modules
 - [ ] CRDTs + NATS for global state sync
 - [ ] Verifiable analytics framework
 
-### Phase 3: Compute & Governance (Q3 2024)
+### Phase 3: Compute & Governance (Q3 2026)
 - [ ] Wasm edge functions runtime
 - [ ] DAO governance (proposals, voting, treasury)
 - [ ] Advanced P2P routing
 - [ ] IPFS/Filecoin integration
 
-### Phase 4: Mainnet Launch (Q4 2024)
+### Phase 4: Mainnet Launch (Q4 2026)
 - [ ] Performance optimization and stress testing
 - [ ] Multi-firm smart contract audits
 - [ ] Geographic expansion (100+ edge locations)
@@ -283,7 +283,7 @@ anchor test
 ## Security
 
 ### Audits
-- Smart contracts: [Audit pending - Q3 2024]
+- Smart contracts: [Audit pending - Q3 2026]
 - Core infrastructure: [Continuous security review]
 
 ### Bug Bounty
