@@ -6,10 +6,10 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-aegis_token = "D4URFrSz1UuoC1cKSpp8SiX2E9HeDdY8EvkXHUYHmM4v"
+aegis_token = "JLQ4c9UWdNoYbsbAKU59SkYAw9HdVoz1Pxu7Juu4qyB"
 
 [programs.localnet]
-aegis_token = "D4URFrSz1UuoC1cKSpp8SiX2E9HeDdY8EvkXHUYHmM4v"
+aegis_token = "JLQ4c9UWdNoYbsbAKU59SkYAw9HdVoz1Pxu7Juu4qyB"
 
 [registry]
 url = "https://api.apr.dev"

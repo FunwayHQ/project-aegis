@@ -1,5 +1,6 @@
 mod pingora_proxy;
 mod config;
+mod cache;
 
 use anyhow::Result;
 use std::fs;
@@ -28,7 +29,9 @@ fn main() -> Result<()> {
     println!("╚════════════════════════════════════════════╝");
     println!();
     println!("HTTP:  {}", config.http_addr);
-    println!("HTTPS: {}", config.https_addr);
+    if let Some(https) = &config.https_addr {
+        println!("HTTPS: {}", https);
+    }
     println!("Origin: {}", config.origin);
     println!();
 

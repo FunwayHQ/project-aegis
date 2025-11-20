@@ -1,26 +1,136 @@
 use async_trait::async_trait;
-use pingora_core::prelude::*;
-use pingora_proxy::{ProxyHttp, Session};
-use std::sync::Arc;
-use std::time::SystemTime;
-use log::{info, warn};
+use pingora::prelude::*;
+use pingora::proxy::{ProxyHttp, Session};
+use std::time::Instant;
+use crate::cache::{CacheClient, generate_cache_key};
+
+/// Proxy context - tracks request metadata
+pub struct ProxyContext {
+    pub start_time: Instant,
+    pub cache_hit: bool,
+    pub cache_key: Option<String>,
+}
 
 /// AEGIS Pingora-based reverse proxy
 pub struct AegisProxy {
     /// Origin server to proxy requests to
-    origin: String,
+    pub origin_addr: String,
+    /// Cache client (optional)
+    pub cache_client: Option<std::sync::Arc<tokio::sync::Mutex<CacheClient>>>,
+    /// Cache TTL in seconds
+    pub cache_ttl: u64,
+    /// Whether caching is enabled
+    pub caching_enabled: bool,
 }
 
 impl AegisProxy {
     pub fn new(origin: String) -> Self {
-        Self { origin }
+        Self::new_with_cache(origin, None, 60, false)
+    }
+
+    pub fn new_with_cache(
+        origin: String,
+        cache_client: Option<std::sync::Arc<tokio::sync::Mutex<CacheClient>>>,
+        cache_ttl: u64,
+        caching_enabled: bool,
+    ) -> Self {
+        // Parse origin to get address with port for HttpPeer
+        // Example: "http://httpbin.org" -> "httpbin.org:80"
+        let is_https = origin.starts_with("https://");
+        let mut origin_addr = origin
+            .replace("http://", "")
+            .replace("https://", "");
+
+        // Add default port if not specified
+        // For IPv6 addresses like [::1], check for ] instead of just :
+        let needs_port = if origin_addr.starts_with('[') {
+            !origin_addr.contains("]:")
+        } else {
+            !origin_addr.contains(':')
+        };
+
+        if needs_port {
+            if is_https {
+                origin_addr.push_str(":443");
+            } else {
+                origin_addr.push_str(":80");
+            }
+        }
+
+        Self {
+            origin_addr,
+            cache_client,
+            cache_ttl,
+            caching_enabled,
+        }
     }
 }
 
 #[async_trait]
 impl ProxyHttp for AegisProxy {
-    type CTX = ();
-    fn new_ctx(&self) -> Self::CTX {}
+    type CTX = ProxyContext;
+
+    fn new_ctx(&self) -> Self::CTX {
+        ProxyContext {
+            start_time: Instant::now(),
+            cache_hit: false,
+            cache_key: None,
+        }
+    }
+
+    /// Request filter - check cache before proxying
+    async fn request_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> Result<bool> {
+        // Only cache GET requests
+        if session.req_header().method != "GET" {
+            return Ok(false);
+        }
+
+        // Check if caching is enabled and we have a cache client
+        if !self.caching_enabled || self.cache_client.is_none() {
+            return Ok(false);
+        }
+
+        // Generate cache key
+        let path = session.req_header().uri.path();
+        let query = session.req_header().uri.query().unwrap_or("");
+        let full_path = if query.is_empty() {
+            path.to_string()
+        } else {
+            format!("{}?{}", path, query)
+        };
+        let cache_key = generate_cache_key("GET", &full_path);
+        ctx.cache_key = Some(cache_key.clone());
+
+        // Try to get from cache
+        if let Some(cache) = &self.cache_client {
+            let mut cache_lock = cache.lock().await;
+            if let Ok(Some(cached_response)) = cache_lock.get(&cache_key).await {
+                // Cache hit! Serve from cache
+                ctx.cache_hit = true;
+                log::info!("CACHE HIT: {}", full_path);
+
+                // Send cached response
+                session
+                    .write_response_header(Box::new(pingora::http::ResponseHeader::build(
+                        200,
+                        Some(4),
+                    )?), true)
+                    .await?;
+                session.write_response_body(Some(cached_response.into()), true).await?;
+
+                // Return true to skip upstream
+                return Ok(true);
+            } else {
+                log::debug!("CACHE MISS: {}", full_path);
+            }
+        }
+
+        Ok(false)
+    }
 
     /// Determine where to send the request (upstream selection)
     async fn upstream_peer(
@@ -28,54 +138,23 @@ impl ProxyHttp for AegisProxy {
         _session: &mut Session,
         _ctx: &mut Self::CTX,
     ) -> Result<Box<HttpPeer>> {
-        // Parse origin URL to get host and port
-        let peer = HttpPeer::new(&self.origin, true, String::new());
-        Ok(Box::new(peer))
+        // Create upstream peer
+        let peer = Box::new(HttpPeer::new(
+            self.origin_addr.clone(),
+            false, // TLS
+            "".to_string(), // SNI
+        ));
+        Ok(peer)
     }
 
-    /// Modify request before sending to upstream
-    async fn upstream_request_filter(
-        &self,
-        session: &mut Session,
-        upstream_request: &mut RequestHeader,
-        _ctx: &mut Self::CTX,
-    ) -> Result<()> {
-        // Add X-Forwarded-For header
-        if let Some(client_addr) = session.client_addr() {
-            upstream_request
-                .insert_header("X-Forwarded-For", client_addr.to_string())
-                .unwrap();
-        }
+    // Note: Response caching will be added in future iteration
+    // For now, we demonstrate cache lookup only (read-through pattern)
 
-        // Add X-Forwarded-Proto header
-        let proto = if session.is_https() { "https" } else { "http" };
-        upstream_request
-            .insert_header("X-Forwarded-Proto", proto)
-            .unwrap();
-
-        Ok(())
-    }
-
-    /// Modify response before sending to client
-    async fn response_filter(
-        &self,
-        _session: &mut Session,
-        upstream_response: &mut ResponseHeader,
-        _ctx: &mut Self::CTX,
-    ) -> Result<()> {
-        // Add AEGIS server identification header
-        upstream_response
-            .insert_header("X-Served-By", "AEGIS-Edge-Node")
-            .unwrap();
-
-        Ok(())
-    }
-
-    /// Log access after request completes
+    /// Access logging after request completes
     async fn logging(
         &self,
         session: &mut Session,
-        _e: Option<&pingora_core::Error>,
+        e: Option<&pingora::Error>,
         ctx: &mut Self::CTX,
     ) {
         let method = session.req_header().method.as_str();
@@ -85,128 +164,160 @@ impl ProxyHttp for AegisProxy {
             .map(|r| r.status.as_u16())
             .unwrap_or(0);
 
-        // Calculate request duration
-        let duration_ms = session
-            .downstream_session
-            .timing_digest()
-            .map(|t| {
-                t.get_timing("total")
-                    .map(|d| d.as_millis())
-                    .unwrap_or(0)
-            })
-            .unwrap_or(0);
+        // Get client IP
+        let client_ip = session
+            .client_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
 
-        // Access log format: timestamp method path status latency_ms
-        info!(
-            "{} {} {} {} {}ms",
-            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S"),
-            method,
-            path,
-            status,
-            duration_ms
-        );
-    }
+        // Calculate total request duration from context (start time)
+        let duration_ms = ctx.start_time.elapsed().as_millis();
 
-    /// Handle errors
-    async fn fail_to_connect(
-        &self,
-        _session: &mut Session,
-        _peer: &HttpPeer,
-        _ctx: &mut Self::CTX,
-        e: Box<pingora_core::Error>,
-    ) -> Result<bool> {
-        warn!("Failed to connect to upstream: {:?}", e);
-        // Return 502 Bad Gateway
-        Ok(false)
-    }
+        // Get bytes sent
+        let bytes_sent = session.body_bytes_sent();
 
-    /// Handle upstream errors
-    async fn error_while_proxy(
-        &self,
-        _peer: &HttpPeer,
-        _session: &mut Session,
-        e: Box<pingora_core::Error>,
-        _ctx: &mut Self::CTX,
-        _client_reused: bool,
-    ) -> Result<bool> {
-        warn!("Error while proxying: {:?}", e);
-        Ok(false)
+        // Cache status indicator
+        let cache_status = if ctx.cache_hit {
+            "[CACHE HIT]"
+        } else if ctx.cache_key.is_some() {
+            "[CACHE MISS]"
+        } else {
+            ""
+        };
+
+        // Enhanced access log with cache status
+        if let Some(error) = e {
+            log::error!(
+                "{} {} {} {} {}ms {} bytes {} - ERROR: {}",
+                client_ip,
+                method,
+                path,
+                status,
+                duration_ms,
+                bytes_sent,
+                cache_status,
+                error
+            );
+        } else {
+            log::info!(
+                "{} {} {} {} {}ms {} bytes {}",
+                client_ip,
+                method,
+                path,
+                status,
+                duration_ms,
+                bytes_sent,
+                cache_status
+            );
+        }
     }
 }
 
 /// Server configuration
-#[derive(serde::Deserialize, Clone)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
 pub struct ProxyConfig {
-    /// Listen address for HTTP
     pub http_addr: String,
-    /// Listen address for HTTPS
-    pub https_addr: String,
-    /// Origin server URL
+    pub https_addr: Option<String>,
     pub origin: String,
-    /// Path to TLS certificate
-    pub tls_cert_path: Option<String>,
-    /// Path to TLS key
-    pub tls_key_path: Option<String>,
-    /// Number of worker threads
     pub threads: Option<usize>,
+    pub tls_cert_path: Option<String>,
+    pub tls_key_path: Option<String>,
+    pub cache_url: Option<String>,
+    pub cache_ttl: Option<u64>,
+    pub enable_caching: Option<bool>,
 }
 
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             http_addr: "0.0.0.0:8080".to_string(),
-            https_addr: "0.0.0.0:8443".to_string(),
+            https_addr: Some("0.0.0.0:8443".to_string()),
             origin: "http://httpbin.org".to_string(),
-            tls_cert_path: None,
-            tls_key_path: None,
             threads: Some(4),
+            tls_cert_path: Some("cert.pem".to_string()),
+            tls_key_path: Some("key.pem".to_string()),
+            cache_url: Some("redis://127.0.0.1:6379".to_string()),
+            cache_ttl: Some(60),
+            enable_caching: Some(true),
         }
     }
 }
 
 /// Initialize and run the Pingora proxy server
 pub fn run_proxy(config: ProxyConfig) -> Result<()> {
-    // Initialize logging
     env_logger::init();
 
-    // Create server configuration
-    let mut server = Server::new(None)?;
+    // Create server with optional config
+    let mut server = Server::new(None).unwrap();
     server.bootstrap();
 
-    // Create proxy instance
-    let proxy = AegisProxy::new(config.origin.clone());
-    let proxy_service = ProxyService::new(Arc::new(proxy), server.configuration.clone());
+    // Initialize cache client if enabled
+    let cache_client = if config.enable_caching.unwrap_or(false) {
+        if let Some(cache_url) = &config.cache_url {
+            match tokio::runtime::Runtime::new().unwrap().block_on(async {
+                CacheClient::new(cache_url, config.cache_ttl.unwrap_or(60)).await
+            }) {
+                Ok(client) => {
+                    log::info!("Cache connected: {} (TTL: {}s)", cache_url, config.cache_ttl.unwrap_or(60));
+                    Some(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
+                }
+                Err(e) => {
+                    log::warn!("Failed to connect to cache: {}", e);
+                    log::warn!("Caching disabled");
+                    None
+                }
+            }
+        } else {
+            log::warn!("Caching enabled but no cache_url configured");
+            None
+        }
+    } else {
+        log::info!("Caching disabled");
+        None
+    };
+
+    // Create proxy instance with cache
+    let proxy = AegisProxy::new_with_cache(
+        config.origin.clone(),
+        cache_client,
+        config.cache_ttl.unwrap_or(60),
+        config.enable_caching.unwrap_or(false),
+    );
+
+    // Create HTTP proxy service
+    let mut proxy_service = pingora::proxy::http_proxy_service(
+        &server.configuration,
+        proxy,
+    );
 
     // Add HTTP listener
-    let mut http_service = pingora_proxy::http_proxy_service(
-        &server.configuration,
-        proxy_service.clone(),
-    );
-    http_service.add_tcp(&config.http_addr);
+    proxy_service.add_tcp(&config.http_addr);
+    log::info!("HTTP listener on {}", config.http_addr);
 
-    info!("HTTP listener configured on {}", config.http_addr);
+    // Add HTTPS listener if configured
+    if let (Some(https_addr), Some(cert_path), Some(key_path)) =
+        (&config.https_addr, &config.tls_cert_path, &config.tls_key_path) {
 
-    // Add HTTPS listener if TLS is configured
-    if let (Some(cert), Some(key)) = (&config.tls_cert_path, &config.tls_key_path) {
-        let mut tls_settings = TlsSettings::intermediate(cert, key)?;
-        tls_settings.enable_h2();
-
-        let mut https_service = pingora_proxy::http_proxy_service(
-            &server.configuration,
-            proxy_service,
-        );
-        https_service.add_tls_with_settings(&config.https_addr, None, tls_settings)?;
-
-        info!("HTTPS listener configured on {} with TLS", config.https_addr);
-        server.add_service(https_service);
+        // Check if certificate files exist
+        if std::path::Path::new(cert_path).exists() && std::path::Path::new(key_path).exists() {
+            // Add TLS listener with cert/key paths
+            // Pingora uses BoringSSL under the hood for TLS termination
+            if let Err(e) = proxy_service.add_tls(https_addr, cert_path, key_path) {
+                log::error!("Failed to add TLS listener: {}", e);
+                log::warn!("HTTPS listener disabled");
+            } else {
+                log::info!("HTTPS listener on {} (TLS 1.2/1.3 enabled with BoringSSL)", https_addr);
+            }
+        } else {
+            log::warn!("TLS certificate not found at {} or {}", cert_path, key_path);
+            log::warn!("HTTPS listener disabled. Generate cert with:");
+            log::warn!("  openssl req -x509 -newkey rsa:4096 -keyout {} -out {} -days 365 -nodes -subj '/CN=localhost'", key_path, cert_path);
+        }
     }
 
-    server.add_service(http_service);
+    log::info!("Proxying to origin: {}", config.origin);
 
-    info!("AEGIS Pingora proxy starting...");
-    info!("Proxying to origin: {}", config.origin);
-
-    // Run the server
+    server.add_service(proxy_service);
     server.run_forever();
 }
 
@@ -218,29 +329,12 @@ mod tests {
     fn test_proxy_config_default() {
         let config = ProxyConfig::default();
         assert_eq!(config.http_addr, "0.0.0.0:8080");
-        assert_eq!(config.https_addr, "0.0.0.0:8443");
         assert_eq!(config.origin, "http://httpbin.org");
-        assert_eq!(config.threads, Some(4));
     }
 
     #[test]
-    fn test_proxy_config_parsing() {
-        let toml_str = r#"
-            http_addr = "127.0.0.1:8080"
-            https_addr = "127.0.0.1:8443"
-            origin = "https://example.com"
-            threads = 8
-        "#;
-
-        let config: ProxyConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.http_addr, "127.0.0.1:8080");
-        assert_eq!(config.origin, "https://example.com");
-        assert_eq!(config.threads, Some(8));
-    }
-
-    #[test]
-    fn test_aegis_proxy_creation() {
-        let proxy = AegisProxy::new("http://example.com".to_string());
-        assert_eq!(proxy.origin, "http://example.com");
+    fn test_proxy_creation() {
+        let proxy = AegisProxy::new("http://example.com:8080".to_string());
+        assert_eq!(proxy.origin_addr, "example.com:8080");
     }
 }

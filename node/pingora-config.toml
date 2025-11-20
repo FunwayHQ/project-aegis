@@ -1,5 +1,6 @@
 # AEGIS Pingora Proxy Configuration
 # Sprint 3: HTTP Proxy & TLS
+# Sprint 4: CDN Caching with DragonflyDB
 
 # HTTP listener (port 80 equivalent for testing)
 http_addr = "0.0.0.0:8080"
@@ -10,11 +11,18 @@ https_addr = "0.0.0.0:8443"
 # Origin server to proxy requests to
 origin = "http://httpbin.org"
 
-# TLS certificate and key paths (optional)
-# Generate self-signed cert for testing:
-#   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
-# tls_cert_path = "cert.pem"
-# tls_key_path = "key.pem"
+# TLS certificate and key paths
+# Self-signed cert generated for testing with:
+#   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
+tls_cert_path = "cert.pem"
+tls_key_path = "key.pem"
+
+# Cache configuration (DragonflyDB/Redis)
+# For production: use DragonflyDB for 25x performance vs Redis
+# For development: Redis is compatible
+enable_caching = true
+cache_url = "redis://127.0.0.1:6379"
+cache_ttl = 60  # seconds
 
 # Number of worker threads
 threads = 4

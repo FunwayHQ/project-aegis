@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("Ba5sohaR6jH1t8ukfxbW3XEcpZJaoQ446F8HmeVTjXie");
+declare_id!("5oGLkNZ7Hku3bRD4aWnRNo8PsXusXmojm8EzAiQUVD1H");
 
 const UNSTAKE_COOLDOWN_PERIOD: i64 = 7 * 24 * 60 * 60; // 7 days in seconds
 const MIN_STAKE_AMOUNT: u64 = 100_000_000_000; // 100 AEGIS tokens

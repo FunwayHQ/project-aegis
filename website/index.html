@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS - Decentralized Edge Network | Community-Owned Internet Infrastructure</title>
+    <meta name="description" content="AEGIS is a blockchain-powered global edge network providing decentralized CDN, DDoS protection, and edge compute as an alternative to centralized providers.">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        aegis: {
+                            teal: '#1EB5B0',
+                            darkblue: '#1E478B',
+                            lightblue: '#4CB1CC',
+                            cyan: '#10F7CD',
+                            mediumblue: '#207D9C',
+                            purple: '#212382'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white">
+    <!-- Navigation -->
+    <nav class="fixed w-full bg-slate-900/90 backdrop-blur-sm z-50 border-b border-aegis-teal/20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <div class="flex items-center">
+                    <img src="images/AEGIS-logo.svg" alt="AEGIS Logo" class="h-12">
+                </div>
+                <div class="hidden md:flex space-x-8">
+                    <a href="#features" class="hover:text-aegis-cyan transition-colors">Features</a>
+                    <a href="#technology" class="hover:text-aegis-cyan transition-colors">Technology</a>
+                    <a href="#tokenomics" class="hover:text-aegis-cyan transition-colors">Tokenomics</a>
+                    <a href="#roadmap" class="hover:text-aegis-cyan transition-colors">Roadmap</a>
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" class="hover:text-aegis-cyan transition-colors">Docs</a>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="#" class="px-4 py-2 bg-aegis-teal hover:bg-aegis-cyan text-white rounded-lg transition-colors">
+                        Get Started
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 px-4">
+        <div class="max-w-7xl mx-auto">
+            <div class="grid md:grid-cols-2 gap-12 items-center">
+                <div>
+                    <h1 class="text-5xl md:text-6xl font-bold mb-6 bg-gradient-to-r from-aegis-teal via-aegis-cyan to-aegis-lightblue bg-clip-text text-transparent">
+                        The Future of Internet Infrastructure is Decentralized
+                    </h1>
+                    <p class="text-xl text-gray-300 mb-8">
+                        AEGIS is a blockchain-powered global edge network providing CDN, DDoS protection, and edge compute—owned by the community, not corporations.
+                    </p>
+                    <div class="flex flex-col sm:flex-row gap-4">
+                        <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" class="px-8 py-4 border-2 border-aegis-teal text-white rounded-lg font-semibold hover:bg-aegis-teal/10 transition-all">
+                            Read Whitepaper
+                        </a>
+                    </div>
+                </div>
+                <div class="relative">
+                    <div class="absolute inset-0 bg-gradient-to-r from-aegis-teal/20 to-aegis-purple/20 blur-3xl"></div>
+                    <div class="relative bg-slate-800/50 backdrop-blur-sm p-8 rounded-2xl border border-aegis-teal/30">
+                        <h3 class="text-2xl font-bold mb-4">Network Stats</h3>
+                        <div class="space-y-4">
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">Active Nodes</span>
+                                <span class="text-2xl font-bold text-aegis-cyan">Coming Soon</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">Network Uptime</span>
+                                <span class="text-2xl font-bold text-aegis-cyan">99.999%</span>
+                            </div>
+                            <div class="flex justify-between items-center">
+                                <span class="text-gray-400">Total Staked</span>
+                                <span class="text-2xl font-bold text-aegis-cyan">TBD</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section id="features" class="py-20 px-4 bg-slate-800/30">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl font-bold text-center mb-16">Why AEGIS?</h2>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20 hover:border-aegis-cyan/50 transition-all">
+                    <div class="w-12 h-12 bg-gradient-to-r from-aegis-teal to-aegis-cyan rounded-lg mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-3">Censorship Resistant</h3>
+                    <p class="text-gray-300">
+                        No single point of control. Content served from thousands of independent nodes worldwide ensures your data stays accessible.
+                    </p>
+                </div>
+
+                <div class="p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20 hover:border-aegis-cyan/50 transition-all">
+                    <div class="w-12 h-12 bg-gradient-to-r from-aegis-cyan to-aegis-lightblue rounded-lg mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-3">Lightning Fast</h3>
+                    <p class="text-gray-300">
+                        BGP Anycast routing ensures users connect to the nearest edge node. Rust-powered proxy with zero-downtime upgrades.
+                    </p>
+                </div>
+
+                <div class="p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20 hover:border-aegis-cyan/50 transition-all">
+                    <div class="w-12 h-12 bg-gradient-to-r from-aegis-lightblue to-aegis-purple rounded-lg mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-3">Enterprise Security</h3>
+                    <p class="text-gray-300">
+                        eBPF/XDP DDoS protection at kernel level. OWASP-compliant WAF. Bot management. All running in isolated Wasm sandboxes.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Stack Section -->
+    <section id="technology" class="py-20 px-4">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl font-bold text-center mb-16">Built with Cutting-Edge Technology</h2>
+            <div class="grid md:grid-cols-2 gap-12">
+                <div>
+                    <h3 class="text-2xl font-bold mb-6 text-aegis-cyan">Memory-Safe Infrastructure</h3>
+                    <div class="space-y-4">
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-teal rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>Rust Everywhere:</strong> All core infrastructure built in Rust eliminates memory corruption vulnerabilities
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-teal rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>Pingora Proxy:</strong> Cloudflare's open-source Rust framework powers our edge
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-teal rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>eBPF Security:</strong> Kernel-level packet filtering drops attacks before CPU consumption
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <h3 class="text-2xl font-bold mb-6 text-aegis-lightblue">Blockchain-Powered</h3>
+                    <div class="space-y-4">
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-cyan rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>Solana Smart Contracts:</strong> Fast, low-cost transactions for node registration and rewards
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-cyan rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>$AEGIS Token:</strong> Utility token for staking, governance, and payments
+                            </div>
+                        </div>
+                        <div class="flex items-start">
+                            <div class="w-2 h-2 bg-aegis-cyan rounded-full mt-2 mr-3"></div>
+                            <div>
+                                <strong>DAO Governance:</strong> Token holders vote on protocol upgrades and treasury allocation
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tokenomics Section -->
+    <section id="tokenomics" class="py-20 px-4 bg-slate-800/30">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl font-bold text-center mb-16">$AEGIS Tokenomics</h2>
+            <div class="grid md:grid-cols-3 gap-8">
+                <div class="text-center p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20">
+                    <div class="text-5xl font-bold text-aegis-cyan mb-4">1B</div>
+                    <div class="text-gray-300">Total Supply</div>
+                </div>
+                <div class="text-center p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20">
+                    <div class="text-5xl font-bold text-aegis-lightblue mb-4">Stake</div>
+                    <div class="text-gray-300">To Run Nodes</div>
+                </div>
+                <div class="text-center p-8 bg-slate-800/50 rounded-xl border border-aegis-teal/20">
+                    <div class="text-5xl font-bold text-aegis-purple mb-4">Earn</div>
+                    <div class="text-gray-300">Rewards & Fees</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Roadmap Section -->
+    <section id="roadmap" class="py-20 px-4">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl font-bold text-center mb-16">Development Roadmap</h2>
+            <div class="space-y-8">
+                <div class="flex">
+                    <div class="flex flex-col items-center mr-4">
+                        <div class="w-4 h-4 bg-aegis-cyan rounded-full"></div>
+                        <div class="w-1 h-full bg-aegis-teal/30"></div>
+                    </div>
+                    <div class="pb-8">
+                        <h3 class="text-2xl font-bold mb-2 text-aegis-cyan">Phase 1: Foundation (Sprints 1-6) ✓</h3>
+                        <p class="text-gray-300">Solana smart contracts, Rust node with Pingora proxy, basic staking & rewards</p>
+                    </div>
+                </div>
+
+                <div class="flex">
+                    <div class="flex flex-col items-center mr-4">
+                        <div class="w-4 h-4 bg-aegis-lightblue rounded-full"></div>
+                        <div class="w-1 h-full bg-aegis-teal/30"></div>
+                    </div>
+                    <div class="pb-8">
+                        <h3 class="text-2xl font-bold mb-2 text-aegis-lightblue">Phase 2: Security & State (Sprints 7-12)</h3>
+                        <p class="text-gray-300">eBPF DDoS protection, WAF integration, global state sync with CRDTs</p>
+                    </div>
+                </div>
+
+                <div class="flex">
+                    <div class="flex flex-col items-center mr-4">
+                        <div class="w-4 h-4 bg-aegis-mediumblue rounded-full"></div>
+                        <div class="w-1 h-full bg-aegis-teal/30"></div>
+                    </div>
+                    <div class="pb-8">
+                        <h3 class="text-2xl font-bold mb-2 text-aegis-mediumblue">Phase 3: Edge Compute (Sprints 13-18)</h3>
+                        <p class="text-gray-300">Wasm edge functions, DAO governance, IPFS integration</p>
+                    </div>
+                </div>
+
+                <div class="flex">
+                    <div class="flex flex-col items-center mr-4">
+                        <div class="w-4 h-4 bg-aegis-purple rounded-full"></div>
+                    </div>
+                    <div>
+                        <h3 class="text-2xl font-bold mb-2 text-aegis-purple">Phase 4: Launch (Sprints 19-24)</h3>
+                        <p class="text-gray-300">Security audits, performance optimization, mainnet deployment</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-20 px-4 bg-gradient-to-r from-aegis-darkblue/50 to-aegis-purple/50">
+        <div class="max-w-4xl mx-auto text-center">
+            <h2 class="text-4xl font-bold mb-6">Join the Decentralized Edge Revolution</h2>
+            <p class="text-xl text-gray-300 mb-8">
+                Help build the future of internet infrastructure. Run a node, earn rewards, and be part of the community.
+            </p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" class="px-8 py-4 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold hover:shadow-lg hover:shadow-aegis-cyan/50 transition-all">
+                    Documentation
+                </a>
+                <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" class="px-8 py-4 border-2 border-aegis-teal text-white rounded-lg font-semibold hover:bg-aegis-teal/10 transition-all">
+                    GitHub
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-slate-900 border-t border-aegis-teal/20 py-12 px-4">
+        <div class="max-w-7xl mx-auto">
+            <div class="text-center">
+                <img src="images/AEGIS-logo.svg" alt="AEGIS" class="h-12 mx-auto mb-4">
+                <p class="text-gray-400 mb-8">
+                    Decentralized edge network powered by blockchain
+                </p>
+                <p class="text-gray-500 text-sm">
+                    &copy; 2024 AEGIS. Decentralized and community-owned.
+                </p>
+            </div>
+        </div>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
