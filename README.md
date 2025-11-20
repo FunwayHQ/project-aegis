@@ -329,7 +329,7 @@ Please report security vulnerabilities privately to dimitrymd@gmail.com. Do not 
 
 ## Community
 
-- **Website**: COMING SOON
+- **Website**: https://aegis.funwayinteractive.com/
 - **Discord**: COMING SOON
 - **Twitter**: COMING SOON
 - **Forum**: COMING SOON
