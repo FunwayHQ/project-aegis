@@ -23,3 +23,7 @@ pub mod threat_intel_service;
 pub mod distributed_counter;
 pub mod distributed_rate_limiter;
 pub mod nats_sync;
+
+// Sprint 12: Verifiable Analytics
+pub mod verifiable_metrics;
+pub mod verifiable_metrics_api;
