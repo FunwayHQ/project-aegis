@@ -14,7 +14,7 @@
 //! - CPU cycles: ~1M fuel units
 
 use serde::{Deserialize, Serialize};
-use std::alloc::{alloc, dealloc, Layout};
+use std::alloc::{alloc as std_alloc, dealloc as std_dealloc, Layout};
 use std::slice;
 
 /// WAF analysis result (matches wasm_runtime.rs WafResult)
@@ -341,7 +341,7 @@ fn write_result(result: &WafResult) -> u32 {
     // Allocate: 4 bytes for length + JSON data
     let total_size = 4 + json_bytes.len();
     let layout = Layout::from_size_align(total_size, 4).unwrap();
-    let result_ptr = unsafe { alloc(layout) };
+    let result_ptr = unsafe { std_alloc(layout) };
 
     // Write length (first 4 bytes)
     unsafe {
@@ -361,14 +361,14 @@ fn write_result(result: &WafResult) -> u32 {
 #[no_mangle]
 pub extern "C" fn alloc(size: u32) -> u32 {
     let layout = Layout::from_size_align(size as usize, 4).unwrap();
-    unsafe { alloc(layout) as u32 }
+    unsafe { std_alloc(layout) as u32 }
 }
 
 /// WASM Export: Deallocate memory (not currently used, but exported for completeness)
 #[no_mangle]
 pub extern "C" fn dealloc(ptr: u32, size: u32) {
     let layout = Layout::from_size_align(size as usize, 4).unwrap();
-    unsafe { dealloc(ptr as *mut u8, layout) };
+    unsafe { std_dealloc(ptr as *mut u8, layout) };
 }
 
 #[cfg(test)]

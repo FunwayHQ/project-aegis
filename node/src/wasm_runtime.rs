@@ -71,6 +71,8 @@ pub struct WasmExecutionContext {
     pub response_status: Option<u16>,
     pub response_headers: Vec<(String, String)>,
     pub response_body: Vec<u8>,
+    /// Sprint 15: Flag to indicate if request should terminate early
+    pub terminate_early: bool,
 }
 
 impl Default for WasmExecutionContext {
@@ -83,6 +85,7 @@ impl Default for WasmExecutionContext {
             response_status: None,
             response_headers: Vec::new(),
             response_body: Vec::new(),
+            terminate_early: false,
         }
     }
 }
@@ -96,6 +99,17 @@ pub struct EdgeFunctionStoreData {
     pub http_client: reqwest::Client,
     /// Shared memory buffer for data exchange between host and Wasm
     pub shared_buffer: Arc<RwLock<Vec<u8>>>,
+    /// Sprint 15: Execution context for request/response manipulation
+    pub execution_context: Arc<RwLock<WasmExecutionContext>>,
+}
+
+/// Sprint 15: Result from edge function execution with request/response context
+#[derive(Debug, Clone)]
+pub struct EdgeFunctionResult {
+    /// Result data from shared buffer
+    pub result_data: Vec<u8>,
+    /// Updated execution context with response modifications
+    pub context: WasmExecutionContext,
 }
 
 /// WAF analysis result returned from Wasm module
@@ -300,6 +314,24 @@ impl WasmRuntime {
         function_name: &str,
         cache_client: Option<Arc<tokio::sync::Mutex<CacheClient>>>,
     ) -> Result<Vec<u8>> {
+        // Call with default execution context and return just the result data
+        let result = self.execute_edge_function_with_context(
+            module_id,
+            function_name,
+            cache_client,
+            WasmExecutionContext::default(),
+        )?;
+        Ok(result.result_data)
+    }
+
+    /// Sprint 15: Execute edge function with request/response context
+    pub fn execute_edge_function_with_context(
+        &self,
+        module_id: &str,
+        function_name: &str,
+        cache_client: Option<Arc<tokio::sync::Mutex<CacheClient>>>,
+        context: WasmExecutionContext,
+    ) -> Result<EdgeFunctionResult> {
         let modules = self.modules.read().unwrap();
         let (module, metadata) = modules.get(module_id)
             .context("Edge function module not found")?;
@@ -310,13 +342,14 @@ impl WasmRuntime {
 
         let start = Instant::now();
 
-        // Create store data with cache and HTTP client
+        // Create store data with cache, HTTP client, and execution context
         let store_data = EdgeFunctionStoreData {
             cache: cache_client,
             http_client: reqwest::Client::builder()
                 .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
                 .build()?,
             shared_buffer: Arc::new(RwLock::new(Vec::new())),
+            execution_context: Arc::new(RwLock::new(context)),
         };
 
         // Create store with resource limits
@@ -345,11 +378,16 @@ impl WasmRuntime {
                   EDGE_FUNCTION_TIMEOUT_MS, execution_time);
         }
 
-        // Get result from shared buffer if function returned success
+        // Get result from shared buffer and updated context if function returned success
         if result == 0 {
             let store_data = store.data();
             let buffer = store_data.shared_buffer.read().unwrap();
-            Ok(buffer.clone())
+            let updated_context = store_data.execution_context.read().unwrap().clone();
+
+            Ok(EdgeFunctionResult {
+                result_data: buffer.clone(),
+                context: updated_context,
+            })
         } else {
             anyhow::bail!("Edge function returned error code: {}", result);
         }
@@ -674,6 +712,372 @@ impl WasmRuntime {
                 }
 
                 length as i32
+            },
+        )?;
+
+        // ============================================
+        // Sprint 15: Request Context Access Functions
+        // ============================================
+
+        // Host function: request_get_method() -> i32
+        // Returns the length of the request method (stored in shared buffer), or -1 on error
+        linker.func_wrap(
+            "env",
+            "request_get_method",
+            |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
+                let data = caller.data_mut();
+                let context = data.execution_context.read().unwrap();
+                let method_bytes = context.request_method.as_bytes();
+
+                *data.shared_buffer.write().unwrap() = method_bytes.to_vec();
+                method_bytes.len() as i32
+            },
+        )?;
+
+        // Host function: request_get_uri() -> i32
+        // Returns the length of the request URI (stored in shared buffer), or -1 on error
+        linker.func_wrap(
+            "env",
+            "request_get_uri",
+            |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
+                let data = caller.data_mut();
+                let context = data.execution_context.read().unwrap();
+                let uri_bytes = context.request_uri.as_bytes();
+
+                *data.shared_buffer.write().unwrap() = uri_bytes.to_vec();
+                uri_bytes.len() as i32
+            },
+        )?;
+
+        // Host function: request_get_header(name_ptr, name_len) -> i32
+        // Returns the length of the header value (stored in shared buffer), or -1 if not found
+        linker.func_wrap(
+            "env",
+            "request_get_header",
+            |mut caller: Caller<EdgeFunctionStoreData>, name_ptr: u32, name_len: u32| -> i32 {
+                // Read header name from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut name_bytes = vec![0u8; name_len as usize];
+                if memory.read(&caller, name_ptr as usize, &mut name_bytes).is_err() {
+                    error!("Failed to read header name from Wasm memory");
+                    return -1;
+                }
+
+                let header_name = match String::from_utf8(name_bytes) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header name");
+                        return -1;
+                    }
+                };
+
+                // Look up header in execution context
+                let data = caller.data_mut();
+                let context = data.execution_context.read().unwrap();
+
+                // Case-insensitive header lookup
+                let header_name_lower = header_name.to_lowercase();
+                for (name, value) in &context.request_headers {
+                    if name.to_lowercase() == header_name_lower {
+                        let value_bytes = value.as_bytes();
+                        *data.shared_buffer.write().unwrap() = value_bytes.to_vec();
+                        return value_bytes.len() as i32;
+                    }
+                }
+
+                debug!("Header not found: {}", header_name);
+                -1
+            },
+        )?;
+
+        // Host function: request_get_header_names() -> i32
+        // Returns the length of JSON array of all header names (stored in shared buffer)
+        linker.func_wrap(
+            "env",
+            "request_get_header_names",
+            |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
+                let data = caller.data_mut();
+                let context = data.execution_context.read().unwrap();
+
+                // Collect all header names into a Vec
+                let header_names: Vec<String> = context.request_headers
+                    .iter()
+                    .map(|(name, _)| name.clone())
+                    .collect();
+
+                // Serialize to JSON
+                match serde_json::to_vec(&header_names) {
+                    Ok(json_bytes) => {
+                        let len = json_bytes.len() as i32;
+                        *data.shared_buffer.write().unwrap() = json_bytes;
+                        len
+                    }
+                    Err(e) => {
+                        error!("Failed to serialize header names: {}", e);
+                        -1
+                    }
+                }
+            },
+        )?;
+
+        // Host function: request_get_body() -> i32
+        // Returns the length of the request body (stored in shared buffer)
+        linker.func_wrap(
+            "env",
+            "request_get_body",
+            |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
+                let data = caller.data_mut();
+                let context = data.execution_context.read().unwrap();
+
+                *data.shared_buffer.write().unwrap() = context.request_body.clone();
+                context.request_body.len() as i32
+            },
+        )?;
+
+        // ============================================
+        // Sprint 15: Response Manipulation Functions
+        // ============================================
+
+        // Host function: response_set_status(status: u32) -> i32
+        // Sets the response status code, returns 0 on success, -1 on error
+        linker.func_wrap(
+            "env",
+            "response_set_status",
+            |mut caller: Caller<EdgeFunctionStoreData>, status: u32| -> i32 {
+                if status < 100 || status > 599 {
+                    error!("Invalid HTTP status code: {}", status);
+                    return -1;
+                }
+
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+                context.response_status = Some(status as u16);
+
+                debug!("Response status set to: {}", status);
+                0
+            },
+        )?;
+
+        // Host function: response_set_header(name_ptr, name_len, value_ptr, value_len) -> i32
+        // Sets (replaces) a response header, returns 0 on success, -1 on error
+        linker.func_wrap(
+            "env",
+            "response_set_header",
+            |mut caller: Caller<EdgeFunctionStoreData>,
+             name_ptr: u32, name_len: u32,
+             value_ptr: u32, value_len: u32| -> i32 {
+                // Read header name and value from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut name_bytes = vec![0u8; name_len as usize];
+                if memory.read(&caller, name_ptr as usize, &mut name_bytes).is_err() {
+                    error!("Failed to read header name from Wasm memory");
+                    return -1;
+                }
+
+                let mut value_bytes = vec![0u8; value_len as usize];
+                if memory.read(&caller, value_ptr as usize, &mut value_bytes).is_err() {
+                    error!("Failed to read header value from Wasm memory");
+                    return -1;
+                }
+
+                let header_name = match String::from_utf8(name_bytes) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header name");
+                        return -1;
+                    }
+                };
+
+                let header_value = match String::from_utf8(value_bytes) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header value");
+                        return -1;
+                    }
+                };
+
+                // Update response headers in execution context
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+
+                // Remove existing header with same name (case-insensitive)
+                let header_name_lower = header_name.to_lowercase();
+                context.response_headers.retain(|(name, _)| name.to_lowercase() != header_name_lower);
+
+                // Add new header
+                context.response_headers.push((header_name.clone(), header_value.clone()));
+
+                debug!("Response header set: {} = {}", header_name, header_value);
+                0
+            },
+        )?;
+
+        // Host function: response_add_header(name_ptr, name_len, value_ptr, value_len) -> i32
+        // Adds a response header (allows duplicates), returns 0 on success, -1 on error
+        linker.func_wrap(
+            "env",
+            "response_add_header",
+            |mut caller: Caller<EdgeFunctionStoreData>,
+             name_ptr: u32, name_len: u32,
+             value_ptr: u32, value_len: u32| -> i32 {
+                // Read header name and value from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut name_bytes = vec![0u8; name_len as usize];
+                if memory.read(&caller, name_ptr as usize, &mut name_bytes).is_err() {
+                    error!("Failed to read header name from Wasm memory");
+                    return -1;
+                }
+
+                let mut value_bytes = vec![0u8; value_len as usize];
+                if memory.read(&caller, value_ptr as usize, &mut value_bytes).is_err() {
+                    error!("Failed to read header value from Wasm memory");
+                    return -1;
+                }
+
+                let header_name = match String::from_utf8(name_bytes) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header name");
+                        return -1;
+                    }
+                };
+
+                let header_value = match String::from_utf8(value_bytes) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header value");
+                        return -1;
+                    }
+                };
+
+                // Add header to execution context (allows duplicates)
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+                context.response_headers.push((header_name.clone(), header_value.clone()));
+
+                debug!("Response header added: {} = {}", header_name, header_value);
+                0
+            },
+        )?;
+
+        // Host function: response_remove_header(name_ptr, name_len) -> i32
+        // Removes all response headers with the given name, returns count removed
+        linker.func_wrap(
+            "env",
+            "response_remove_header",
+            |mut caller: Caller<EdgeFunctionStoreData>, name_ptr: u32, name_len: u32| -> i32 {
+                // Read header name from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut name_bytes = vec![0u8; name_len as usize];
+                if memory.read(&caller, name_ptr as usize, &mut name_bytes).is_err() {
+                    error!("Failed to read header name from Wasm memory");
+                    return -1;
+                }
+
+                let header_name = match String::from_utf8(name_bytes) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in header name");
+                        return -1;
+                    }
+                };
+
+                // Remove headers from execution context
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+                let header_name_lower = header_name.to_lowercase();
+                let original_len = context.response_headers.len();
+
+                context.response_headers.retain(|(name, _)| name.to_lowercase() != header_name_lower);
+
+                let removed_count = original_len - context.response_headers.len();
+                debug!("Removed {} headers with name: {}", removed_count, header_name);
+                removed_count as i32
+            },
+        )?;
+
+        // Host function: response_set_body(body_ptr, body_len) -> i32
+        // Sets the response body, returns 0 on success, -1 on error
+        linker.func_wrap(
+            "env",
+            "response_set_body",
+            |mut caller: Caller<EdgeFunctionStoreData>, body_ptr: u32, body_len: u32| -> i32 {
+                // Read body from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut body_bytes = vec![0u8; body_len as usize];
+                if memory.read(&caller, body_ptr as usize, &mut body_bytes).is_err() {
+                    error!("Failed to read body from Wasm memory");
+                    return -1;
+                }
+
+                // Update response body in execution context
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+                context.response_body = body_bytes;
+
+                debug!("Response body set ({} bytes)", body_len);
+                0
+            },
+        )?;
+
+        // ============================================
+        // Sprint 15: Early Termination Function
+        // ============================================
+
+        // Host function: request_terminate(status: u32) -> i32
+        // Signals that the request should terminate early with the given status
+        // Returns 0 on success, -1 on error
+        linker.func_wrap(
+            "env",
+            "request_terminate",
+            |mut caller: Caller<EdgeFunctionStoreData>, status: u32| -> i32 {
+                if status < 100 || status > 599 {
+                    error!("Invalid HTTP status code for termination: {}", status);
+                    return -1;
+                }
+
+                let data = caller.data_mut();
+                let mut context = data.execution_context.write().unwrap();
+                context.terminate_early = true;
+                context.response_status = Some(status as u16);
+
+                info!("Request early termination requested with status: {}", status);
+                0
             },
         )?;
 
