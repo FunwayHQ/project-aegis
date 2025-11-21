@@ -1,9 +1,11 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use aya::{
-    include_bytes_aligned,
-    maps::{Array, HashMap, MapData},
-    programs::{Xdp, XdpFlags},
-    Ebpf,
+    maps::{Array, HashMap},
+    programs::{
+        xdp::XdpLinkId,
+        Xdp, XdpFlags,
+    },
+    Bpf,
 };
 use std::net::Ipv4Addr;
 use std::path::Path;
@@ -51,9 +53,10 @@ impl DDoSStats {
 
 /// eBPF program loader and manager
 pub struct EbpfLoader {
-    ebpf: Ebpf,
+    ebpf: Bpf,
     interface: String,
     attached: bool,
+    link_id: Option<XdpLinkId>,
 }
 
 impl EbpfLoader {
@@ -63,20 +66,25 @@ impl EbpfLoader {
         let ebpf_data = std::fs::read(program_path)
             .with_context(|| format!("Failed to read eBPF program from {:?}", program_path))?;
 
-        let ebpf = Ebpf::load(&ebpf_data).context("Failed to load eBPF program")?;
+        let ebpf = Bpf::load(&ebpf_data).context("Failed to load eBPF program")?;
 
         Ok(Self {
             ebpf,
             interface: String::new(),
             attached: false,
+            link_id: None,
         })
     }
 
     /// Load eBPF program from embedded bytes
+    /// Note: Requires eBPF program to be built first
+    #[allow(dead_code)]
     pub fn load_embedded() -> Result<Self> {
         // This would include the compiled eBPF program at compile time
-        // For now, we'll load from file
-        let ebpf = Ebpf::load(include_bytes_aligned!(
+        // Disabled for now to allow tests to run without building eBPF program
+        // Uncomment when eBPF program is built
+        /*
+        let ebpf = Bpf::load(include_bytes_aligned!(
             "../ebpf/syn-flood-filter/target/bpfel-unknown-none/release/syn-flood-filter"
         ))
         .context("Failed to load embedded eBPF program")?;
@@ -86,6 +94,8 @@ impl EbpfLoader {
             interface: String::new(),
             attached: false,
         })
+        */
+        anyhow::bail!("load_embedded is not available without building eBPF program first")
     }
 
     /// Attach XDP program to network interface
@@ -95,7 +105,7 @@ impl EbpfLoader {
         let program: &mut Xdp = self
             .ebpf
             .program_mut("syn_flood_filter")
-            .context("XDP program not found")?
+            .ok_or_else(|| anyhow!("XDP program not found"))?
             .try_into()
             .context("Program is not XDP type")?;
 
@@ -104,12 +114,13 @@ impl EbpfLoader {
 
         // Attach to interface with SKB mode (compatible, slower than native)
         // For production, use XdpFlags::default() for native mode
-        program
+        let link_id = program
             .attach(interface, XdpFlags::SKB_MODE)
             .context("Failed to attach XDP program to interface")?;
 
         self.interface = interface.to_string();
         self.attached = true;
+        self.link_id = Some(link_id);
 
         info!("XDP program attached successfully to {}", interface);
         Ok(())
@@ -121,18 +132,29 @@ impl EbpfLoader {
             return Ok(());
         }
 
-        let program: &mut Xdp = self.ebpf.program_mut("syn_flood_filter")?.try_into()?;
+        if let Some(link_id) = self.link_id.take() {
+            let program: &mut Xdp = self
+                .ebpf
+                .program_mut("syn_flood_filter")
+                .ok_or_else(|| anyhow!("XDP program not found"))?
+                .try_into()
+                .context("Program is not XDP type")?;
 
-        program.detach(&self.interface)?;
+            program.detach(link_id)?;
 
-        self.attached = false;
-        info!("XDP program detached from {}", self.interface);
+            self.attached = false;
+            info!("XDP program detached from {}", self.interface);
+        }
         Ok(())
     }
 
     /// Set SYN flood threshold (packets per second per IP)
     pub fn set_syn_threshold(&mut self, threshold: u64) -> Result<()> {
-        let mut config: Array<_, u64> = Array::try_from(self.ebpf.map_mut("CONFIG")?)?;
+        let mut config: Array<_, u64> = Array::try_from(
+            self.ebpf
+                .map_mut("CONFIG")
+                .ok_or_else(|| anyhow!("CONFIG map not found"))?,
+        )?;
 
         config
             .set(CONFIG_SYN_THRESHOLD, threshold, 0)
@@ -144,7 +166,11 @@ impl EbpfLoader {
 
     /// Set global SYN threshold
     pub fn set_global_threshold(&mut self, threshold: u64) -> Result<()> {
-        let mut config: Array<_, u64> = Array::try_from(self.ebpf.map_mut("CONFIG")?)?;
+        let mut config: Array<_, u64> = Array::try_from(
+            self.ebpf
+                .map_mut("CONFIG")
+                .ok_or_else(|| anyhow!("CONFIG map not found"))?,
+        )?;
 
         config
             .set(CONFIG_GLOBAL_THRESHOLD, threshold, 0)
@@ -159,8 +185,11 @@ impl EbpfLoader {
         let ip_addr = Ipv4Addr::from_str(ip)?;
         let ip_u32 = u32::from(ip_addr).to_be(); // Network byte order
 
-        let mut whitelist: HashMap<_, u32, u8> =
-            HashMap::try_from(self.ebpf.map_mut("WHITELIST")?)?;
+        let mut whitelist: HashMap<_, u32, u8> = HashMap::try_from(
+            self.ebpf
+                .map_mut("WHITELIST")
+                .ok_or_else(|| anyhow!("WHITELIST map not found"))?,
+        )?;
 
         whitelist
             .insert(ip_u32, 1, 0)
@@ -175,8 +204,11 @@ impl EbpfLoader {
         let ip_addr = Ipv4Addr::from_str(ip)?;
         let ip_u32 = u32::from(ip_addr).to_be();
 
-        let mut whitelist: HashMap<_, u32, u8> =
-            HashMap::try_from(self.ebpf.map_mut("WHITELIST")?)?;
+        let mut whitelist: HashMap<_, u32, u8> = HashMap::try_from(
+            self.ebpf
+                .map_mut("WHITELIST")
+                .ok_or_else(|| anyhow!("WHITELIST map not found"))?,
+        )?;
 
         whitelist
             .remove(&ip_u32)
@@ -188,7 +220,11 @@ impl EbpfLoader {
 
     /// Get current statistics
     pub fn get_stats(&self) -> Result<DDoSStats> {
-        let stats_map: Array<_, u64> = Array::try_from(self.ebpf.map("STATS")?)?;
+        let stats_map: Array<_, u64> = Array::try_from(
+            self.ebpf
+                .map("STATS")
+                .ok_or_else(|| anyhow!("STATS map not found"))?,
+        )?;
 
         let total_packets = stats_map.get(&STAT_TOTAL_PACKETS, 0).unwrap_or(0);
         let syn_packets = stats_map.get(&STAT_SYN_PACKETS, 0).unwrap_or(0);
