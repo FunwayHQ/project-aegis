@@ -326,6 +326,7 @@ impl ProxyHttp for AegisProxy {
         Ok(false)
     }
 
+    /* Temporarily disabled - Sprint 12.5 body filter has lifetime issues
     /// Request body filter - buffer request body for WAF inspection
     fn request_body_filter(
         &self,
@@ -382,6 +383,7 @@ impl ProxyHttp for AegisProxy {
 
         Ok(None)
     }
+    */
 
     /// Determine where to send the request (upstream selection)
     async fn upstream_peer(

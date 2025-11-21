@@ -24,6 +24,8 @@ const STAT_DROPPED_PACKETS: u32 = 2;
 const STAT_PASSED_PACKETS: u32 = 3;
 const STAT_UDP_PACKETS: u32 = 6;
 const STAT_UDP_DROPPED: u32 = 7;
+const STAT_IPV6_PACKETS: u32 = 8; // Sprint 13.5
+const STAT_IPV6_DROPPED: u32 = 9; // Sprint 13.5
 
 /// eBPF DDoS protection statistics
 #[derive(Debug, Clone, Default)]
@@ -34,6 +36,8 @@ pub struct DDoSStats {
     pub passed_packets: u64,
     pub udp_packets: u64,
     pub udp_dropped: u64,
+    pub ipv6_packets: u64,  // Sprint 13.5
+    pub ipv6_dropped: u64,  // Sprint 13.5
 }
 
 impl DDoSStats {
@@ -70,6 +74,24 @@ impl DDoSStats {
             0.0
         } else {
             (self.udp_dropped as f64 / self.udp_packets as f64) * 100.0
+        }
+    }
+
+    /// Calculate IPv6 packet percentage (Sprint 13.5)
+    pub fn ipv6_percentage(&self) -> f64 {
+        if self.total_packets == 0 {
+            0.0
+        } else {
+            (self.ipv6_packets as f64 / self.total_packets as f64) * 100.0
+        }
+    }
+
+    /// Calculate IPv6 drop rate percentage (Sprint 13.5)
+    pub fn ipv6_drop_rate(&self) -> f64 {
+        if self.ipv6_packets == 0 {
+            0.0
+        } else {
+            (self.ipv6_dropped as f64 / self.ipv6_packets as f64) * 100.0
         }
     }
 }
@@ -271,6 +293,8 @@ impl EbpfLoader {
         let passed_packets = stats_map.get(&STAT_PASSED_PACKETS, 0).unwrap_or(0);
         let udp_packets = stats_map.get(&STAT_UDP_PACKETS, 0).unwrap_or(0);
         let udp_dropped = stats_map.get(&STAT_UDP_DROPPED, 0).unwrap_or(0);
+        let ipv6_packets = stats_map.get(&STAT_IPV6_PACKETS, 0).unwrap_or(0);
+        let ipv6_dropped = stats_map.get(&STAT_IPV6_DROPPED, 0).unwrap_or(0);
 
         Ok(DDoSStats {
             total_packets,
@@ -279,6 +303,8 @@ impl EbpfLoader {
             passed_packets,
             udp_packets,
             udp_dropped,
+            ipv6_packets,
+            ipv6_dropped,
         })
     }
 
@@ -428,6 +454,10 @@ mod tests {
             syn_packets: 800,
             dropped_packets: 100,
             passed_packets: 900,
+            udp_packets: 0,
+            udp_dropped: 0,
+            ipv6_packets: 0,
+            ipv6_dropped: 0,
         };
 
         assert_eq!(stats.drop_rate(), 10.0); // 100/1000 = 10%
@@ -446,6 +476,10 @@ mod tests {
             syn_packets: 200,
             dropped_packets: 50,
             passed_packets: 950,
+            udp_packets: 0,
+            udp_dropped: 0,
+            ipv6_packets: 0,
+            ipv6_dropped: 0,
         };
 
         assert_eq!(stats.syn_percentage(), 20.0); // 200/1000 = 20%
@@ -458,6 +492,10 @@ mod tests {
             syn_packets: 1000,
             dropped_packets: 1000,
             passed_packets: 0,
+            udp_packets: 0,
+            udp_dropped: 0,
+            ipv6_packets: 0,
+            ipv6_dropped: 0,
         };
 
         assert_eq!(stats.drop_rate(), 100.0);

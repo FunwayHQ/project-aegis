@@ -119,6 +119,42 @@ impl DistributedCounter {
         self.actor_id
     }
 
+    /// Sprint 13.5: Estimate memory usage based on serialized size
+    /// Returns the approximate number of bytes used by the counter state
+    pub fn estimated_size(&self) -> Result<usize> {
+        let state = self.serialize_state()?;
+        Ok(state.len())
+    }
+
+    /// Sprint 13.5: Compact the counter by resetting to a fresh state
+    /// This resets the counter to use only the current actor with the total value
+    /// This prevents unbounded memory growth from accumulating actor IDs
+    pub fn compact(&self) -> Result<()> {
+        use num_traits::ToPrimitive;
+
+        info!("Compacting distributed counter");
+
+        let mut counter = self.counter.write()
+            .map_err(|e| anyhow::anyhow!("Failed to acquire write lock: {}", e))?;
+
+        // Get current total value
+        let total = counter.read().to_u64()
+            .ok_or_else(|| anyhow::anyhow!("Counter value too large for u64"))?;
+
+        // Create new counter with only current actor
+        let mut new_counter = GCounter::new();
+        for _ in 0..total {
+            let op = new_counter.inc(self.actor_id);
+            new_counter.apply(op);
+        }
+
+        // Replace old counter with compacted counter
+        *counter = new_counter;
+
+        info!("Compacted counter, value: {}", total);
+        Ok(())
+    }
+
     /// Reset counter (for testing only)
     #[cfg(test)]
     pub fn reset(&self) -> Result<()> {

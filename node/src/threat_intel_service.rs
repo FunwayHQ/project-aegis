@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
+use crate::blocklist_persistence::BlocklistPersistence;
 use crate::ebpf_loader::EbpfLoader;
 use crate::threat_intel_p2p::{P2PConfig, ThreatIntelP2P, ThreatIntelligence};
 
@@ -20,6 +21,10 @@ pub struct ThreatIntelConfig {
     pub auto_publish: bool,
     /// Minimum severity to block (1-10)
     pub min_severity: u8,
+    /// Sprint 13.5: Path to SQLite blocklist persistence database (optional)
+    pub persistence_db_path: Option<String>,
+    /// Sprint 13.5: Whether to sync blocklist on startup (default: true)
+    pub sync_on_startup: bool,
 }
 
 impl Default for ThreatIntelConfig {
@@ -30,6 +35,8 @@ impl Default for ThreatIntelConfig {
             p2p_config: P2PConfig::default(),
             auto_publish: true,
             min_severity: 5,
+            persistence_db_path: None,
+            sync_on_startup: true,
         }
     }
 }
@@ -40,6 +47,8 @@ pub struct ThreatIntelService {
     ebpf: Arc<Mutex<EbpfLoader>>,
     config: ThreatIntelConfig,
     p2p_sender: mpsc::UnboundedSender<ThreatIntelligence>,
+    /// Sprint 13.5: Optional blocklist persistence (wrapped in Mutex for Send)
+    persistence: Option<Arc<Mutex<BlocklistPersistence>>>,
 }
 
 impl ThreatIntelService {
@@ -56,6 +65,45 @@ impl ThreatIntelService {
 
         info!("eBPF program attached to interface: {}", config.interface);
 
+        // Sprint 13.5: Restore blocklist from persistent storage if configured
+        let (restored_entries, persistence) = if let Some(ref db_path) = config.persistence_db_path {
+            info!("Sprint 13.5: Restoring blocklist from persistence: {}", db_path);
+
+            match BlocklistPersistence::new(db_path) {
+                Ok(persistence) => {
+                    // Restore to eBPF
+                    match persistence.restore_to_ebpf(&mut ebpf) {
+                        Ok(count) => {
+                            info!("Restored {} entries from persistent storage to eBPF", count);
+                        }
+                        Err(e) => {
+                            warn!("Failed to restore blocklist to eBPF: {}", e);
+                        }
+                    }
+
+                    // Get active entries for P2P sync
+                    let entries = match persistence.get_active_entries() {
+                        Ok(entries) => {
+                            info!("Retrieved {} active entries for P2P synchronization", entries.len());
+                            Some(entries)
+                        }
+                        Err(e) => {
+                            warn!("Failed to get active entries: {}", e);
+                            None
+                        }
+                    };
+
+                    (entries, Some(Arc::new(Mutex::new(persistence))))
+                }
+                Err(e) => {
+                    warn!("Failed to open blocklist persistence: {}", e);
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+
         // Create P2P network
         let mut p2p = ThreatIntelP2P::new(config.p2p_config.clone())
             .context("Failed to create P2P network")?;
@@ -66,9 +114,32 @@ impl ThreatIntelService {
         p2p.listen(config.p2p_config.listen_port)
             .context("Failed to start P2P listener")?;
 
+        // Sprint 13.5: Publish restored entries to P2P network for rapid convergence
+        if config.sync_on_startup {
+            if let Some(entries) = restored_entries {
+                info!("Sprint 13.5: Publishing {} restored entries to P2P network", entries.len());
+                for entry in entries {
+                    let threat = ThreatIntelligence::new(
+                        entry.ip.clone(),
+                        entry.reason.clone(),
+                        5, // Default severity for restored entries
+                        entry.remaining_secs(),
+                        format!("node-{}", p2p.peer_id()),
+                    );
+
+                    // Publish to network (non-blocking)
+                    if let Err(e) = p2p_sender.send(threat) {
+                        warn!("Failed to publish restored entry {}: {}", entry.ip, e);
+                    }
+                }
+                info!("Sprint 13.5: Blocklist synchronization initiated");
+            }
+        }
+
         let ebpf = Arc::new(Mutex::new(ebpf));
         let ebpf_clone = ebpf.clone();
         let min_severity = config.min_severity;
+        let persistence_clone = persistence.clone();
 
         // Spawn P2P event loop
         tokio::spawn(async move {
@@ -92,6 +163,21 @@ impl ThreatIntelService {
                     threat.ip, threat.block_duration_secs, threat.threat_type, threat.severity
                 );
 
+                // Sprint 13.5: Persist received threats to SQLite if configured
+                if let Some(ref persistence) = persistence_clone {
+                    use crate::blocklist_persistence::BlocklistEntry;
+                    let entry = BlocklistEntry::new(
+                        threat.ip.clone(),
+                        threat.block_duration_secs,
+                        format!("P2P: {}", threat.threat_type),
+                    );
+                    if let Ok(persistence) = persistence.lock() {
+                        if let Err(e) = persistence.add_entry(&entry) {
+                            warn!("Failed to persist P2P threat for {}: {}", threat.ip, e);
+                        }
+                    }
+                }
+
                 Ok(())
             };
 
@@ -104,6 +190,7 @@ impl ThreatIntelService {
             ebpf,
             config,
             p2p_sender,
+            persistence,
         })
     }
 
@@ -135,6 +222,21 @@ impl ThreatIntelService {
             let mut ebpf = self.ebpf.lock().unwrap();
             ebpf.blocklist_ip(&ip, block_duration_secs)
                 .context("Failed to blocklist IP locally")?;
+        }
+
+        // Sprint 13.5: Persist to SQLite if configured
+        if let Some(ref persistence) = self.persistence {
+            use crate::blocklist_persistence::BlocklistEntry;
+            let entry = BlocklistEntry::new(
+                ip.clone(),
+                block_duration_secs,
+                threat_type.clone(),
+            );
+            if let Ok(persistence) = persistence.lock() {
+                if let Err(e) = persistence.add_entry(&entry) {
+                    warn!("Failed to persist blocklist entry for {}: {}", ip, e);
+                }
+            }
         }
 
         // Publish to network if auto-publish is enabled
