@@ -1,0 +1,53 @@
+# AEGIS Bot Management Policy Configuration
+# Sprint 9: Advanced Bot Management
+
+[bot_management]
+# Enable/disable bot management
+enabled = true
+
+# Wasm module path (relative to node binary or absolute)
+wasm_module_path = "bot-detector.wasm"
+
+# Action for known bots (googlebot, curl, nikto, etc.)
+# Options: "allow", "block", "challenge", "log"
+known_bot_action = "block"
+
+# Action for suspicious requests (empty UA, too short, etc.)
+# Options: "allow", "block", "challenge", "log"
+suspicious_action = "challenge"
+
+# Action for human users (legitimate browsers)
+# Options: "allow", "block", "challenge", "log"
+human_action = "allow"
+
+[rate_limiting]
+# Enable/disable rate limiting
+enabled = true
+
+# Maximum requests per window
+threshold = 100
+
+# Time window in seconds
+window_secs = 60
+
+# Examples of policy configurations:
+
+# Permissive policy (allow most bots, only block malicious scanners):
+# known_bot_action = "log"
+# suspicious_action = "log"
+# human_action = "allow"
+
+# Strict policy (block all bots):
+# known_bot_action = "block"
+# suspicious_action = "block"
+# human_action = "allow"
+
+# Challenge-based policy (issue challenges for suspicious traffic):
+# known_bot_action = "challenge"
+# suspicious_action = "challenge"
+# human_action = "allow"
+
+# Development/testing policy (log everything, block nothing):
+# known_bot_action = "log"
+# suspicious_action = "log"
+# human_action = "allow"

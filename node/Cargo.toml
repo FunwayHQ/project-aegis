@@ -41,6 +41,9 @@ redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 # System metrics
 sysinfo = "0.30"
 
+# WebAssembly runtime for bot management (Sprint 9)
+wasmtime = "27.0"
+
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }

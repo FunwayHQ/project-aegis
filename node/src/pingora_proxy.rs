@@ -1,3 +1,4 @@
+use crate::bot_management::{BotAction, BotManager};
 use crate::cache::{generate_cache_key, CacheClient, CacheControl};
 use crate::waf::{AegisWaf, WafAction};
 use async_trait::async_trait;
@@ -13,6 +14,7 @@ pub struct ProxyContext {
     pub cache_key: Option<String>,
     pub cache_ttl: Option<u64>, // Custom TTL from Cache-Control
     pub waf_blocked: bool,       // Whether request was blocked by WAF
+    pub bot_blocked: bool,       // Whether request was blocked by bot management
 }
 
 /// AEGIS Pingora-based reverse proxy
@@ -27,6 +29,8 @@ pub struct AegisProxy {
     pub caching_enabled: bool,
     /// Web Application Firewall
     pub waf: Option<AegisWaf>,
+    /// Bot Management System (Sprint 9)
+    pub bot_manager: Option<std::sync::Arc<BotManager>>,
 }
 
 impl AegisProxy {
@@ -49,6 +53,17 @@ impl AegisProxy {
         cache_ttl: u64,
         caching_enabled: bool,
         waf: Option<AegisWaf>,
+    ) -> Self {
+        Self::new_with_bot_manager(origin, cache_client, cache_ttl, caching_enabled, waf, None)
+    }
+
+    pub fn new_with_bot_manager(
+        origin: String,
+        cache_client: Option<std::sync::Arc<tokio::sync::Mutex<CacheClient>>>,
+        cache_ttl: u64,
+        caching_enabled: bool,
+        waf: Option<AegisWaf>,
+        bot_manager: Option<std::sync::Arc<BotManager>>,
     ) -> Self {
         // Parse origin to get address with port for HttpPeer
         // Example: "http://httpbin.org" -> "httpbin.org:80"
@@ -77,6 +92,7 @@ impl AegisProxy {
             cache_ttl,
             caching_enabled,
             waf,
+            bot_manager,
         }
     }
 }
@@ -92,11 +108,89 @@ impl ProxyHttp for AegisProxy {
             cache_key: None,
             cache_ttl: None,
             waf_blocked: false,
+            bot_blocked: false,
         }
     }
 
-    /// Request filter - check WAF and cache before proxying
+    /// Request filter - check bot management, WAF, and cache before proxying
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // ============================================
+        // PHASE 0: Bot Management (Sprint 9)
+        // ============================================
+        if let Some(bot_manager) = &self.bot_manager {
+            // Extract User-Agent and IP
+            let user_agent = session
+                .req_header()
+                .headers
+                .get("User-Agent")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("");
+
+            // Get client IP (simplified - in production use X-Forwarded-For with validation)
+            let ip = session
+                .downstream_session
+                .client_addr()
+                .map(|addr| addr.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+
+            // Analyze request
+            match bot_manager.analyze_request(user_agent, &ip) {
+                Ok((verdict, action)) => {
+                    log::debug!(
+                        "Bot detection: {:?} verdict, {:?} action for UA: {} from IP: {}",
+                        verdict,
+                        action,
+                        user_agent,
+                        ip
+                    );
+
+                    match action {
+                        BotAction::Block => {
+                            ctx.bot_blocked = true;
+                            log::warn!("BOT BLOCKED: {:?} - User-Agent: {}", verdict, user_agent);
+
+                            // Send 403 Forbidden response
+                            let mut header = pingora::http::ResponseHeader::build(403, Some(3))?;
+                            header.insert_header("Content-Type", "text/plain")?;
+                            session.write_response_header(Box::new(header), true).await?;
+                            session
+                                .write_response_body(
+                                    Some("403 Forbidden - Bot detected".into()),
+                                    true,
+                                )
+                                .await?;
+
+                            return Ok(true);
+                        }
+                        BotAction::Challenge => {
+                            // For PoC, just log the challenge
+                            log::info!(
+                                "BOT CHALLENGE: {:?} - Would issue JS challenge for UA: {}",
+                                verdict,
+                                user_agent
+                            );
+                            // In production, you would return a challenge page here
+                            // For now, allow the request to continue
+                        }
+                        BotAction::Log => {
+                            log::info!(
+                                "BOT LOGGED: {:?} - User-Agent: {} (allowed)",
+                                verdict,
+                                user_agent
+                            );
+                        }
+                        BotAction::Allow => {
+                            // Continue normally
+                        }
+                    }
+                }
+                Err(e) => {
+                    // Log error but don't block (fail open)
+                    log::error!("Bot detection error: {} - allowing request", e);
+                }
+            }
+        }
+
         // ============================================
         // PHASE 1: WAF Analysis (Security First!)
         // ============================================
