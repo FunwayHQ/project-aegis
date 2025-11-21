@@ -158,7 +158,6 @@ fn handle_not_found(method: &Method, path: &str) -> Result<Response<Body>, Infal
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::Uri;
 
     /// Helper to create a test request
     fn create_request(method: Method, uri: &str) -> Request<Body> {

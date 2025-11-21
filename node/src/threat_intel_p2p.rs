@@ -8,7 +8,7 @@ use libp2p::{
     mdns,
     noise,
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder, Transport,
+    tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;

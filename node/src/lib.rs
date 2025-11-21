@@ -18,3 +18,8 @@ pub mod threat_intel_p2p;
 
 #[cfg(target_os = "linux")]
 pub mod threat_intel_service;
+
+// Sprint 11: Global State Sync (CRDTs + NATS)
+pub mod distributed_counter;
+pub mod distributed_rate_limiter;
+pub mod nats_sync;

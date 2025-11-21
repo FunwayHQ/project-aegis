@@ -75,11 +75,13 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 **Local State**:
 - DragonflyDB for high-speed caching at each edge node
 
-**Global State Synchronization**:
-- **CRDTs (Conflict-Free Replicated Data Types)**: Using Loro or Automerge libraries
+**Global State Synchronization** (Sprint 11):
+- **CRDTs (Conflict-Free Replicated Data Types)**: Using `crdts` crate (G-Counter for rate limiting)
 - **NATS JetStream**: Message transport for CRDT operations between regions
+- **Distributed Rate Limiter**: Multi-node rate limiting with <2s convergence
 - Active-Active replication model (eventual consistency)
 - Leaf nodes can operate autonomously if core connection severed
+- 24 comprehensive tests covering CRDT properties and synchronization
 
 #### 5. Control Plane & Orchestration
 
@@ -133,12 +135,12 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 - ✅ Node operator CLI for registration and rewards claiming (10 commands)
 - ✅ 344 tests passing, all 4 contracts deployed to Devnet
 
-### Phase 2: Security & Distributed State (Sprints 7-12) - 67% COMPLETE
+### Phase 2: Security & Distributed State (Sprints 7-12) - 83% COMPLETE
 - ✅ **Sprint 7:** eBPF/XDP DDoS protection (SYN flood mitigation) - 48 tests
 - ✅ **Sprint 8:** WAF integration (Rust-native, OWASP rules) - 7 tests + 17 integration
 - ✅ **Sprint 9:** Bot management (Wasm-based detection) - 6 tests
 - ✅ **Sprint 10:** P2P Threat Intelligence (libp2p, real-time sharing) - 30 tests
-- ⏳ **Sprint 11:** CRDTs + NATS JetStream for global state sync
+- ✅ **Sprint 11:** CRDTs + NATS JetStream (G-Counter, distributed rate limiter) - 24 tests
 - ⏳ **Sprint 12:** Verifiable analytics framework with cryptographic signing
 
 ### Phase 3: Edge Compute & Governance (Sprints 13-18)
