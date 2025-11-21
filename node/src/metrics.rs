@@ -398,7 +398,7 @@ mod tests {
 
         let metrics = collector.get_metrics().await;
         assert!(metrics.memory_total_mb > 0);
-        assert!(metrics.uptime_seconds >= 0);
+        // uptime_seconds is u64, so it's always >= 0
     }
 
     #[tokio::test]

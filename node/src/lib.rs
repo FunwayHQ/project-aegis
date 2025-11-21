@@ -12,3 +12,18 @@ pub mod waf;
 
 #[cfg(target_os = "linux")]
 pub mod ebpf_loader;
+
+// Sprint 10: P2P Threat Intelligence
+pub mod threat_intel_p2p;
+
+#[cfg(target_os = "linux")]
+pub mod threat_intel_service;
+
+// Sprint 11: Global State Sync (CRDTs + NATS)
+pub mod distributed_counter;
+pub mod distributed_rate_limiter;
+pub mod nats_sync;
+
+// Sprint 12: Verifiable Analytics
+pub mod verifiable_metrics;
+pub mod verifiable_metrics_api;

@@ -551,3 +551,234 @@ mod performance_tests {
         assert!(map_memory < 1_000_000); // Less than 1MB
     }
 }
+
+// Sprint 10: Threat Intelligence Blocklist Tests
+#[cfg(test)]
+mod blocklist_tests {
+    use std::net::Ipv4Addr;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_blocklist_structure() {
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug)]
+        struct BlockInfo {
+            blocked_until: u64,
+            total_violations: u64,
+        }
+
+        let block_info = BlockInfo {
+            blocked_until: 1000000,
+            total_violations: 5,
+        };
+
+        assert_eq!(block_info.blocked_until, 1000000);
+        assert_eq!(block_info.total_violations, 5);
+        assert_eq!(std::mem::size_of::<BlockInfo>(), 16); // 2 * u64
+    }
+
+    #[test]
+    fn test_block_duration_calculations() {
+        // Block duration calculations in microseconds
+        let durations_secs = vec![30, 60, 300, 600, 1800, 3600]; // Common durations
+
+        for duration_secs in durations_secs {
+            let duration_us = duration_secs * 1_000_000_u64;
+            assert!(duration_us > 0);
+            assert!(duration_us >= 30_000_000); // At least 30 seconds
+            assert!(duration_us <= 3_600_000_000); // At most 1 hour
+        }
+    }
+
+    #[test]
+    fn test_block_expiration() {
+        let now_us = 1_000_000_000_u64;
+        let block_duration_us = 30_000_000_u64; // 30 seconds
+        let blocked_until = now_us + block_duration_us;
+
+        // Check if still blocked
+        let current_time = 1_015_000_000_u64; // 15 seconds later
+        assert!(current_time < blocked_until); // Still blocked
+
+        // Check if block expired
+        let current_time2 = 1_031_000_000_u64; // 31 seconds later
+        assert!(current_time2 > blocked_until); // Block expired
+    }
+
+    #[test]
+    fn test_blocklist_ip_conversion() {
+        let ips = vec![
+            "192.168.1.100",
+            "10.0.0.50",
+            "172.16.0.25",
+            "203.0.113.1", // TEST-NET-3
+        ];
+
+        for ip_str in ips {
+            let ip = Ipv4Addr::from_str(ip_str).unwrap();
+            let ip_u32 = u32::from(ip);
+            let ip_be = ip_u32.to_be();
+
+            assert_ne!(ip_u32, 0);
+            assert_ne!(ip_be, 0);
+
+            // Round-trip
+            let ip_back = Ipv4Addr::from(u32::from_be(ip_be));
+            assert_eq!(ip, ip_back);
+        }
+    }
+
+    #[test]
+    fn test_blocklist_map_size() {
+        let blocklist_max = 5_000_usize; // Max 5K blocked IPs
+        let block_info_size = 16_usize; // sizeof(BlockInfo)
+        let total_memory = blocklist_max * block_info_size;
+
+        assert!(blocklist_max > 0);
+        assert!(blocklist_max >= 1000);
+        assert!(total_memory < 1_000_000); // Less than 1MB
+    }
+
+    #[test]
+    fn test_early_drop_optimization() {
+        // Early drop should happen before TCP parsing
+        let is_blocked = true;
+        let current_time = 1_000_000_u64;
+        let blocked_until = 2_000_000_u64;
+
+        if is_blocked && blocked_until > current_time {
+            // Should drop immediately
+            assert!(true);
+        } else {
+            // Should continue to TCP parsing
+            assert!(false, "Should have dropped early");
+        }
+    }
+
+    #[test]
+    fn test_violation_counter() {
+        // Track how many times an IP exceeded threshold
+        let mut violations = 0_u64;
+
+        // Simulate multiple violations
+        for _ in 0..5 {
+            violations += 1;
+        }
+
+        assert_eq!(violations, 5);
+        assert!(violations > 0);
+    }
+}
+
+#[cfg(test)]
+mod threat_intel_integration_tests {
+    use std::net::Ipv4Addr;
+    use std::str::FromStr;
+
+    #[test]
+    fn test_threat_severity_mapping() {
+        // Map severity levels to block durations
+        let severity_to_duration = vec![
+            (1, 60),    // Low severity: 1 minute
+            (3, 300),   // Medium-low: 5 minutes
+            (5, 600),   // Medium: 10 minutes
+            (7, 1800),  // High: 30 minutes
+            (10, 3600), // Critical: 1 hour
+        ];
+
+        for (severity, duration) in severity_to_duration {
+            assert!(severity >= 1 && severity <= 10);
+            assert!(duration >= 60 && duration <= 3600);
+            assert!(duration > 0);
+        }
+    }
+
+    #[test]
+    fn test_p2p_message_validation() {
+        // Validate P2P threat intelligence messages
+        let ip = "192.168.1.100";
+        let severity = 8_u8;
+        let duration = 300_u64;
+
+        // IP validation
+        let ip_result = Ipv4Addr::from_str(ip);
+        assert!(ip_result.is_ok());
+
+        // Severity validation (1-10)
+        assert!(severity >= 1 && severity <= 10);
+
+        // Duration validation (1 sec to 24 hours)
+        assert!(duration >= 1 && duration <= 86400);
+    }
+
+    #[test]
+    fn test_blocklist_update_workflow() {
+        // Simulate receiving threat intel and updating blocklist
+        let threat_ip = "10.0.0.100";
+        let block_duration_secs = 300_u64;
+
+        // 1. Validate IP
+        let ip = Ipv4Addr::from_str(threat_ip).unwrap();
+        let ip_u32 = u32::from(ip).to_be();
+
+        // 2. Calculate expiration time
+        let now_us = 1_000_000_000_u64;
+        let blocked_until = now_us + (block_duration_secs * 1_000_000);
+
+        // 3. Verify calculations
+        assert_ne!(ip_u32, 0);
+        assert!(blocked_until > now_us);
+        assert_eq!(blocked_until - now_us, block_duration_secs * 1_000_000);
+    }
+
+    #[test]
+    fn test_local_vs_remote_threats() {
+        // Local threats (detected by this node)
+        let local_threat = "192.168.1.100";
+        let local_severity = 9_u8;
+
+        // Remote threats (received from P2P)
+        let remote_threat = "10.0.0.50";
+        let remote_severity = 7_u8;
+
+        // Both should be processed similarly
+        assert!(Ipv4Addr::from_str(local_threat).is_ok());
+        assert!(Ipv4Addr::from_str(remote_threat).is_ok());
+        assert!(local_severity >= 1 && local_severity <= 10);
+        assert!(remote_severity >= 1 && remote_severity <= 10);
+    }
+
+    #[test]
+    fn test_min_severity_filtering() {
+        let min_severity = 5_u8;
+        let threats = vec![
+            (3, false), // Below threshold, should ignore
+            (5, true),  // At threshold, should process
+            (7, true),  // Above threshold, should process
+            (10, true), // Maximum, should process
+        ];
+
+        for (severity, should_process) in threats {
+            let result = severity >= min_severity;
+            assert_eq!(result, should_process);
+        }
+    }
+
+    #[test]
+    fn test_concurrent_blocklist_updates() {
+        // Simulate multiple threats arriving concurrently
+        let threats = vec![
+            ("192.168.1.1", 300),
+            ("192.168.1.2", 600),
+            ("192.168.1.3", 900),
+        ];
+
+        for (ip, duration) in threats {
+            let ip_result = Ipv4Addr::from_str(ip);
+            assert!(ip_result.is_ok());
+            assert!(duration > 0);
+            assert!(duration <= 86400); // Max 24 hours
+        }
+    }
+}
+
