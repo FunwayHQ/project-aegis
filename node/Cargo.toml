@@ -33,6 +33,7 @@ chrono = "0.4"
 # Utilities
 async-trait = "0.1"
 futures = "0.3"
+regex = "1.10"
 
 # Cache - Redis/DragonflyDB client
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }

@@ -150,7 +150,10 @@ async fn test_server_performance_baseline() {
     let duration = start.elapsed();
     let avg_latency = duration.as_millis() / iterations;
 
-    println!("Average latency: {}ms for {} requests", avg_latency, iterations);
+    println!(
+        "Average latency: {}ms for {} requests",
+        avg_latency, iterations
+    );
 
     // Sprint 1 baseline: should be < 10ms for local requests
     assert!(avg_latency < 10, "Latency too high: {}ms", avg_latency);

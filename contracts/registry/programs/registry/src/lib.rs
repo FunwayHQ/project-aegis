@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("GLpPpGCANeD7mLuY7XdJ2mAXX7MSLEdaLr91MMjoscno");
+declare_id!("4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6");
 
 const MAX_METADATA_URL_LENGTH: usize = 128;
 // DEPRECATED: Now stored in RegistryConfig for flexibility

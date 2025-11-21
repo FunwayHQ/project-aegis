@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 /// System and application metrics
@@ -34,6 +34,12 @@ pub struct NodeMetrics {
     pub cache_status: String,
     pub uptime_seconds: u64,
 
+    // WAF metrics (Sprint 8)
+    pub waf_requests_analyzed: u64,
+    pub waf_requests_blocked: u64,
+    pub waf_requests_logged: u64,
+    pub waf_rules_triggered: u64,
+
     // Timestamp
     pub timestamp: i64,
 }
@@ -59,6 +65,10 @@ impl Default for NodeMetrics {
             proxy_status: "unknown".to_string(),
             cache_status: "unknown".to_string(),
             uptime_seconds: 0,
+            waf_requests_analyzed: 0,
+            waf_requests_blocked: 0,
+            waf_requests_logged: 0,
+            waf_rules_triggered: 0,
             timestamp: chrono::Utc::now().timestamp(),
         }
     }
@@ -151,7 +161,11 @@ impl NodeMetrics {
             self.cache_memory_mb * 1024 * 1024, // Convert to bytes
             self.uptime_seconds,
             if self.proxy_status == "running" { 1 } else { 0 },
-            if self.cache_status == "connected" { 1 } else { 0 },
+            if self.cache_status == "connected" {
+                1
+            } else {
+                0
+            },
         )
     }
 }
@@ -179,7 +193,7 @@ impl MetricsCollector {
 
     /// Update system metrics (CPU, memory)
     pub async fn update_system_metrics(&self) {
-        use sysinfo::{System, SystemExt, ProcessExt, CpuExt};
+        use sysinfo::System;
 
         let mut sys = System::new_all();
         sys.refresh_all();

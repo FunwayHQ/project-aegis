@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("5oGLkNZ7Hku3bRD4aWnRNo8PsXusXmojm8EzAiQUVD1H");
+declare_id!("85Pd1GRJ1qA3kVTn3ERHsyuUpkr2bbb9L9opwS9UnHEQ");
 
 // DEPRECATED: These constants are now stored in GlobalConfig for flexibility
 // Kept for backward compatibility during migration
@@ -331,11 +331,11 @@ pub mod staking {
         let operator = ctx.accounts.stake_account.operator;
 
         // Use vault bump for signing the transfer
-        let vault_seeds = &[
+        let vault_seeds: &[&[u8]] = &[
             b"stake_vault",
             &[ctx.bumps.stake_vault],
         ];
-        let signer = &[&vault_seeds[..]];
+        let signer = &[vault_seeds];
 
         // Transfer slashed tokens to treasury from config
         let cpi_accounts = Transfer {

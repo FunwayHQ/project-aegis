@@ -1,5 +1,5 @@
-mod proxy;
 mod config;
+mod proxy;
 
 use anyhow::Result;
 use std::fs;

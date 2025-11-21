@@ -1,8 +1,8 @@
+use crate::metrics::MetricsCollector;
 use hyper::{Body, Method, Request, Response, StatusCode};
 use std::convert::Infallible;
 use std::sync::Arc;
 use tracing::{info, warn};
-use crate::metrics::MetricsCollector;
 
 /// Server statistics (will be enhanced in future sprints)
 #[derive(Debug, Clone)]
@@ -44,7 +44,7 @@ fn handle_root() -> Result<Response<Body>, Infallible> {
     Ok(Response::new(Body::from(
         "AEGIS Decentralized Edge Network - Sprint 1 PoC\n\
          Node Status: Active\n\
-         Version: 0.1.0\n"
+         Version: 0.1.0\n",
     )))
 }
 

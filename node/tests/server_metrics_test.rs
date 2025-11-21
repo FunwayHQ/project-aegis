@@ -1,5 +1,5 @@
-use aegis_node::server::handle_metrics_with_collector;
 use aegis_node::metrics::MetricsCollector;
+use aegis_node::server::handle_metrics_with_collector;
 use hyper::body;
 use std::sync::Arc;
 
@@ -14,7 +14,9 @@ async fn test_metrics_endpoint_json_format() {
     collector.record_cache_hit().await;
 
     // Get metrics in JSON format
-    let response = handle_metrics_with_collector(collector, "json").await.unwrap();
+    let response = handle_metrics_with_collector(collector, "json")
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), hyper::StatusCode::OK);
     assert_eq!(
@@ -51,7 +53,9 @@ async fn test_metrics_endpoint_prometheus_format() {
     collector.record_request(10.0).await;
 
     // Get metrics in Prometheus format
-    let response = handle_metrics_with_collector(collector, "prometheus").await.unwrap();
+    let response = handle_metrics_with_collector(collector, "prometheus")
+        .await
+        .unwrap();
 
     assert_eq!(response.status(), hyper::StatusCode::OK);
     assert_eq!(
@@ -75,7 +79,9 @@ async fn test_metrics_endpoint_updates_system_metrics() {
     let collector = Arc::new(MetricsCollector::new());
 
     // Get metrics (should trigger system update)
-    let response = handle_metrics_with_collector(Arc::clone(&collector), "json").await.unwrap();
+    let response = handle_metrics_with_collector(Arc::clone(&collector), "json")
+        .await
+        .unwrap();
     assert_eq!(response.status(), hyper::StatusCode::OK);
 
     let metrics = collector.get_metrics().await;
@@ -97,7 +103,9 @@ async fn test_metrics_endpoint_calculates_rps() {
     tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     // Get metrics (should calculate RPS)
-    let response = handle_metrics_with_collector(Arc::clone(&collector), "json").await.unwrap();
+    let response = handle_metrics_with_collector(Arc::clone(&collector), "json")
+        .await
+        .unwrap();
     assert_eq!(response.status(), hyper::StatusCode::OK);
 
     let body_bytes = body::to_bytes(response.into_body()).await.unwrap();
@@ -115,7 +123,9 @@ async fn test_metrics_endpoint_json_structure() {
     collector.record_cache_hit().await;
     collector.record_cache_miss().await;
 
-    let response = handle_metrics_with_collector(collector, "json").await.unwrap();
+    let response = handle_metrics_with_collector(collector, "json")
+        .await
+        .unwrap();
     let body_bytes = body::to_bytes(response.into_body()).await.unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
     let json: serde_json::Value = serde_json::from_str(&body_str).unwrap();
@@ -154,7 +164,9 @@ async fn test_prometheus_format_all_metrics_present() {
     collector.set_proxy_status("running").await;
     collector.set_cache_status("connected").await;
 
-    let response = handle_metrics_with_collector(collector, "prometheus").await.unwrap();
+    let response = handle_metrics_with_collector(collector, "prometheus")
+        .await
+        .unwrap();
     let body_bytes = body::to_bytes(response.into_body()).await.unwrap();
     let body_str = String::from_utf8(body_bytes.to_vec()).unwrap();
 
@@ -180,11 +192,7 @@ async fn test_prometheus_format_all_metrics_present() {
     ];
 
     for metric in expected_metrics {
-        assert!(
-            body_str.contains(metric),
-            "Missing metric: {}",
-            metric
-        );
+        assert!(body_str.contains(metric), "Missing metric: {}", metric);
     }
 }
 
@@ -193,14 +201,18 @@ async fn test_metrics_response_headers() {
     let collector = Arc::new(MetricsCollector::new());
 
     // JSON format
-    let json_response = handle_metrics_with_collector(Arc::clone(&collector), "json").await.unwrap();
+    let json_response = handle_metrics_with_collector(Arc::clone(&collector), "json")
+        .await
+        .unwrap();
     assert_eq!(
         json_response.headers().get("content-type").unwrap(),
         "application/json"
     );
 
     // Prometheus format
-    let prom_response = handle_metrics_with_collector(collector, "prometheus").await.unwrap();
+    let prom_response = handle_metrics_with_collector(collector, "prometheus")
+        .await
+        .unwrap();
     assert_eq!(
         prom_response.headers().get("content-type").unwrap(),
         "text/plain; version=0.0.4"
@@ -222,7 +234,9 @@ async fn test_high_traffic_metrics() {
         }
     }
 
-    let response = handle_metrics_with_collector(collector, "json").await.unwrap();
+    let response = handle_metrics_with_collector(collector, "json")
+        .await
+        .unwrap();
     assert_eq!(response.status(), hyper::StatusCode::OK);
 
     let body_bytes = body::to_bytes(response.into_body()).await.unwrap();
@@ -248,7 +262,9 @@ async fn test_metrics_concurrent_access() {
             collector_clone.record_request((i * 5) as f64).await;
 
             // Get metrics concurrently
-            let response = handle_metrics_with_collector(collector_clone, "json").await.unwrap();
+            let response = handle_metrics_with_collector(collector_clone, "json")
+                .await
+                .unwrap();
             assert_eq!(response.status(), hyper::StatusCode::OK);
         });
         handles.push(handle);

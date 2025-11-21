@@ -1,7 +1,6 @@
 use anyhow::Result;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Client};
-use std::time::Duration;
 
 /// Cache client for DragonflyDB/Redis
 pub struct CacheClient {
@@ -36,11 +35,7 @@ impl CacheClient {
     pub async fn set(&mut self, key: &str, value: &[u8], ttl_seconds: Option<u64>) -> Result<()> {
         let ttl = ttl_seconds.unwrap_or(self.default_ttl);
 
-        match self
-            .connection
-            .set_ex::<_, _, ()>(key, value, ttl)
-            .await
-        {
+        match self.connection.set_ex::<_, _, ()>(key, value, ttl).await {
             Ok(_) => Ok(()),
             Err(e) => {
                 log::error!("Cache SET error for key {}: {}", key, e);
@@ -66,9 +61,7 @@ impl CacheClient {
     /// Get cache statistics
     pub async fn get_stats(&mut self) -> Result<CacheStats> {
         // Get info from Redis/DragonflyDB
-        let info: String = redis::cmd("INFO")
-            .query_async(&mut self.connection)
-            .await?;
+        let info: String = redis::cmd("INFO").query_async(&mut self.connection).await?;
 
         // Parse relevant stats
         let mut stats = CacheStats::default();
@@ -99,7 +92,7 @@ impl CacheClient {
     /// Flush all keys (for testing)
     pub async fn flush_all(&mut self) -> Result<()> {
         redis::cmd("FLUSHALL")
-            .query_async(&mut self.connection)
+            .query_async::<_, ()>(&mut self.connection)
             .await?;
         Ok(())
     }
@@ -260,7 +253,7 @@ mod tests {
         assert!(cache.exists(key).await);
 
         // Wait for expiration
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
         // Should be gone
         assert!(!cache.exists(key).await);
@@ -399,8 +392,18 @@ mod tests {
 
         for (header, should_cache, expected_ttl) in examples {
             let control = CacheControl::parse(header);
-            assert_eq!(control.should_cache(), should_cache, "Failed for: {}", header);
-            assert_eq!(control.effective_ttl(60), expected_ttl, "Failed TTL for: {}", header);
+            assert_eq!(
+                control.should_cache(),
+                should_cache,
+                "Failed for: {}",
+                header
+            );
+            assert_eq!(
+                control.effective_ttl(60),
+                expected_ttl,
+                "Failed TTL for: {}",
+                header
+            );
         }
     }
 }

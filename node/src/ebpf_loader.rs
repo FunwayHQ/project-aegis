@@ -63,8 +63,7 @@ impl EbpfLoader {
         let ebpf_data = std::fs::read(program_path)
             .with_context(|| format!("Failed to read eBPF program from {:?}", program_path))?;
 
-        let ebpf = Ebpf::load(&ebpf_data)
-            .context("Failed to load eBPF program")?;
+        let ebpf = Ebpf::load(&ebpf_data).context("Failed to load eBPF program")?;
 
         Ok(Self {
             ebpf,
@@ -122,10 +121,7 @@ impl EbpfLoader {
             return Ok(());
         }
 
-        let program: &mut Xdp = self
-            .ebpf
-            .program_mut("syn_flood_filter")?
-            .try_into()?;
+        let program: &mut Xdp = self.ebpf.program_mut("syn_flood_filter")?.try_into()?;
 
         program.detach(&self.interface)?;
 
@@ -161,7 +157,7 @@ impl EbpfLoader {
     /// Add IP to whitelist (never rate-limited)
     pub fn whitelist_ip(&mut self, ip: &str) -> Result<()> {
         let ip_addr = Ipv4Addr::from_str(ip)?;
-        let ip_u32 = u32::from(ip_addr).to_be();  // Network byte order
+        let ip_u32 = u32::from(ip_addr).to_be(); // Network byte order
 
         let mut whitelist: HashMap<_, u32, u8> =
             HashMap::try_from(self.ebpf.map_mut("WHITELIST")?)?;
@@ -254,7 +250,7 @@ mod tests {
             passed_packets: 900,
         };
 
-        assert_eq!(stats.drop_rate(), 10.0);  // 100/1000 = 10%
+        assert_eq!(stats.drop_rate(), 10.0); // 100/1000 = 10%
     }
 
     #[test]
@@ -272,7 +268,7 @@ mod tests {
             passed_packets: 950,
         };
 
-        assert_eq!(stats.syn_percentage(), 20.0);  // 200/1000 = 20%
+        assert_eq!(stats.syn_percentage(), 20.0); // 200/1000 = 20%
     }
 
     #[test]
@@ -308,7 +304,7 @@ mod tests {
         let ip_be = ip_u32.to_be();
 
         // Should be in network byte order for eBPF
-        assert_ne!(ip_u32, ip_be);  // Different endianness
+        assert_ne!(ip_u32, ip_be); // Different endianness
     }
 
     #[test]
@@ -324,12 +320,7 @@ mod tests {
 
     #[test]
     fn test_whitelist_ip_parsing() {
-        let valid_ips = vec![
-            "192.168.1.1",
-            "10.0.0.1",
-            "172.16.0.1",
-            "127.0.0.1",
-        ];
+        let valid_ips = vec!["192.168.1.1", "10.0.0.1", "172.16.0.1", "127.0.0.1"];
 
         for ip_str in valid_ips {
             let result = Ipv4Addr::from_str(ip_str);
@@ -340,10 +331,10 @@ mod tests {
     #[test]
     fn test_invalid_ip_handling() {
         let invalid_ips = vec![
-            "256.1.1.1",    // Out of range
-            "not-an-ip",    // Invalid format
-            "192.168",      // Incomplete
-            "",             // Empty
+            "256.1.1.1", // Out of range
+            "not-an-ip", // Invalid format
+            "192.168",   // Incomplete
+            "",          // Empty
         ];
 
         for ip_str in invalid_ips {

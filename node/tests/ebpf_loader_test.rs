@@ -34,7 +34,7 @@ mod ebpf_loader_tests {
 
         for threshold in thresholds {
             assert!(threshold > 0);
-            assert!(threshold <= 10000);  // Reasonable max
+            assert!(threshold <= 10000); // Reasonable max
         }
     }
 
@@ -44,7 +44,7 @@ mod ebpf_loader_tests {
 
         for iface in valid {
             assert!(!iface.is_empty());
-            assert!(iface.len() < 16);  // IFNAMSIZ
+            assert!(iface.len() < 16); // IFNAMSIZ
             assert!(iface.chars().all(|c| c.is_alphanumeric()));
         }
     }
@@ -72,7 +72,7 @@ mod ebpf_loader_tests {
             "192.168",
             "not-an-ip",
             "",
-            "::1",  // IPv6, not supported yet
+            "::1", // IPv6, not supported yet
         ];
 
         for ip_str in invalid {
@@ -166,14 +166,14 @@ mod ddos_stats_tests {
         // Simulates DDoS attack statistics
         let stats = DDoSStats {
             total_packets: 100_000,
-            syn_packets: 95_000,  // 95% SYN packets (attack)
-            dropped_packets: 90_000,  // 90% dropped
+            syn_packets: 95_000,     // 95% SYN packets (attack)
+            dropped_packets: 90_000, // 90% dropped
             passed_packets: 10_000,  // 10% passed (legitimate)
         };
 
-        assert!(stats.syn_percentage() > 90.0);  // High SYN rate
-        assert!(stats.drop_rate() > 85.0);  // High drop rate
-        assert!(stats.passed_packets > 0);  // Some traffic passed
+        assert!(stats.syn_percentage() > 90.0); // High SYN rate
+        assert!(stats.drop_rate() > 85.0); // High drop rate
+        assert!(stats.passed_packets > 0); // Some traffic passed
     }
 
     #[test]
@@ -181,14 +181,14 @@ mod ddos_stats_tests {
         // Simulates normal traffic (no attack)
         let stats = DDoSStats {
             total_packets: 10_000,
-            syn_packets: 1_000,  // 10% SYN (normal for new connections)
-            dropped_packets: 0,  // Nothing dropped
-            passed_packets: 10_000,  // All passed
+            syn_packets: 1_000,     // 10% SYN (normal for new connections)
+            dropped_packets: 0,     // Nothing dropped
+            passed_packets: 10_000, // All passed
         };
 
-        assert!(stats.syn_percentage() <= 15.0);  // Low SYN rate
-        assert_eq!(stats.drop_rate(), 0.0);  // No drops
-        assert_eq!(stats.passed_packets, stats.total_packets);  // All passed
+        assert!(stats.syn_percentage() <= 15.0); // Low SYN rate
+        assert_eq!(stats.drop_rate(), 0.0); // No drops
+        assert_eq!(stats.passed_packets, stats.total_packets); // All passed
     }
 }
 
@@ -198,11 +198,11 @@ mod syn_flood_algorithm_tests {
     fn test_rate_calculation() {
         // Simulate SYN rate tracking
         let syn_count = 150_u64;
-        let time_window = 1_u64;  // 1 second
+        let time_window = 1_u64; // 1 second
         let threshold = 100_u64;
 
         let rate = syn_count / time_window;
-        assert!(rate > threshold);  // Should trigger rate limit
+        assert!(rate > threshold); // Should trigger rate limit
     }
 
     #[test]
@@ -212,7 +212,7 @@ mod syn_flood_algorithm_tests {
         let threshold = 100_u64;
 
         let rate = syn_count / time_window;
-        assert!(rate <= threshold);  // Should pass
+        assert!(rate <= threshold); // Should pass
     }
 
     #[test]
@@ -220,10 +220,10 @@ mod syn_flood_algorithm_tests {
         // Simulate time window expiration
         let current_time = 1000_u64;
         let last_seen = 500_u64;
-        let one_second = 1000_u64;  // 1000ms or 1s
+        let one_second = 1000_u64; // 1000ms or 1s
 
         let time_diff = current_time - last_seen;
-        assert!(time_diff < one_second);  // Within same window
+        assert!(time_diff < one_second); // Within same window
     }
 
     #[test]
@@ -233,16 +233,16 @@ mod syn_flood_algorithm_tests {
         let one_second = 1000_u64;
 
         let time_diff = current_time - last_seen;
-        assert!(time_diff >= one_second);  // New window
+        assert!(time_diff >= one_second); // New window
     }
 
     #[test]
     fn test_threshold_edge_cases() {
         let threshold = 100_u64;
 
-        assert!(99 < threshold);  // Below threshold
-        assert!(100 <= threshold);  // At threshold
-        assert!(101 > threshold);  // Above threshold
+        assert!(99 < threshold); // Below threshold
+        assert!(100 <= threshold); // At threshold
+        assert!(101 > threshold); // Above threshold
     }
 }
 
@@ -273,7 +273,7 @@ mod network_packet_tests {
         assert_eq!(flags & TCP_FLAG_SYN, TCP_FLAG_SYN);
 
         // SYN+ACK
-        let syn_ack = 0x12_u8;  // 0x10 | 0x02
+        let syn_ack = 0x12_u8; // 0x10 | 0x02
         assert_eq!(syn_ack & TCP_FLAG_SYN, TCP_FLAG_SYN);
         assert_eq!(syn_ack & TCP_FLAG_ACK, TCP_FLAG_ACK);
     }
@@ -287,16 +287,16 @@ mod network_packet_tests {
         // Pure SYN (attack signature)
         let is_syn = (syn_only & TCP_FLAG_SYN) != 0;
         let is_ack = (syn_only & TCP_FLAG_ACK) != 0;
-        assert!(is_syn && !is_ack);  // Attack packet
+        assert!(is_syn && !is_ack); // Attack packet
 
         // SYN+ACK (legitimate handshake response)
         let is_syn2 = (syn_ack & TCP_FLAG_SYN) != 0;
         let is_ack2 = (syn_ack & TCP_FLAG_ACK) != 0;
-        assert!(is_syn2 && is_ack2);  // Should pass (not attack)
+        assert!(is_syn2 && is_ack2); // Should pass (not attack)
 
         // ACK only (established connection)
         let is_syn3 = (ack_only & TCP_FLAG_SYN) != 0;
-        assert!(!is_syn3);  // Should pass
+        assert!(!is_syn3); // Should pass
     }
 
     #[test]
@@ -371,9 +371,9 @@ mod whitelist_tests {
     #[test]
     fn test_private_network_ranges() {
         let private_ips = vec![
-            "192.168.0.0",   // Class C private
-            "172.16.0.0",    // Class B private
-            "10.0.0.0",      // Class A private
+            "192.168.0.0", // Class C private
+            "172.16.0.0",  // Class B private
+            "10.0.0.0",    // Class A private
         ];
 
         for ip_str in private_ips {
@@ -385,8 +385,8 @@ mod whitelist_tests {
     #[test]
     fn test_public_ip_not_private() {
         let public_ips = vec![
-            "8.8.8.8",       // Google DNS
-            "1.1.1.1",       // Cloudflare DNS
+            "8.8.8.8",        // Google DNS
+            "1.1.1.1",        // Cloudflare DNS
             "208.67.222.222", // OpenDNS
         ];
 
@@ -433,14 +433,14 @@ mod xdp_action_tests {
         let is_whitelisted = true;
 
         let action = if is_whitelisted {
-            XDP_PASS  // Whitelist always passes
+            XDP_PASS // Whitelist always passes
         } else if is_attack {
             XDP_DROP
         } else {
             XDP_PASS
         };
 
-        assert_eq!(action, XDP_PASS);  // Whitelist overrides attack detection
+        assert_eq!(action, XDP_PASS); // Whitelist overrides attack detection
     }
 }
 
@@ -448,16 +448,16 @@ mod xdp_action_tests {
 mod ebpf_map_tests {
     #[test]
     fn test_map_size_limits() {
-        let syn_tracker_max = 10_000_usize;  // Track 10K unique IPs
-        let whitelist_max = 1_000_usize;     // 1K whitelisted IPs
-        let config_max = 10_usize;           // 10 config values
-        let stats_max = 10_usize;            // 10 stat counters
+        let syn_tracker_max = 10_000_usize; // Track 10K unique IPs
+        let whitelist_max = 1_000_usize; // 1K whitelisted IPs
+        let config_max = 10_usize; // 10 config values
+        let stats_max = 10_usize; // 10 stat counters
 
         assert!(syn_tracker_max > 0);
-        assert!(syn_tracker_max >= 1000);  // Reasonable size
+        assert!(syn_tracker_max >= 1000); // Reasonable size
         assert!(whitelist_max > 0);
-        assert!(config_max >= 2);  // At least threshold configs
-        assert!(stats_max >= 4);   // At least 4 stat counters
+        assert!(config_max >= 2); // At least threshold configs
+        assert!(stats_max >= 4); // At least 4 stat counters
     }
 
     #[test]
@@ -476,7 +476,7 @@ mod ebpf_map_tests {
 
         assert_eq!(info.count, 50);
         assert_eq!(info.last_seen, 1000);
-        assert_eq!(std::mem::size_of::<SynInfo>(), 16);  // 2 * u64
+        assert_eq!(std::mem::size_of::<SynInfo>(), 16); // 2 * u64
     }
 }
 
@@ -489,8 +489,8 @@ mod attack_scenario_tests {
         let legitimate_count = 10_u64;
         let threshold = 100_u64;
 
-        assert!(syn_count > threshold);  // Attack exceeds threshold
-        assert!(legitimate_count <= threshold);  // Legitimate below threshold
+        assert!(syn_count > threshold); // Attack exceeds threshold
+        assert!(legitimate_count <= threshold); // Legitimate below threshold
     }
 
     #[test]
@@ -500,9 +500,9 @@ mod attack_scenario_tests {
         let syn_per_ip = 50_u64;
         let threshold = 100_u64;
 
-        assert!(syn_per_ip < threshold);  // Each IP below threshold
+        assert!(syn_per_ip < threshold); // Each IP below threshold
         let total_syn = ips_count * syn_per_ip;
-        assert!(total_syn > 1000);  // But total is high
+        assert!(total_syn > 1000); // But total is high
     }
 
     #[test]
@@ -514,9 +514,9 @@ mod attack_scenario_tests {
         let dropped = (attack_packets as f64 * 0.9) as u64;
         let passed = attack_packets - dropped;
 
-        assert!(dropped > 80_000);  // Most packets dropped
-        assert!(passed < 20_000);   // Few packets passed
-        assert!(dropped > passed);  // More dropped than passed
+        assert!(dropped > 80_000); // Most packets dropped
+        assert!(passed < 20_000); // Few packets passed
+        assert!(dropped > passed); // More dropped than passed
     }
 }
 
@@ -525,29 +525,29 @@ mod performance_tests {
     #[test]
     fn test_packet_processing_requirements() {
         // XDP should process packets in <1 microsecond
-        let target_latency_ns = 1_000_u64;  // 1 microsecond
+        let target_latency_ns = 1_000_u64; // 1 microsecond
 
         assert!(target_latency_ns > 0);
-        assert!(target_latency_ns < 10_000);  // Less than 10 microseconds
+        assert!(target_latency_ns < 10_000); // Less than 10 microseconds
     }
 
     #[test]
     fn test_throughput_requirements() {
         // Should handle 1M+ packets/sec
         let target_pps = 1_000_000_u64;
-        let max_latency_ns = 1_000_u64;  // 1 microsecond
+        let max_latency_ns = 1_000_u64; // 1 microsecond
 
-        let theoretical_max_pps = 1_000_000_000_u64 / max_latency_ns;  // 1M pps
+        let theoretical_max_pps = 1_000_000_000_u64 / max_latency_ns; // 1M pps
         assert!(theoretical_max_pps >= target_pps);
     }
 
     #[test]
     fn test_memory_requirements() {
         // Memory for 10K tracked IPs
-        let syn_info_size = 16_usize;  // sizeof(SynInfo)
+        let syn_info_size = 16_usize; // sizeof(SynInfo)
         let max_tracked_ips = 10_000_usize;
         let map_memory = syn_info_size * max_tracked_ips;
 
-        assert!(map_memory < 1_000_000);  // Less than 1MB
+        assert!(map_memory < 1_000_000); // Less than 1MB
     }
 }

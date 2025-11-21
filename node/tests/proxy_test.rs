@@ -1,4 +1,4 @@
-use aegis_node::pingora_proxy::{ProxyConfig, AegisProxy};
+use aegis_node::pingora_proxy::{AegisProxy, ProxyConfig};
 
 #[test]
 fn test_proxy_config_default() {
@@ -271,9 +271,9 @@ fn test_proxy_config_debug_format() {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-    use std::process::{Command, Child};
-    use std::time::Duration;
+    use std::process::{Child, Command};
     use std::thread;
+    use std::time::Duration;
 
     /// Helper to check if port is available
     fn is_port_available(port: u16) -> bool {
@@ -300,7 +300,14 @@ mod integration_tests {
         if !is_port_available(8080) {
             // Proxy is running, test it
             let output = Command::new("curl")
-                .args(&["-s", "-o", "/dev/null", "-w", "%{http_code}", "http://localhost:8080/get"])
+                .args(&[
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "http://localhost:8080/get",
+                ])
                 .output();
 
             if let Ok(result) = output {
@@ -318,7 +325,15 @@ mod integration_tests {
         if !is_port_available(8443) {
             // Proxy is running, test HTTPS
             let output = Command::new("curl")
-                .args(&["-k", "-s", "-o", "/dev/null", "-w", "%{http_code}", "https://localhost:8443/get"])
+                .args(&[
+                    "-k",
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "https://localhost:8443/get",
+                ])
                 .output();
 
             if let Ok(result) = output {

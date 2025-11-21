@@ -292,20 +292,32 @@ Each sprint is a 2-week cycle.
 
 #### **Phase 3: Edge Compute & Governance**
 
-**Sprint 13: Wasm Edge Functions (Initial API) & Runtime**
+**Sprint 13: Wasm Edge Functions Runtime & WAF Migration**
 
-* **Objective:** Enable developers to deploy and execute custom WebAssembly (Wasm) functions directly on PAD edge nodes for programmable edge logic.  
-* **Deliverables:**  
-  * Rust proxy (River) integrated with a Wasm runtime capable of executing user-provided Wasm modules.  
-  * Initial API for Wasm functions to interact with HTTP requests/responses (e.g., modify headers, read body).  
-  * Wasm module deployment mechanism (e.g., via IPFS CID linked to a Solana contract).  
-  * Developer CLI for building and deploying simple Wasm functions to Devnet nodes.  
-  * Proof-of-concept: A simple Wasm function modifying an HTTP response header or blocking a request based on a custom rule.  
-* **LLM Prompt: "Rust Proxy Wasm Function Runtime & Basic API Design"**  
-  * "You are an expert Rust developer focusing on edge computing and WebAssembly runtimes (e.g., `wasmtime`).  
-  * **Wasm Runtime Integration:** Describe how to integrate `wasmtime` (or a similar lightweight Wasm runtime crate) into the River proxy. Explain how the proxy will dynamically load user-defined Wasm modules from an IPFS CID (referenced via a Solana contract).  
-  * **Wasm Function Execution:** Outline the execution flow: how the proxy will intercept an incoming request, select a Wasm function based on routing rules, and execute it.  
-  * **Initial Wasm Host API:** Design a minimal host API for Wasm functions to interact with HTTP. This should include:  
+* **Objective:** Enable developers to deploy custom WebAssembly functions on edge nodes AND migrate the Sprint 8 WAF to Wasm for fault isolation.
+* **Deliverables:**
+  * Rust proxy (River) integrated with `wasmtime` runtime for executing Wasm modules.
+  * **WAF Migration**: Refactor Sprint 8's Rust-native WAF to run in Wasm sandbox with CPU/memory limits.
+  * Initial API for Wasm functions to interact with HTTP requests/responses (headers, body, cache).
+  * Wasm module deployment via IPFS CID linked to Solana contract.
+  * Developer CLI for building and deploying Wasm functions.
+  * Proof-of-concept: WAF running in Wasm + custom edge function modifying responses.
+* **UPDATED CONTEXT**: Sprint 8 implemented WAF in Rust-native code for rapid MVP. Sprint 13 now includes migrating it to Wasm for isolation benefits.  
+* **LLM Prompt: "Rust Proxy Wasm Runtime, WAF Migration & Edge Functions API"**
+  * "You are an expert Rust developer focusing on edge computing and WebAssembly runtimes (e.g., `wasmtime`).
+  * **Context**: Sprint 8 delivered a Rust-native WAF (node/src/waf.rs) that must be migrated to Wasm for fault isolation. Sprint 13 adds general edge function capabilities.
+  * **Wasm Runtime Integration:** Integrate `wasmtime` and `wasmtime-wasi-http` into the River proxy. The proxy should:
+    1. Load pre-compiled Wasm modules from local filesystem or IPFS
+    2. Instantiate modules with resource limits (CPU cycles, memory)
+    3. Execute functions with request/response context
+  * **WAF Migration Priority Task**: Compile the existing WAF (waf.rs) to Wasm target and integrate:
+    1. Compile `waf.rs` to `wasm32-wasi` target
+    2. Expose WAF host API: `analyze_request(method, uri, headers, body) -> Vec<RuleMatch>`
+    3. Add resource governance: 10ms max execution, 10MB max memory
+    4. Maintain identical detection logic (13 OWASP rules from Sprint 8)
+    5. Add hot-reload capability (load new WAF.wasm without proxy restart)
+  * **Wasm Function Execution:** Outline the execution flow for both WAF and custom edge functions.
+  * **Wasm Host API Design:** Design host API for edge functions to interact with:  
     1. `get_request_header(name: &str) -> Option<String>`  
     2. `set_request_header(name: &str, value: &str)`  
     3. `get_response_header(name: &str) -> Option<String>`  
@@ -314,8 +326,17 @@ Each sprint is a 2-week cycle.
     6. `read_request_body(buffer: &mut [u8]) -> u32`  
     7. `send_response(status: u16, body: &str)` (to immediately terminate request)  
   * **Deployment Mechanism:** Detail how a Wasm module's IPFS CID will be linked to a specific domain or route via a Solana smart contract (e.g., a `WasmRoute` account with `domain`, `path`, `wasm_cid`).  
-  * **Developer CLI:** Outline the structure of a CLI tool (e.g., `aegis-dev-cli`) that allows compiling a Rust-to-Wasm function, uploading it to IPFS, and registering its CID on Solana.  
-  * **Output:** Key Rust code snippets for Wasm runtime setup, host API definition, and proxy execution logic. Solana program snippet for Wasm deployment. CLI command examples."
+  * **Developer CLI:** Outline the structure of a CLI tool (e.g., `aegis-dev-cli`) that allows:
+    1. Compiling Rust-to-Wasm edge functions
+    2. Testing Wasm modules locally
+    3. Uploading to IPFS
+    4. Registering CID on Solana
+  * **Testing & Validation**: Demonstrate that:
+    1. Migrated WAF detects same attacks as Sprint 8 (use existing 7 unit tests)
+    2. WAF crash doesn't bring down proxy (isolation)
+    3. Custom edge functions can modify requests/responses
+    4. Resource limits prevent runaway Wasm modules
+  * **Output:** Rust code for wasmtime integration, WAF migration guide, host API definition, Wasm compilation instructions, and CLI examples."
 
 **Sprint 14: Wasm Edge Functions \- Data & External Access**
 

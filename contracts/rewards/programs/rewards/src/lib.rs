@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Token, TokenAccount, Transfer};
 
-declare_id!("3j4guuzvNESX5iMUFcfihRGsjEjKmjaEBD4p8GGxNs8c");
+declare_id!("8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK");
 
 const REWARD_POOL_SEED: &[u8] = b"reward_pool";
 const OPERATOR_REWARDS_SEED: &[u8] = b"operator_rewards";

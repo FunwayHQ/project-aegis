@@ -3,7 +3,7 @@ mod ebpf_loader;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use ebpf_loader::{EbpfLoader, DDoSStats};
+use ebpf_loader::{DDoSStats, EbpfLoader};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -27,7 +27,11 @@ enum Commands {
         interface: String,
 
         /// Path to compiled eBPF program
-        #[arg(short, long, default_value = "ebpf/syn-flood-filter/target/bpfel-unknown-none/release/syn-flood-filter")]
+        #[arg(
+            short,
+            long,
+            default_value = "ebpf/syn-flood-filter/target/bpfel-unknown-none/release/syn-flood-filter"
+        )]
         program: PathBuf,
 
         /// SYN flood threshold (packets/sec per IP)
@@ -72,7 +76,10 @@ fn main() -> Result<()> {
 
     // Check if running as root (required for XDP)
     if !nix::unistd::Uid::effective().is_root() {
-        eprintln!("{}", "❌ Error: This program requires root privileges".bright_red());
+        eprintln!(
+            "{}",
+            "❌ Error: This program requires root privileges".bright_red()
+        );
         eprintln!("   Please run with: sudo ./aegis-ebpf-loader <command>");
         std::process::exit(1);
     }
@@ -108,16 +115,34 @@ fn main() -> Result<()> {
 }
 
 fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Result<()> {
-    println!("{}", "╔════════════════════════════════════════════╗".bright_cyan());
-    println!("{}", "║   AEGIS eBPF/XDP DDoS Protection          ║".bright_cyan());
-    println!("{}", "║   Sprint 7: SYN Flood Mitigation          ║".bright_cyan());
-    println!("{}", "╚════════════════════════════════════════════╝".bright_cyan());
+    println!(
+        "{}",
+        "╔════════════════════════════════════════════╗".bright_cyan()
+    );
+    println!(
+        "{}",
+        "║   AEGIS eBPF/XDP DDoS Protection          ║".bright_cyan()
+    );
+    println!(
+        "{}",
+        "║   Sprint 7: SYN Flood Mitigation          ║".bright_cyan()
+    );
+    println!(
+        "{}",
+        "╚════════════════════════════════════════════╝".bright_cyan()
+    );
     println!();
 
     println!("{}", "Loading XDP program...".bright_cyan());
-    println!("  Program: {}", program_path.display().to_string().bright_white());
+    println!(
+        "  Program: {}",
+        program_path.display().to_string().bright_white()
+    );
     println!("  Interface: {}", interface.bright_yellow());
-    println!("  SYN Threshold: {} packets/sec per IP", threshold.to_string().bright_green());
+    println!(
+        "  SYN Threshold: {} packets/sec per IP",
+        threshold.to_string().bright_green()
+    );
     println!();
 
     // Load eBPF program
@@ -130,10 +155,21 @@ fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Re
     loader.attach(interface)?;
 
     println!();
-    println!("{}", "✅ XDP program loaded and attached successfully!".bright_green());
+    println!(
+        "{}",
+        "✅ XDP program loaded and attached successfully!".bright_green()
+    );
     println!();
-    println!("{}", "DDoS protection is now active on {}".bright_green(), interface);
-    println!("{}", "SYN flood packets exceeding {} per second will be dropped".dimmed(), threshold);
+    println!(
+        "{}",
+        "DDoS protection is now active on {}".bright_green(),
+        interface
+    );
+    println!(
+        "{}",
+        "SYN flood packets exceeding {} per second will be dropped".dimmed(),
+        threshold
+    );
     println!();
     println!("{}", "Press Ctrl+C to detach and exit...".dimmed());
 
@@ -154,14 +190,28 @@ fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Re
 }
 
 fn show_stats() -> Result<()> {
-    println!("{}", "═══════════════════════════════════════════════════".bright_cyan());
-    println!("{}", "        eBPF/XDP DDoS Protection Statistics".bright_cyan().bold());
-    println!("{}", "═══════════════════════════════════════════════════".bright_cyan());
+    println!(
+        "{}",
+        "═══════════════════════════════════════════════════".bright_cyan()
+    );
+    println!(
+        "{}",
+        "        eBPF/XDP DDoS Protection Statistics"
+            .bright_cyan()
+            .bold()
+    );
+    println!(
+        "{}",
+        "═══════════════════════════════════════════════════".bright_cyan()
+    );
     println!();
 
     // Note: This would require keeping a global reference to the loader
     // For now, show placeholder message
-    println!("{}", "⚠ Stats command requires running loader instance".yellow());
+    println!(
+        "{}",
+        "⚠ Stats command requires running loader instance".yellow()
+    );
     println!("  Start loader with: sudo aegis-ebpf-loader attach --interface eth0");
     println!();
 
@@ -169,7 +219,10 @@ fn show_stats() -> Result<()> {
 }
 
 fn set_threshold(threshold: u64) -> Result<()> {
-    println!("{}", format!("Setting SYN threshold to: {}", threshold).bright_cyan());
+    println!(
+        "{}",
+        format!("Setting SYN threshold to: {}", threshold).bright_cyan()
+    );
     // Would update running instance
     Ok(())
 }
@@ -181,13 +234,19 @@ fn whitelist_ip(ip: &str) -> Result<()> {
 }
 
 fn unwhitelist_ip(ip: &str) -> Result<()> {
-    println!("{}", format!("Removing {} from whitelist", ip).bright_cyan());
+    println!(
+        "{}",
+        format!("Removing {} from whitelist", ip).bright_cyan()
+    );
     // Would update running instance
     Ok(())
 }
 
 fn monitor_stats(interval: u64) -> Result<()> {
-    println!("{}", "Real-time DDoS Protection Monitoring".bright_cyan().bold());
+    println!(
+        "{}",
+        "Real-time DDoS Protection Monitoring".bright_cyan().bold()
+    );
     println!("{}", format!("Update interval: {}s", interval).dimmed());
     println!("{}", "Press Ctrl+C to stop...".dimmed());
     println!();
@@ -197,7 +256,7 @@ fn monitor_stats(interval: u64) -> Result<()> {
         thread::sleep(Duration::from_secs(interval));
 
         // Clear screen and show stats
-        print!("\x1B[2J\x1B[1;1H");  // Clear screen
+        print!("\x1B[2J\x1B[1;1H"); // Clear screen
 
         println!("{}", "═══ eBPF/XDP Statistics ═══".bright_cyan());
         println!("  Total Packets:   {:>10}", "N/A");
@@ -224,8 +283,8 @@ mod tests {
     fn test_default_threshold() {
         let default = 100_u64;
         assert!(default > 0);
-        assert!(default >= 10);  // Reasonable minimum
-        assert!(default <= 10000);  // Reasonable maximum
+        assert!(default >= 10); // Reasonable minimum
+        assert!(default <= 10000); // Reasonable maximum
     }
 
     #[test]
@@ -244,7 +303,7 @@ mod tests {
 
         for iface in valid_interfaces {
             assert!(!iface.is_empty());
-            assert!(iface.len() < 16);  // IFNAMSIZ in Linux
+            assert!(iface.len() < 16); // IFNAMSIZ in Linux
         }
     }
 }

@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Burn, Mint, MintTo, Token, TokenAccount, Transfer};
 
-declare_id!("JLQ4c9UWdNoYbsbAKU59SkYAw9HdVoz1Pxu7Juu4qyB");
+declare_id!("9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq");
 
 /// Total supply of $AEGIS tokens (1 billion with 9 decimals)
 pub const TOTAL_SUPPLY: u64 = 1_000_000_000_000_000_000;

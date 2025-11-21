@@ -1,4 +1,4 @@
-use aegis_node::cache::{CacheClient, CacheStats, generate_cache_key};
+use aegis_node::cache::{generate_cache_key, CacheClient, CacheStats};
 use std::time::Duration;
 
 #[tokio::test]
@@ -155,8 +155,14 @@ async fn test_cache_stats_tracking() {
     cache.flush_all().await.unwrap();
 
     // Perform some operations
-    cache.set("test:stats:1", b"value1", Some(300)).await.unwrap();
-    cache.set("test:stats:2", b"value2", Some(300)).await.unwrap();
+    cache
+        .set("test:stats:1", b"value1", Some(300))
+        .await
+        .unwrap();
+    cache
+        .set("test:stats:2", b"value2", Some(300))
+        .await
+        .unwrap();
 
     // Generate some hits
     cache.get("test:stats:1").await.unwrap();

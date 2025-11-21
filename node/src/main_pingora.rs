@@ -1,10 +1,10 @@
-mod pingora_proxy;
-mod config;
 mod cache;
+mod config;
+mod pingora_proxy;
 
 use anyhow::Result;
-use std::fs;
 use pingora_proxy::ProxyConfig;
+use std::fs;
 
 fn main() -> Result<()> {
     // Load configuration
@@ -12,11 +12,10 @@ fn main() -> Result<()> {
         .nth(1)
         .unwrap_or_else(|| "config.toml".to_string());
 
-    let config_str = fs::read_to_string(&config_path)
-        .unwrap_or_else(|_| {
-            println!("Config file not found, using defaults");
-            String::new()
-        });
+    let config_str = fs::read_to_string(&config_path).unwrap_or_else(|_| {
+        println!("Config file not found, using defaults");
+        String::new()
+    });
 
     let config: ProxyConfig = if config_str.is_empty() {
         ProxyConfig::default()

@@ -321,7 +321,9 @@ async fn test_high_load_simulation() {
     let expected_hits = 34; // ceil(100/3)
     let expected_misses = 66;
     assert!(metrics.cache_hits >= expected_hits - 1 && metrics.cache_hits <= expected_hits + 1);
-    assert!(metrics.cache_misses >= expected_misses - 1 && metrics.cache_misses <= expected_misses + 1);
+    assert!(
+        metrics.cache_misses >= expected_misses - 1 && metrics.cache_misses <= expected_misses + 1
+    );
 
     // Latencies should be valid
     assert!(metrics.avg_latency_ms > 0.0);

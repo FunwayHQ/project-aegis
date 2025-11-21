@@ -1,9 +1,9 @@
-use hyper::{Body, Client, Request, Response, Server, StatusCode, Uri};
 use hyper::service::{make_service_fn, service_fn};
+use hyper::{Body, Client, Request, Response, Server, StatusCode, Uri};
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::time::Instant;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Proxy configuration
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -34,7 +34,11 @@ async fn handle_request(
     let start_time = Instant::now();
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let query = req
+        .uri()
+        .query()
+        .map(|q| format!("?{}", q))
+        .unwrap_or_default();
 
     // Build upstream URL
     let upstream_uri = format!("{}{}{}", origin, path, query);
@@ -48,13 +52,18 @@ async fn handle_request(
             // Add forwarding headers
             parts.headers.insert(
                 "X-Forwarded-For",
-                parts.headers
+                parts
+                    .headers
                     .get("X-Real-IP")
                     .cloned()
                     .unwrap_or_else(|| "127.0.0.1".parse().unwrap()),
             );
-            parts.headers.insert("X-Forwarded-Proto", "http".parse().unwrap());
-            parts.headers.insert("X-Served-By", "AEGIS-Edge-Node".parse().unwrap());
+            parts
+                .headers
+                .insert("X-Forwarded-Proto", "http".parse().unwrap());
+            parts
+                .headers
+                .insert("X-Served-By", "AEGIS-Edge-Node".parse().unwrap());
 
             let upstream_req = Request::from_parts(parts, body);
 
@@ -62,10 +71,9 @@ async fn handle_request(
             match client.request(upstream_req).await {
                 Ok(mut response) => {
                     // Add AEGIS headers to response
-                    response.headers_mut().insert(
-                        "X-AEGIS-Node",
-                        "edge-node-v0.1".parse().unwrap(),
-                    );
+                    response
+                        .headers_mut()
+                        .insert("X-AEGIS-Node", "edge-node-v0.1".parse().unwrap());
 
                     let status = response.status();
                     let duration = start_time.elapsed();

@@ -1,8 +1,10 @@
+use crate::cache::{generate_cache_key, CacheClient, CacheControl};
+use crate::waf::{AegisWaf, WafAction};
 use async_trait::async_trait;
+use hyper::body::Bytes;
 use pingora::prelude::*;
 use pingora::proxy::{ProxyHttp, Session};
 use std::time::Instant;
-use crate::cache::{CacheClient, CacheControl, generate_cache_key};
 
 /// Proxy context - tracks request metadata
 pub struct ProxyContext {
@@ -10,6 +12,7 @@ pub struct ProxyContext {
     pub cache_hit: bool,
     pub cache_key: Option<String>,
     pub cache_ttl: Option<u64>, // Custom TTL from Cache-Control
+    pub waf_blocked: bool,       // Whether request was blocked by WAF
 }
 
 /// AEGIS Pingora-based reverse proxy
@@ -22,6 +25,8 @@ pub struct AegisProxy {
     pub cache_ttl: u64,
     /// Whether caching is enabled
     pub caching_enabled: bool,
+    /// Web Application Firewall
+    pub waf: Option<AegisWaf>,
 }
 
 impl AegisProxy {
@@ -35,12 +40,20 @@ impl AegisProxy {
         cache_ttl: u64,
         caching_enabled: bool,
     ) -> Self {
+        Self::new_with_waf(origin, cache_client, cache_ttl, caching_enabled, None)
+    }
+
+    pub fn new_with_waf(
+        origin: String,
+        cache_client: Option<std::sync::Arc<tokio::sync::Mutex<CacheClient>>>,
+        cache_ttl: u64,
+        caching_enabled: bool,
+        waf: Option<AegisWaf>,
+    ) -> Self {
         // Parse origin to get address with port for HttpPeer
         // Example: "http://httpbin.org" -> "httpbin.org:80"
         let is_https = origin.starts_with("https://");
-        let mut origin_addr = origin
-            .replace("http://", "")
-            .replace("https://", "");
+        let mut origin_addr = origin.replace("http://", "").replace("https://", "");
 
         // Add default port if not specified
         // For IPv6 addresses like [::1], check for ] instead of just :
@@ -63,6 +76,7 @@ impl AegisProxy {
             cache_client,
             cache_ttl,
             caching_enabled,
+            waf,
         }
     }
 }
@@ -77,15 +91,78 @@ impl ProxyHttp for AegisProxy {
             cache_hit: false,
             cache_key: None,
             cache_ttl: None,
+            waf_blocked: false,
         }
     }
 
-    /// Request filter - check cache before proxying
-    async fn request_filter(
-        &self,
-        session: &mut Session,
-        ctx: &mut Self::CTX,
-    ) -> Result<bool> {
+    /// Request filter - check WAF and cache before proxying
+    async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // ============================================
+        // PHASE 1: WAF Analysis (Security First!)
+        // ============================================
+        if let Some(waf) = &self.waf {
+            let method = session.req_header().method.as_str();
+            let uri = session.req_header().uri.path();
+
+            // Collect headers
+            let headers: Vec<(String, String)> = session
+                .req_header()
+                .headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+                })
+                .collect();
+
+            // Analyze request (body analysis will happen in request_body_filter if needed)
+            let matches = waf.analyze_request(method, uri, &headers, None);
+
+            if !matches.is_empty() {
+                let action = waf.determine_action(&matches);
+
+                // Log all matches
+                for rule_match in &matches {
+                    log::warn!(
+                        "WAF Rule {} triggered: {} (severity: {:?}, location: {}, value: {})",
+                        rule_match.rule_id,
+                        rule_match.rule_description,
+                        rule_match.severity,
+                        rule_match.location,
+                        rule_match.matched_value
+                    );
+                }
+
+                match action {
+                    WafAction::Block => {
+                        ctx.waf_blocked = true;
+                        log::error!("WAF BLOCKED: {} {} - {} rule(s) triggered", method, uri, matches.len());
+
+                        // Send 403 Forbidden response
+                        let mut header = pingora::http::ResponseHeader::build(403, Some(3))?;
+                        header.insert_header("Content-Type", "text/plain")?;
+                        session.write_response_header(Box::new(header), true).await?;
+                        session
+                            .write_response_body(Some("403 Forbidden - Request blocked by WAF".into()), true)
+                            .await?;
+
+                        // Return true to skip upstream
+                        return Ok(true);
+                    }
+                    WafAction::Log => {
+                        log::warn!("WAF LOGGED: {} {} - {} rule(s) triggered (action: log)", method, uri, matches.len());
+                        // Continue processing
+                    }
+                    WafAction::Allow => {
+                        // Explicitly allowed, continue
+                    }
+                }
+            }
+        }
+
+        // ============================================
+        // PHASE 2: Cache Lookup
+        // ============================================
+
         // Only cache GET requests
         if session.req_header().method != "GET" {
             return Ok(false);
@@ -117,12 +194,14 @@ impl ProxyHttp for AegisProxy {
 
                 // Send cached response
                 session
-                    .write_response_header(Box::new(pingora::http::ResponseHeader::build(
-                        200,
-                        Some(4),
-                    )?), true)
+                    .write_response_header(
+                        Box::new(pingora::http::ResponseHeader::build(200, Some(4))?),
+                        true,
+                    )
                     .await?;
-                session.write_response_body(Some(cached_response.into()), true).await?;
+                session
+                    .write_response_body(Some(cached_response.into()), true)
+                    .await?;
 
                 // Return true to skip upstream
                 return Ok(true);
@@ -143,7 +222,7 @@ impl ProxyHttp for AegisProxy {
         // Create upstream peer
         let peer = Box::new(HttpPeer::new(
             self.origin_addr.clone(),
-            false, // TLS
+            false,          // TLS
             "".to_string(), // SNI
         ));
         Ok(peer)
@@ -153,7 +232,7 @@ impl ProxyHttp for AegisProxy {
     async fn response_filter(
         &self,
         _session: &mut Session,
-        upstream_response: &mut pingora::proxy::HttpResponse,
+        upstream_response: &mut pingora::http::ResponseHeader,
         ctx: &mut Self::CTX,
     ) -> Result<()> {
         // Only cache if:
@@ -166,7 +245,7 @@ impl ProxyHttp for AegisProxy {
         }
 
         let status = upstream_response.status.as_u16();
-        if status < 200 || status >= 300 {
+        if !(200..300).contains(&status) {
             return Ok(()); // Only cache successful responses
         }
 
@@ -197,10 +276,10 @@ impl ProxyHttp for AegisProxy {
     }
 
     /// Cache response body chunks as they arrive
-    async fn upstream_response_body_filter(
+    fn upstream_response_body_filter(
         &self,
         _session: &mut Session,
-        body: &mut Option<pingora::http::ResponseBody>,
+        body: &mut Option<Bytes>,
         end_of_stream: bool,
         ctx: &mut Self::CTX,
     ) -> Result<Option<std::time::Duration>> {
@@ -208,21 +287,24 @@ impl ProxyHttp for AegisProxy {
         if end_of_stream && ctx.cache_key.is_some() && !ctx.cache_hit {
             if let Some(cache_key) = &ctx.cache_key {
                 if let (Some(cache), Some(body_data)) = (&self.cache_client, body) {
-                    // Get the body bytes
-                    if let Some(bytes) = body_data.as_ref() {
-                        let mut cache_lock = cache.lock().await;
+                    // Clone data for async task
+                    let cache_clone = cache.clone();
+                    let cache_key_clone = cache_key.clone();
+                    let body_bytes = body_data.clone();
+                    let ttl = ctx.cache_ttl.unwrap_or(self.cache_ttl);
 
-                        // Use TTL from Cache-Control if present, otherwise use default
-                        let ttl = ctx.cache_ttl.or(Some(self.cache_ttl));
-
-                        // Store in cache with appropriate TTL
-                        if let Err(e) = cache_lock.set(cache_key, bytes, ttl).await {
-                            log::warn!("Failed to cache response for {}: {}", cache_key, e);
+                    // Spawn async task to store in cache (non-blocking)
+                    tokio::spawn(async move {
+                        let mut cache_lock = cache_clone.lock().await;
+                        if let Err(e) = cache_lock
+                            .set(&cache_key_clone, &body_bytes, Some(ttl))
+                            .await
+                        {
+                            log::warn!("Failed to cache response for {}: {}", cache_key_clone, e);
                         } else {
-                            let ttl_value = ttl.unwrap_or(self.cache_ttl);
-                            log::debug!("CACHE STORED: {} (TTL: {}s)", cache_key, ttl_value);
+                            log::debug!("CACHE STORED: {} (TTL: {}s)", cache_key_clone, ttl);
                         }
-                    }
+                    });
                 }
             }
         }
@@ -338,7 +420,11 @@ pub fn run_proxy(config: ProxyConfig) -> Result<()> {
                 CacheClient::new(cache_url, config.cache_ttl.unwrap_or(60)).await
             }) {
                 Ok(client) => {
-                    log::info!("Cache connected: {} (TTL: {}s)", cache_url, config.cache_ttl.unwrap_or(60));
+                    log::info!(
+                        "Cache connected: {} (TTL: {}s)",
+                        cache_url,
+                        config.cache_ttl.unwrap_or(60)
+                    );
                     Some(std::sync::Arc::new(tokio::sync::Mutex::new(client)))
                 }
                 Err(e) => {
@@ -365,19 +451,18 @@ pub fn run_proxy(config: ProxyConfig) -> Result<()> {
     );
 
     // Create HTTP proxy service
-    let mut proxy_service = pingora::proxy::http_proxy_service(
-        &server.configuration,
-        proxy,
-    );
+    let mut proxy_service = pingora::proxy::http_proxy_service(&server.configuration, proxy);
 
     // Add HTTP listener
     proxy_service.add_tcp(&config.http_addr);
     log::info!("HTTP listener on {}", config.http_addr);
 
     // Add HTTPS listener if configured
-    if let (Some(https_addr), Some(cert_path), Some(key_path)) =
-        (&config.https_addr, &config.tls_cert_path, &config.tls_key_path) {
-
+    if let (Some(https_addr), Some(cert_path), Some(key_path)) = (
+        &config.https_addr,
+        &config.tls_cert_path,
+        &config.tls_key_path,
+    ) {
         // Check if certificate files exist
         if std::path::Path::new(cert_path).exists() && std::path::Path::new(key_path).exists() {
             // Add TLS listener with cert/key paths
@@ -386,7 +471,10 @@ pub fn run_proxy(config: ProxyConfig) -> Result<()> {
                 log::error!("Failed to add TLS listener: {}", e);
                 log::warn!("HTTPS listener disabled");
             } else {
-                log::info!("HTTPS listener on {} (TLS 1.2/1.3 enabled with BoringSSL)", https_addr);
+                log::info!(
+                    "HTTPS listener on {} (TLS 1.2/1.3 enabled with BoringSSL)",
+                    https_addr
+                );
             }
         } else {
             log::warn!("TLS certificate not found at {} or {}", cert_path, key_path);
