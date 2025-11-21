@@ -1,5 +1,6 @@
 use crate::bot_management::{BotAction, BotManager};
 use crate::cache::{generate_cache_key, CacheClient, CacheControl};
+use crate::ip_extraction::{extract_client_ip, IpExtractionConfig};
 use crate::waf::{AegisWaf, WafAction};
 use async_trait::async_trait;
 use hyper::body::Bytes;
@@ -15,6 +16,7 @@ pub struct ProxyContext {
     pub cache_ttl: Option<u64>, // Custom TTL from Cache-Control
     pub waf_blocked: bool,       // Whether request was blocked by WAF
     pub bot_blocked: bool,       // Whether request was blocked by bot management
+    pub request_body: Vec<u8>,   // Buffered request body for WAF inspection
 }
 
 /// AEGIS Pingora-based reverse proxy
@@ -31,6 +33,8 @@ pub struct AegisProxy {
     pub waf: Option<AegisWaf>,
     /// Bot Management System (Sprint 9)
     pub bot_manager: Option<std::sync::Arc<BotManager>>,
+    /// IP extraction configuration (Sprint 12.5)
+    pub ip_extraction_config: IpExtractionConfig,
 }
 
 impl AegisProxy {
@@ -93,6 +97,7 @@ impl AegisProxy {
             caching_enabled,
             waf,
             bot_manager,
+            ip_extraction_config: IpExtractionConfig::default(),
         }
     }
 }
@@ -109,6 +114,7 @@ impl ProxyHttp for AegisProxy {
             cache_ttl: None,
             waf_blocked: false,
             bot_blocked: false,
+            request_body: Vec::new(),
         }
     }
 
@@ -118,7 +124,7 @@ impl ProxyHttp for AegisProxy {
         // PHASE 0: Bot Management (Sprint 9)
         // ============================================
         if let Some(bot_manager) = &self.bot_manager {
-            // Extract User-Agent and IP
+            // Extract User-Agent
             let user_agent = session
                 .req_header()
                 .headers
@@ -126,12 +132,25 @@ impl ProxyHttp for AegisProxy {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
 
-            // Get client IP (simplified - in production use X-Forwarded-For with validation)
-            let ip = session
+            // Extract client IP using Sprint 12.5 IP extraction (X-Forwarded-For with trusted proxy validation)
+            let connection_ip = session
                 .downstream_session
                 .client_addr()
                 .map(|addr| addr.to_string())
                 .unwrap_or_else(|| "unknown".to_string());
+
+            // Collect headers for IP extraction
+            let headers: Vec<(String, String)> = session
+                .req_header()
+                .headers
+                .iter()
+                .filter_map(|(name, value)| {
+                    value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+                })
+                .collect();
+
+            let ip_source = extract_client_ip(&self.ip_extraction_config, &connection_ip, &headers);
+            let ip = ip_source.ip();
 
             // Analyze request
             match bot_manager.analyze_request(user_agent, &ip) {
@@ -305,6 +324,63 @@ impl ProxyHttp for AegisProxy {
         }
 
         Ok(false)
+    }
+
+    /// Request body filter - buffer request body for WAF inspection
+    fn request_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> Result<Option<std::time::Duration>> {
+        // Buffer request body chunks for WAF analysis
+        if let Some(body_chunk) = body {
+            ctx.request_body.extend_from_slice(body_chunk);
+        }
+
+        // If end of stream and we have a WAF, analyze the complete body
+        if end_of_stream && !ctx.request_body.is_empty() {
+            if let Some(waf) = &self.waf {
+                // We need to re-check with the body now
+                // Note: This is a simplified approach. In production, you'd want to
+                // handle this more elegantly, possibly by deferring the entire WAF
+                // check until after body is received.
+
+                // Since we can't easily return a response from this callback,
+                // we'll set a flag if body inspection finds threats.
+                // The actual blocking will need to happen in request_filter
+                // for headers/URI and here we just log for now.
+
+                let matches = waf.analyze_request("", "", &[], Some(&ctx.request_body));
+
+                if !matches.is_empty() {
+                    let action = waf.determine_action(&matches);
+
+                    for rule_match in &matches {
+                        log::warn!(
+                            "WAF Rule {} triggered in body: {} (severity: {:?}, value: {})",
+                            rule_match.rule_id,
+                            rule_match.rule_description,
+                            rule_match.severity,
+                            rule_match.matched_value
+                        );
+                    }
+
+                    if matches!(action, WafAction::Block) {
+                        ctx.waf_blocked = true;
+                        log::error!("WAF BLOCKED: Request body contains malicious content - {} rule(s) triggered", matches.len());
+
+                        // Note: Pingora's current design makes it difficult to send a response
+                        // from request_body_filter. The proper way is to check the body in
+                        // request_filter by buffering first. For now, we log the violation.
+                        // In Sprint 13 (Wasm migration), this will be handled properly.
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     /// Determine where to send the request (upstream selection)

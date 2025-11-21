@@ -14,15 +14,21 @@ use core::mem;
 // Network protocol constants
 const ETH_P_IP: u16 = 0x0800;
 const IPPROTO_TCP: u8 = 6;
+const IPPROTO_UDP: u8 = 17;
 const TCP_FLAG_SYN: u8 = 0x02;
 
 // Configuration keys
 const CONFIG_SYN_THRESHOLD: u32 = 0;  // SYN packets per second per IP threshold
 const CONFIG_GLOBAL_THRESHOLD: u32 = 1;  // Total SYN packets per second
+const CONFIG_UDP_THRESHOLD: u32 = 2;  // UDP packets per second per IP threshold
 
 // Map to track SYN packet counts per source IP
 #[map]
 static SYN_TRACKER: HashMap<u32, SynInfo> = HashMap::with_max_entries(10000, 0);
+
+// Map to track UDP packet counts per source IP (Sprint 12.5)
+#[map]
+static UDP_TRACKER: HashMap<u32, UdpInfo> = HashMap::with_max_entries(10000, 0);
 
 // Configuration map (updatable from userspace)
 #[map]
@@ -48,6 +54,14 @@ struct SynInfo {
     last_seen: u64,
 }
 
+/// UDP packet tracking info (Sprint 12.5)
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct UdpInfo {
+    count: u64,
+    last_seen: u64,
+}
+
 /// SECURITY OPTIMIZATION: Block info for auto-blacklisted IPs
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -63,6 +77,8 @@ const STAT_DROPPED_PACKETS: u32 = 2;
 const STAT_PASSED_PACKETS: u32 = 3;
 const STAT_BLOCKED_IPS: u32 = 4;        // OPTIMIZATION: Track auto-blacklisted IPs
 const STAT_EARLY_DROPS: u32 = 5;        // OPTIMIZATION: Drops from blocklist
+const STAT_UDP_PACKETS: u32 = 6;        // Sprint 12.5: UDP packet counter
+const STAT_UDP_DROPPED: u32 = 7;        // Sprint 12.5: Dropped UDP packets
 
 // OPTIMIZATION: Time constants (using microseconds for coarse timer)
 const ONE_SECOND_US: u64 = 1_000_000;   // 1 second in microseconds
@@ -126,9 +142,14 @@ fn try_syn_flood_filter(ctx: XdpContext) -> Result<u32, ()> {
 
     let ip_proto = unsafe { (*iphdr).protocol };
 
+    // Sprint 12.5: Handle UDP flood protection
+    if ip_proto == IPPROTO_UDP {
+        return handle_udp_packet(src_ip, now);
+    }
+
     // Check if TCP packet
     if ip_proto != IPPROTO_TCP {
-        return Ok(xdp_action::XDP_PASS);  // Not TCP, pass it
+        return Ok(xdp_action::XDP_PASS);  // Not TCP or UDP, pass it
     }
 
     // Parse TCP header
@@ -264,6 +285,117 @@ fn try_syn_flood_filter(ctx: XdpContext) -> Result<u32, ()> {
         Ok(xdp_action::XDP_DROP)
     } else {
         // Increment pass counter
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_PASS)
+    }
+}
+
+/// Sprint 12.5: Handle UDP flood detection and rate limiting
+#[inline(always)]
+fn handle_udp_packet(src_ip: u32, now: u64) -> Result<u32, ()> {
+    // Increment UDP packet counter
+    unsafe {
+        if let Some(counter) = STATS.get_ptr_mut(STAT_UDP_PACKETS) {
+            *counter += 1;
+        }
+    }
+
+    // Check if IP is whitelisted
+    if unsafe { WHITELIST.get(&src_ip).is_some() } {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
+                *counter += 1;
+            }
+        }
+        return Ok(xdp_action::XDP_PASS);
+    }
+
+    // Get current UDP threshold from config (default: 1000 UDP/sec)
+    let threshold = unsafe {
+        CONFIG.get(CONFIG_UDP_THRESHOLD)
+            .map(|v| *v)
+            .unwrap_or(1000)
+    };
+
+    // Check UDP rate with similar algorithm to SYN flood
+    let should_drop = unsafe {
+        match UDP_TRACKER.get(&src_ip) {
+            Some(info) => {
+                let mut info = *info;
+
+                let time_diff = now.saturating_sub(info.last_seen);
+
+                if time_diff < ONE_SECOND_US {
+                    // Within same second, increment count
+                    info.count += 1;
+                    info.last_seen = now;
+
+                    // Check if exceeded threshold
+                    if info.count > threshold {
+                        // UDP flood detected!
+
+                        // Auto-blacklist severe offenders (2x threshold)
+                        if info.count > threshold * 2 {
+                            let block_info = BlockInfo {
+                                blocked_until: now + BLOCK_DURATION_US,
+                                total_violations: info.count,
+                            };
+                            BLOCKLIST.insert(&src_ip, &block_info, 0).ok();
+
+                            if let Some(counter) = STATS.get_ptr_mut(STAT_BLOCKED_IPS) {
+                                *counter += 1;
+                            }
+                        }
+
+                        UDP_TRACKER.insert(&src_ip, &info, 0).ok();
+                        true  // Drop packet
+                    } else {
+                        UDP_TRACKER.insert(&src_ip, &info, 0).ok();
+                        false  // Pass packet
+                    }
+                } else {
+                    // Gradual decay for new window
+                    let decayed_count = if info.count > 10 {
+                        info.count / 2
+                    } else {
+                        1
+                    };
+
+                    let new_info = UdpInfo {
+                        count: decayed_count,
+                        last_seen: now,
+                    };
+                    UDP_TRACKER.insert(&src_ip, &new_info, 0).ok();
+                    false  // Pass packet
+                }
+            }
+            None => {
+                // First UDP from this IP
+                let new_info = UdpInfo {
+                    count: 1,
+                    last_seen: now,
+                };
+                UDP_TRACKER.insert(&src_ip, &new_info, 0).ok();
+                false  // Pass packet
+            }
+        }
+    };
+
+    if should_drop {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_UDP_DROPPED) {
+                *counter += 1;
+            }
+            if let Some(counter) = STATS.get_ptr_mut(STAT_DROPPED_PACKETS) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_DROP)
+    } else {
         unsafe {
             if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
                 *counter += 1;

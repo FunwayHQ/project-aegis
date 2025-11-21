@@ -15,12 +15,15 @@ use tracing::{info, warn};
 // Configuration keys (must match eBPF program)
 const CONFIG_SYN_THRESHOLD: u32 = 0;
 const CONFIG_GLOBAL_THRESHOLD: u32 = 1;
+const CONFIG_UDP_THRESHOLD: u32 = 2;
 
 // Statistics indices
 const STAT_TOTAL_PACKETS: u32 = 0;
 const STAT_SYN_PACKETS: u32 = 1;
 const STAT_DROPPED_PACKETS: u32 = 2;
 const STAT_PASSED_PACKETS: u32 = 3;
+const STAT_UDP_PACKETS: u32 = 6;
+const STAT_UDP_DROPPED: u32 = 7;
 
 /// eBPF DDoS protection statistics
 #[derive(Debug, Clone, Default)]
@@ -29,6 +32,8 @@ pub struct DDoSStats {
     pub syn_packets: u64,
     pub dropped_packets: u64,
     pub passed_packets: u64,
+    pub udp_packets: u64,
+    pub udp_dropped: u64,
 }
 
 impl DDoSStats {
@@ -47,6 +52,24 @@ impl DDoSStats {
             0.0
         } else {
             (self.syn_packets as f64 / self.total_packets as f64) * 100.0
+        }
+    }
+
+    /// Calculate UDP packet percentage (Sprint 12.5)
+    pub fn udp_percentage(&self) -> f64 {
+        if self.total_packets == 0 {
+            0.0
+        } else {
+            (self.udp_packets as f64 / self.total_packets as f64) * 100.0
+        }
+    }
+
+    /// Calculate UDP drop rate percentage (Sprint 12.5)
+    pub fn udp_drop_rate(&self) -> f64 {
+        if self.udp_packets == 0 {
+            0.0
+        } else {
+            (self.udp_dropped as f64 / self.udp_packets as f64) * 100.0
         }
     }
 }
@@ -180,6 +203,22 @@ impl EbpfLoader {
         Ok(())
     }
 
+    /// Set UDP flood threshold (packets per second per IP) - Sprint 12.5
+    pub fn set_udp_threshold(&mut self, threshold: u64) -> Result<()> {
+        let mut config: Array<_, u64> = Array::try_from(
+            self.ebpf
+                .map_mut("CONFIG")
+                .ok_or_else(|| anyhow!("CONFIG map not found"))?,
+        )?;
+
+        config
+            .set(CONFIG_UDP_THRESHOLD, threshold, 0)
+            .context("Failed to set UDP threshold")?;
+
+        info!("UDP flood threshold set to: {}", threshold);
+        Ok(())
+    }
+
     /// Add IP to whitelist (never rate-limited)
     pub fn whitelist_ip(&mut self, ip: &str) -> Result<()> {
         let ip_addr = Ipv4Addr::from_str(ip)?;
@@ -230,12 +269,16 @@ impl EbpfLoader {
         let syn_packets = stats_map.get(&STAT_SYN_PACKETS, 0).unwrap_or(0);
         let dropped_packets = stats_map.get(&STAT_DROPPED_PACKETS, 0).unwrap_or(0);
         let passed_packets = stats_map.get(&STAT_PASSED_PACKETS, 0).unwrap_or(0);
+        let udp_packets = stats_map.get(&STAT_UDP_PACKETS, 0).unwrap_or(0);
+        let udp_dropped = stats_map.get(&STAT_UDP_DROPPED, 0).unwrap_or(0);
 
         Ok(DDoSStats {
             total_packets,
             syn_packets,
             dropped_packets,
             passed_packets,
+            udp_packets,
+            udp_dropped,
         })
     }
 
