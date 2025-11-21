@@ -1,0 +1,86 @@
+# AEGIS Bot Management Configuration
+# Sprint 9: Advanced Bot Management (Wasm-based) & Policy
+#
+# This configuration controls bot detection and mitigation policies
+# for the AEGIS edge node.
+
+[bot_management]
+# Enable/disable bot management
+enabled = true
+
+# Policy Actions
+# Actions available: "Allow", "Challenge", "Block", "RateLimit"
+
+# Action for known legitimate bots (search engines, monitoring services)
+known_bot_action = "Allow"
+
+# Action for suspicious traffic patterns
+suspicious_action = "Challenge"
+
+# Action for confirmed malicious bots
+malicious_action = "Block"
+
+# Rate Limiting Configuration
+
+# Maximum requests per IP address within the time window
+rate_limit_requests = 100
+
+# Time window for rate limiting (in seconds)
+rate_limit_window_secs = 60
+
+# Threshold for suspicious request rate (requests per second)
+# IPs exceeding this rate will trigger suspicious verdict
+suspicious_rate_threshold = 10.0
+
+# Custom Whitelists and Blacklists
+
+# Whitelist: User-agents that bypass all bot checks
+# Useful for trusted monitoring services, internal tools, etc.
+whitelist_user_agents = [
+    # Examples (add your trusted services):
+    # "UptimeRobot",
+    # "Pingdom",
+    # "StatusCake",
+]
+
+# Blacklist: User-agents to immediately block
+# These will be blocked regardless of other settings
+blacklist_user_agents = [
+    # Examples (add known malicious patterns):
+    # "MaliciousBot",
+    # "BadScraper",
+]
+
+# Notes:
+# - Bot detection rules are defined in code and include:
+#   * Search engines (Googlebot, Bingbot, Yahoo Slurp, DuckDuckBot, Baiduspider)
+#   * Suspicious clients (curl, wget, python-requests, etc.)
+#   * Malicious scrapers (Scrapy, etc.)
+#   * Headless browsers (PhantomJS, HeadlessChrome)
+#
+# - Rate limiting is per IP address
+# - Whitelist takes priority over all other rules
+# - Blacklist is checked before bot detection rules
+#
+# - Future (Sprint 13): This module will be migrated to WebAssembly
+#   for better isolation and sandboxing
+
+# Example Production Configurations:
+
+# Strict Mode (High Security):
+# known_bot_action = "RateLimit"
+# suspicious_action = "Block"
+# malicious_action = "Block"
+# rate_limit_requests = 50
+# suspicious_rate_threshold = 5.0
+
+# Permissive Mode (Development/Testing):
+# known_bot_action = "Allow"
+# suspicious_action = "Allow"
+# malicious_action = "Challenge"
+# rate_limit_requests = 1000
+# suspicious_rate_threshold = 100.0
+
+# Balanced Mode (Default):
+# Current settings above provide a balanced approach
+# suitable for most production deployments
