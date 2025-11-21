@@ -252,7 +252,108 @@ impl EbpfLoader {
             None
         }
     }
+
+    /// Add IP to blocklist (for threat intelligence sharing)
+    /// The IP will be blocked for the specified duration in seconds
+    pub fn blocklist_ip(&mut self, ip: &str, duration_secs: u64) -> Result<()> {
+        let ip_addr = Ipv4Addr::from_str(ip)?;
+        let ip_u32 = u32::from(ip_addr).to_be(); // Network byte order
+
+        // Get current time in microseconds (matches eBPF program)
+        let now_us = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as u64;
+
+        let blocked_until = now_us + (duration_secs * 1_000_000);
+
+        let mut blocklist: HashMap<_, u32, BlockInfo> = HashMap::try_from(
+            self.ebpf
+                .map_mut("BLOCKLIST")
+                .ok_or_else(|| anyhow!("BLOCKLIST map not found"))?,
+        )?;
+
+        let block_info = BlockInfo {
+            blocked_until,
+            total_violations: 1,
+        };
+
+        blocklist
+            .insert(ip_u32, block_info, 0)
+            .context("Failed to add IP to blocklist")?;
+
+        info!("Added IP to blocklist: {} (until {}us)", ip, blocked_until);
+        Ok(())
+    }
+
+    /// Remove IP from blocklist
+    pub fn remove_from_blocklist(&mut self, ip: &str) -> Result<()> {
+        let ip_addr = Ipv4Addr::from_str(ip)?;
+        let ip_u32 = u32::from(ip_addr).to_be();
+
+        let mut blocklist: HashMap<_, u32, BlockInfo> = HashMap::try_from(
+            self.ebpf
+                .map_mut("BLOCKLIST")
+                .ok_or_else(|| anyhow!("BLOCKLIST map not found"))?,
+        )?;
+
+        blocklist
+            .remove(&ip_u32)
+            .context("Failed to remove IP from blocklist")?;
+
+        info!("Removed IP from blocklist: {}", ip);
+        Ok(())
+    }
+
+    /// Check if IP is in blocklist
+    pub fn is_blocklisted(&self, ip: &str) -> Result<bool> {
+        let ip_addr = Ipv4Addr::from_str(ip)?;
+        let ip_u32 = u32::from(ip_addr).to_be();
+
+        let blocklist: HashMap<_, u32, BlockInfo> = HashMap::try_from(
+            self.ebpf
+                .map("BLOCKLIST")
+                .ok_or_else(|| anyhow!("BLOCKLIST map not found"))?,
+        )?;
+
+        Ok(blocklist.get(&ip_u32, 0).is_ok())
+    }
+
+    /// Get all blocklisted IPs with their expiration times
+    pub fn get_blocklist(&self) -> Result<Vec<(String, u64)>> {
+        let blocklist: HashMap<_, u32, BlockInfo> = HashMap::try_from(
+            self.ebpf
+                .map("BLOCKLIST")
+                .ok_or_else(|| anyhow!("BLOCKLIST map not found"))?,
+        )?;
+
+        let mut result = Vec::new();
+
+        // Iterate through all keys in the blocklist
+        // Note: HashMap iteration in aya 0.12 requires iterating over keys
+        for key in blocklist.keys() {
+            if let Ok(ip_u32) = key {
+                if let Ok(block_info) = blocklist.get(&ip_u32, 0) {
+                    let ip = Ipv4Addr::from(u32::from_be(ip_u32));
+                    result.push((ip.to_string(), block_info.blocked_until));
+                }
+            }
+        }
+
+        Ok(result)
+    }
 }
+
+/// BlockInfo structure (must match eBPF program definition)
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+struct BlockInfo {
+    blocked_until: u64,
+    total_violations: u64,
+}
+
+// SAFETY: BlockInfo is a simple C-compatible struct with no padding
+unsafe impl aya::Pod for BlockInfo {}
 
 impl Drop for EbpfLoader {
     fn drop(&mut self) {

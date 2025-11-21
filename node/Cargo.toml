@@ -44,6 +44,9 @@ sysinfo = "0.30"
 # WebAssembly runtime for bot management (Sprint 9)
 wasmtime = "27.0"
 
+# P2P Networking for threat intelligence (Sprint 10)
+libp2p = { version = "0.54", features = ["gossipsub", "mdns", "noise", "tcp", "tokio", "yamux", "kad", "identify", "macros"] }
+
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }
@@ -66,4 +69,9 @@ path = "src/main_pingora.rs"
 [[bin]]
 name = "aegis-ebpf-loader"
 path = "src/main_ebpf.rs"
+required-features = []
+
+[[bin]]
+name = "aegis-threat-intel"
+path = "src/main_threat_intel.rs"
 required-features = []

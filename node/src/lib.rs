@@ -12,3 +12,9 @@ pub mod waf;
 
 #[cfg(target_os = "linux")]
 pub mod ebpf_loader;
+
+// Sprint 10: P2P Threat Intelligence
+pub mod threat_intel_p2p;
+
+#[cfg(target_os = "linux")]
+pub mod threat_intel_service;
