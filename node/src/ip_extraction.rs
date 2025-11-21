@@ -86,7 +86,7 @@ pub fn extract_client_ip(
         if let Some(header_value) = find_header(headers, header_name) {
             // X-Forwarded-For can contain multiple IPs: "client, proxy1, proxy2"
             // We want the leftmost (original client) IP
-            if let Some(client_ip) = extract_leftmost_ip(header_value) {
+            if let Some(client_ip) = extract_leftmost_ip(&header_value) {
                 // Validate it's a valid IP
                 if is_valid_ip(&client_ip) {
                     log::debug!(

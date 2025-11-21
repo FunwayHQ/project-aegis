@@ -182,6 +182,68 @@ impl DistributedRateLimiter {
         }
     }
 
+    /// Sprint 13.5: Start background CRDT compaction task
+    /// Periodically compacts G-Counters to prevent unbounded memory growth
+    /// from accumulating actor IDs over time
+    pub fn start_compaction_task(&mut self, compact_interval_secs: u64) {
+        let windows = self.windows.clone();
+        let compact_interval = Duration::from_secs(compact_interval_secs);
+
+        info!(
+            "Starting CRDT compaction task (interval: {}s)",
+            compact_interval_secs
+        );
+
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(compact_interval);
+
+            loop {
+                interval.tick().await;
+
+                // Perform compaction on all windows
+                match windows.read() {
+                    Ok(windows_guard) => {
+                        let mut total_compacted = 0;
+
+                        for (resource_id, window) in windows_guard.iter() {
+                            // Check if compaction is needed (size threshold)
+                            if let Ok(size) = window.counter.estimated_size() {
+                                // Compact if size > 1KB (indicates many actors)
+                                if size > 1024 {
+                                    if let Err(e) = window.counter.compact() {
+                                        warn!("Failed to compact counter for {}: {}", resource_id, e);
+                                    } else {
+                                        total_compacted += 1;
+                                        debug!(
+                                            "Compacted counter for {} (size was {} bytes)",
+                                            resource_id, size
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        if total_compacted > 0 {
+                            info!(
+                                "Compaction completed: compacted {} counters across {} resources",
+                                total_compacted,
+                                windows_guard.len()
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to acquire read lock for compaction: {}", e);
+                    }
+                }
+            }
+        });
+
+        // Store handle for cleanup
+        if let Some(old_handle) = self.cleanup_task_handle.replace(handle) {
+            old_handle.abort();
+        }
+    }
+
     /// Connect to NATS and start synchronization
     pub async fn connect_and_sync(&mut self) -> Result<()> {
         if !self.config.auto_sync {

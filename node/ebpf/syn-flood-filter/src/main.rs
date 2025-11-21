@@ -13,6 +13,7 @@ use core::mem;
 
 // Network protocol constants
 const ETH_P_IP: u16 = 0x0800;
+const ETH_P_IPV6: u16 = 0x86DD; // Sprint 13.5: IPv6 support
 const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
 const TCP_FLAG_SYN: u8 = 0x02;
@@ -30,6 +31,14 @@ static SYN_TRACKER: HashMap<u32, SynInfo> = HashMap::with_max_entries(10000, 0);
 #[map]
 static UDP_TRACKER: HashMap<u32, UdpInfo> = HashMap::with_max_entries(10000, 0);
 
+// Sprint 13.5: IPv6 tracking maps
+// IPv6 addresses are 128 bits, represented as [u32; 4]
+#[map]
+static SYN_TRACKER_V6: HashMap<Ipv6Addr, SynInfo> = HashMap::with_max_entries(10000, 0);
+
+#[map]
+static UDP_TRACKER_V6: HashMap<Ipv6Addr, UdpInfo> = HashMap::with_max_entries(10000, 0);
+
 // Configuration map (updatable from userspace)
 #[map]
 static CONFIG: Array<u64> = Array::with_max_entries(10, 0);
@@ -46,6 +55,13 @@ static WHITELIST: HashMap<u32, u8> = HashMap::with_max_entries(1000, 0);
 // IPs that significantly exceed threshold are blocked for 30 seconds
 #[map]
 static BLOCKLIST: HashMap<u32, BlockInfo> = HashMap::with_max_entries(5000, 0);
+
+/// IPv6 address representation (128 bits as 4x u32) - Sprint 13.5
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Ipv6Addr {
+    addr: [u32; 4], // 128 bits in network byte order
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -79,6 +95,8 @@ const STAT_BLOCKED_IPS: u32 = 4;        // OPTIMIZATION: Track auto-blacklisted 
 const STAT_EARLY_DROPS: u32 = 5;        // OPTIMIZATION: Drops from blocklist
 const STAT_UDP_PACKETS: u32 = 6;        // Sprint 12.5: UDP packet counter
 const STAT_UDP_DROPPED: u32 = 7;        // Sprint 12.5: Dropped UDP packets
+const STAT_IPV6_PACKETS: u32 = 8;       // Sprint 13.5: IPv6 packet counter
+const STAT_IPV6_DROPPED: u32 = 9;       // Sprint 13.5: Dropped IPv6 packets
 
 // OPTIMIZATION: Time constants (using microseconds for coarse timer)
 const ONE_SECOND_US: u64 = 1_000_000;   // 1 second in microseconds
@@ -108,9 +126,16 @@ fn try_syn_flood_filter(ctx: XdpContext) -> Result<u32, ()> {
     // Parse Ethernet header
     let ethhdr = ptr_at::<EthHdr>(&ctx, 0)?;
 
+    let eth_proto = u16::from_be(unsafe { (*ethhdr).h_proto });
+
+    // Sprint 13.5: Handle IPv6 packets
+    if eth_proto == ETH_P_IPV6 {
+        return try_ipv6_filter(&ctx, now);
+    }
+
     // Check if IP packet (IPv4)
-    if u16::from_be(unsafe { (*ethhdr).h_proto }) != ETH_P_IP {
-        return Ok(xdp_action::XDP_PASS);  // Not IPv4, pass it
+    if eth_proto != ETH_P_IP {
+        return Ok(xdp_action::XDP_PASS);  // Not IPv4 or IPv6, pass it
     }
 
     // Parse IP header
@@ -419,6 +444,183 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
     Ok((start + offset) as *const T)
 }
 
+/// Sprint 13.5: IPv6 packet filtering (mirrors IPv4 logic)
+fn try_ipv6_filter(ctx: &XdpContext, now: u64) -> Result<u32, ()> {
+    unsafe {
+        if let Some(counter) = STATS.get_ptr_mut(STAT_IPV6_PACKETS) {
+            *counter += 1;
+        }
+        if let Some(counter) = STATS.get_ptr_mut(STAT_TOTAL_PACKETS) {
+            *counter += 1;
+        }
+    }
+
+    // Parse IPv6 header
+    let ipv6hdr = ptr_at::<Ipv6Hdr>(&ctx, EthHdr::LEN)?;
+    let src_ipv6 = unsafe { (*ipv6hdr).saddr };
+    let next_header = unsafe { (*ipv6hdr).nexthdr };
+
+    // Handle TCP (SYN flood)
+    if next_header == IPPROTO_TCP {
+        let tcphdr = ptr_at::<TcpHdr>(&ctx, EthHdr::LEN + Ipv6Hdr::LEN)?;
+        let tcp_flags = unsafe { (*tcphdr).flags() };
+        let is_syn = (tcp_flags & TCP_FLAG_SYN) != 0;
+        let is_ack = (tcp_flags & 0x10) != 0;
+
+        if is_syn && !is_ack {
+            return handle_ipv6_syn(src_ipv6, now);
+        }
+    }
+    // Handle UDP flood
+    else if next_header == IPPROTO_UDP {
+        return handle_ipv6_udp(src_ipv6, now);
+    }
+
+    unsafe {
+        if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
+            *counter += 1;
+        }
+    }
+    Ok(xdp_action::XDP_PASS)
+}
+
+/// Handle IPv6 SYN flood detection
+#[inline(always)]
+fn handle_ipv6_syn(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
+    unsafe {
+        if let Some(counter) = STATS.get_ptr_mut(STAT_SYN_PACKETS) {
+            *counter += 1;
+        }
+    }
+
+    let threshold = unsafe {
+        CONFIG.get(CONFIG_SYN_THRESHOLD)
+            .map(|v| *v)
+            .unwrap_or(100)
+    };
+
+    let should_drop = unsafe {
+        match SYN_TRACKER_V6.get(&src_ipv6) {
+            Some(info) => {
+                let mut info = *info;
+                let time_diff = now.saturating_sub(info.last_seen);
+
+                if time_diff < ONE_SECOND_US {
+                    info.count += 1;
+                    info.last_seen = now;
+
+                    if info.count > threshold {
+                        SYN_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
+                        true
+                    } else {
+                        SYN_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
+                        false
+                    }
+                } else {
+                    let decayed_count = if info.count > 10 { info.count / 2 } else { 1 };
+                    let new_info = SynInfo { count: decayed_count, last_seen: now };
+                    SYN_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
+                    false
+                }
+            }
+            None => {
+                let new_info = SynInfo { count: 1, last_seen: now };
+                SYN_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
+                false
+            }
+        }
+    };
+
+    if should_drop {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_DROPPED_PACKETS) {
+                *counter += 1;
+            }
+            if let Some(counter) = STATS.get_ptr_mut(STAT_IPV6_DROPPED) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_DROP)
+    } else {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_PASS)
+    }
+}
+
+/// Handle IPv6 UDP flood detection
+#[inline(always)]
+fn handle_ipv6_udp(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
+    unsafe {
+        if let Some(counter) = STATS.get_ptr_mut(STAT_UDP_PACKETS) {
+            *counter += 1;
+        }
+    }
+
+    let threshold = unsafe {
+        CONFIG.get(CONFIG_UDP_THRESHOLD)
+            .map(|v| *v)
+            .unwrap_or(1000)
+    };
+
+    let should_drop = unsafe {
+        match UDP_TRACKER_V6.get(&src_ipv6) {
+            Some(info) => {
+                let mut info = *info;
+                let time_diff = now.saturating_sub(info.last_seen);
+
+                if time_diff < ONE_SECOND_US {
+                    info.count += 1;
+                    info.last_seen = now;
+
+                    if info.count > threshold {
+                        UDP_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
+                        true
+                    } else {
+                        UDP_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
+                        false
+                    }
+                } else {
+                    let decayed_count = if info.count > 10 { info.count / 2 } else { 1 };
+                    let new_info = UdpInfo { count: decayed_count, last_seen: now };
+                    UDP_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
+                    false
+                }
+            }
+            None => {
+                let new_info = UdpInfo { count: 1, last_seen: now };
+                UDP_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
+                false
+            }
+        }
+    };
+
+    if should_drop {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_UDP_DROPPED) {
+                *counter += 1;
+            }
+            if let Some(counter) = STATS.get_ptr_mut(STAT_DROPPED_PACKETS) {
+                *counter += 1;
+            }
+            if let Some(counter) = STATS.get_ptr_mut(STAT_IPV6_DROPPED) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_DROP)
+    } else {
+        unsafe {
+            if let Some(counter) = STATS.get_ptr_mut(STAT_PASSED_PACKETS) {
+                *counter += 1;
+            }
+        }
+        Ok(xdp_action::XDP_PASS)
+    }
+}
+
 // Ethernet header
 #[repr(C)]
 struct EthHdr {
@@ -429,6 +631,21 @@ struct EthHdr {
 
 impl EthHdr {
     const LEN: usize = mem::size_of::<Self>();
+}
+
+// IPv6 header (simplified) - Sprint 13.5
+#[repr(C)]
+struct Ipv6Hdr {
+    _version_tc_fl: u32, // Version, traffic class, flow label
+    _payload_len: u16,
+    nexthdr: u8,      // Next header (protocol)
+    _hop_limit: u8,
+    saddr: Ipv6Addr,  // Source address (128 bits)
+    _daddr: Ipv6Addr, // Destination address (128 bits)
+}
+
+impl Ipv6Hdr {
+    const LEN: usize = 40; // Fixed IPv6 header length
 }
 
 // IPv4 header (simplified)

@@ -31,3 +31,6 @@ pub mod verifiable_metrics_api;
 // Sprint 12.5: Security Polish & Resilience
 pub mod ip_extraction;
 pub mod blocklist_persistence;
+
+// Sprint 13: Wasm Edge Functions Runtime & WAF Migration
+pub mod wasm_runtime;
