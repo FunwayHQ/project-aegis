@@ -1,0 +1,16 @@
+[package]
+name = "bot-detector-wasm"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# No external dependencies for simplicity
+# In production, you might want serde for JSON serialization
+
+[profile.release]
+opt-level = "z"     # Optimize for size
+lto = true          # Link-time optimization
+codegen-units = 1   # Better optimization
