@@ -403,8 +403,8 @@ impl MetricsStorage {
 
         let reports = stmt
             .query_map([limit], |row| {
-                let window_start: u64 = row.get(0)?;
-                let window_end: u64 = row.get(1)?;
+                let _window_start: u64 = row.get(0)?;
+                let _window_end: u64 = row.get(1)?;
                 let public_key: String = row.get(2)?;
                 let signature: String = row.get(3)?;
                 let signed_at: u64 = row.get(4)?;
@@ -439,8 +439,8 @@ impl MetricsStorage {
 
         let reports = stmt
             .query_map([start, end], |row| {
-                let window_start: u64 = row.get(0)?;
-                let window_end: u64 = row.get(1)?;
+                let _window_start: u64 = row.get(0)?;
+                let _window_end: u64 = row.get(1)?;
                 let public_key: String = row.get(2)?;
                 let signature: String = row.get(3)?;
                 let signed_at: u64 = row.get(4)?;
