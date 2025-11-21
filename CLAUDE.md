@@ -48,16 +48,27 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 - **Cilium**: Orchestrates eBPF programs for DDoS mitigation
 - XDP programs drop malicious packets at NIC driver level (nanoseconds latency)
 - Handles volumetric attacks (SYN floods) before OS resource consumption
+- Dynamic blocklist updated via P2P threat intelligence
 
 **Application-Level (WAF)**:
-- **Coraza WAF**: OWASP CRS-compatible, compiled to WebAssembly
-- Runs in isolated Wasm sandbox within River proxy (via wasmtime)
-- Protects against SQLi, XSS, and Layer 7 attacks
-- Isolation prevents WAF bugs from crashing entire proxy
+- **Rust-Native WAF**: OWASP-compatible firewall (Sprint 8)
+- Integrated into Pingora request filter
+- Protects against SQLi, XSS, RCE, and Layer 7 attacks
+- <100μs latency overhead per request
+- Wasm migration planned for Sprint 13
 
 **Bot Management**:
-- Custom Wasm modules for bot detection (user-agent analysis, rate limiting)
-- Configurable policies (challenge, block, allow)
+- **Wasm-based bot detector**: Isolated bot detection engine (Sprint 9)
+- User-agent analysis and behavioral detection
+- Configurable policies (allow, challenge, block, rate-limit)
+- Runs in isolated Wasm sandbox for security
+
+**Threat Intelligence (P2P)**:
+- **libp2p-based network**: Decentralized threat intelligence sharing (Sprint 10)
+- Automatic peer discovery (mDNS + Kademlia DHT)
+- Real-time threat propagation via gossipsub
+- Automatic eBPF blocklist updates on threat receipt
+- <200ms from detection to network-wide protection
 
 #### 4. Distributed State Management
 
@@ -105,27 +116,30 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 ### Request Lifecycle
 
 1. **BGP Anycast** routes user to nearest edge node
-2. **eBPF/XDP** (Cilium) drops malicious packets at kernel level
+2. **eBPF/XDP** drops malicious/blocklisted packets at kernel level (uses P2P threat intel)
 3. **River Proxy** terminates TLS using BoringSSL
-4. **Coraza WAF** (Wasm) inspects for Layer 7 attacks
+4. **WAF + Bot Management** inspects for Layer 7 attacks (SQLi, XSS, bots)
 5. **DragonflyDB** cache lookup (hit = immediate response, miss = proxy to origin)
-6. **NATS JetStream** broadcasts state updates (rate limits, etc.) via CRDTs
-7. **FluxCD** ensures config matches Git, validated by Flagger canaries
+6. **P2P Threat Intelligence** shares detected threats with network (libp2p gossipsub)
+7. **NATS JetStream** broadcasts state updates (rate limits, cache invalidation) via CRDTs
+8. **FluxCD** ensures config matches Git, validated by Flagger canaries
 
 ## Development Phases
 
-### Phase 1: Foundation & Core Node (Sprints 1-6)
-- Solana smart contract development ($AEGIS token, node registry, staking)
-- Rust node with Pingora/River proxy, TLS termination
-- DragonflyDB integration for caching
-- Basic node operator CLI for registration and rewards claiming
+### Phase 1: Foundation & Core Node (Sprints 1-6) ✅ COMPLETE
+- ✅ Solana smart contract development ($AEGIS token, node registry, staking, rewards)
+- ✅ Rust node with Pingora/River proxy, TLS termination
+- ✅ DragonflyDB integration for caching
+- ✅ Node operator CLI for registration and rewards claiming (10 commands)
+- ✅ 344 tests passing, all 4 contracts deployed to Devnet
 
-### Phase 2: Security & Distributed State (Sprints 7-12)
-- eBPF/XDP DDoS protection (SYN flood mitigation)
-- Coraza WAF integration via Wasm
-- Bot management Wasm modules
-- CRDTs + NATS JetStream for global state sync
-- Verifiable analytics framework with cryptographic signing
+### Phase 2: Security & Distributed State (Sprints 7-12) - 67% COMPLETE
+- ✅ **Sprint 7:** eBPF/XDP DDoS protection (SYN flood mitigation) - 48 tests
+- ✅ **Sprint 8:** WAF integration (Rust-native, OWASP rules) - 7 tests + 17 integration
+- ✅ **Sprint 9:** Bot management (Wasm-based detection) - 6 tests
+- ✅ **Sprint 10:** P2P Threat Intelligence (libp2p, real-time sharing) - 30 tests
+- ⏳ **Sprint 11:** CRDTs + NATS JetStream for global state sync
+- ⏳ **Sprint 12:** Verifiable analytics framework with cryptographic signing
 
 ### Phase 3: Edge Compute & Governance (Sprints 13-18)
 - Wasm edge functions runtime (custom logic at edge)
