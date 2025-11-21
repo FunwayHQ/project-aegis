@@ -147,8 +147,8 @@
                 </div>
                 <div class="text-center md:border-l border-aegis-teal/20">
                     <div class="text-sm text-gray-400 mb-2">Development</div>
-                    <div class="text-3xl md:text-4xl font-bold gradient-text stat-number">29%</div>
-                    <div class="text-xs text-aegis-teal mt-1">7 of 24 Sprints</div>
+                    <div class="text-3xl md:text-4xl font-bold gradient-text stat-number">50%</div>
+                    <div class="text-xs text-aegis-teal mt-1">12 of 24 Sprints</div>
                 </div>
             </div>
         </div>
@@ -475,15 +475,19 @@
                 <!-- Phase 2 -->
                 <div class="flex items-start">
                     <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-aegis-lightblue rounded-full animate-pulse"></div>
-                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-lightblue to-aegis-mediumblue opacity-30 mt-2"></div>
+                        <div class="w-6 h-6 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-full flex items-center justify-center">
+                            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-teal to-aegis-mediumblue opacity-50 mt-2"></div>
                     </div>
                     <div class="flex-1 pb-12">
                         <div class="flex items-center mb-3">
                             <h3 class="text-2xl font-bold text-white mr-4">Phase 2: Security & State</h3>
-                            <span class="px-3 py-1 bg-aegis-lightblue/20 text-aegis-lightblue rounded-full text-sm font-semibold">IN PROGRESS</span>
+                            <span class="px-3 py-1 bg-aegis-teal/20 text-aegis-teal rounded-full text-sm font-semibold">✓ COMPLETE</span>
                         </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 7-12 | 1 of 6 Complete</div>
+                        <div class="text-sm text-gray-400 mb-4">Sprints 7-12 | 100% Complete (6 of 6)</div>
                         <div class="grid sm:grid-cols-2 gap-4">
                             <div class="flex items-start space-x-2">
                                 <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -492,16 +496,34 @@
                                 <span class="text-gray-300">eBPF/XDP DDoS Protection</span>
                             </div>
                             <div class="flex items-start space-x-2">
-                                <div class="w-5 h-5 border-2 border-aegis-lightblue rounded mt-0.5 flex-shrink-0"></div>
-                                <span class="text-gray-300">Coraza WAF Integration</span>
+                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                <span class="text-gray-300">Rust-Native WAF</span>
                             </div>
                             <div class="flex items-start space-x-2">
-                                <div class="w-5 h-5 border-2 border-aegis-lightblue rounded mt-0.5 flex-shrink-0"></div>
+                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
                                 <span class="text-gray-300">Bot Management (Wasm)</span>
                             </div>
                             <div class="flex items-start space-x-2">
-                                <div class="w-5 h-5 border-2 border-aegis-lightblue rounded mt-0.5 flex-shrink-0"></div>
+                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                <span class="text-gray-300">P2P Threat Intelligence</span>
+                            </div>
+                            <div class="flex items-start space-x-2">
+                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
                                 <span class="text-gray-300">CRDTs + NATS Global Sync</span>
+                            </div>
+                            <div class="flex items-start space-x-2">
+                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                                </svg>
+                                <span class="text-gray-300">Verifiable Analytics</span>
                             </div>
                         </div>
                     </div>
@@ -510,15 +532,15 @@
                 <!-- Phase 3 -->
                 <div class="flex items-start">
                     <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-aegis-mediumblue/50 rounded-full"></div>
-                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-mediumblue to-aegis-purple opacity-20 mt-2"></div>
+                        <div class="w-6 h-6 bg-aegis-mediumblue rounded-full animate-pulse"></div>
+                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-mediumblue to-aegis-purple opacity-30 mt-2"></div>
                     </div>
                     <div class="flex-1 pb-12">
                         <div class="flex items-center mb-3">
                             <h3 class="text-2xl font-bold text-white mr-4">Phase 3: Edge Compute</h3>
-                            <span class="px-3 py-1 bg-mediumGrey text-gray-400 rounded-full text-sm font-semibold">PLANNED</span>
+                            <span class="px-3 py-1 bg-aegis-mediumblue/20 text-aegis-mediumblue rounded-full text-sm font-semibold">IN PROGRESS</span>
                         </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 13-18 | Q2-Q3 2026</div>
+                        <div class="text-sm text-gray-400 mb-4">Sprints 13-18 | 0 of 6 Complete</div>
                         <div class="grid sm:grid-cols-2 gap-4">
                             <div class="flex items-start space-x-2">
                                 <div class="w-5 h-5 border-2 border-aegis-mediumblue/50 rounded mt-0.5 flex-shrink-0"></div>
