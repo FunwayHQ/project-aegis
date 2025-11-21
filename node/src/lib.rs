@@ -27,3 +27,7 @@ pub mod nats_sync;
 // Sprint 12: Verifiable Analytics
 pub mod verifiable_metrics;
 pub mod verifiable_metrics_api;
+
+// Sprint 12.5: Security Polish & Resilience
+pub mod ip_extraction;
+pub mod blocklist_persistence;

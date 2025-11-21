@@ -100,6 +100,8 @@ pub struct DistributedRateLimiter {
     windows: Arc<RwLock<HashMap<String, RateLimitWindow>>>,
     /// Channel to receive sync status updates
     sync_status_rx: Option<mpsc::UnboundedReceiver<String>>,
+    /// Cleanup task handle (Sprint 12.5)
+    cleanup_task_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl DistributedRateLimiter {
@@ -115,6 +117,68 @@ impl DistributedRateLimiter {
             nats: None,
             windows: Arc::new(RwLock::new(HashMap::new())),
             sync_status_rx: None,
+            cleanup_task_handle: None,
+        }
+    }
+
+    /// Start background cleanup task for expired windows (Sprint 12.5)
+    /// This prevents memory leaks from stale entries
+    pub fn start_cleanup_task(&mut self) {
+        let windows = self.windows.clone();
+        let cleanup_interval = Duration::from_secs(self.config.window_duration_secs * 2); // Run cleanup twice per window duration
+
+        info!(
+            "Starting cleanup task (interval: {:?})",
+            cleanup_interval
+        );
+
+        let handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(cleanup_interval);
+
+            loop {
+                interval.tick().await;
+
+                // Perform cleanup
+                match windows.write() {
+                    Ok(mut windows_guard) => {
+                        let before_count = windows_guard.len();
+
+                        // Remove expired windows
+                        windows_guard.retain(|resource_id, window| {
+                            let keep = !window.is_expired();
+                            if !keep {
+                                debug!("Cleaning up expired window for: {}", resource_id);
+                            }
+                            keep
+                        });
+
+                        let after_count = windows_guard.len();
+                        let cleaned = before_count - after_count;
+
+                        if cleaned > 0 {
+                            info!(
+                                "Cleanup task removed {} expired windows ({} -> {})",
+                                cleaned,
+                                before_count,
+                                after_count
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to acquire write lock for cleanup: {}", e);
+                    }
+                }
+            }
+        });
+
+        self.cleanup_task_handle = Some(handle);
+    }
+
+    /// Stop the cleanup task (Sprint 12.5)
+    pub fn stop_cleanup_task(&mut self) {
+        if let Some(handle) = self.cleanup_task_handle.take() {
+            handle.abort();
+            info!("Cleanup task stopped");
         }
     }
 
@@ -295,6 +359,12 @@ impl DistributedRateLimiter {
     /// Get configuration
     pub fn config(&self) -> &RateLimiterConfig {
         &self.config
+    }
+}
+
+impl Drop for DistributedRateLimiter {
+    fn drop(&mut self) {
+        self.stop_cleanup_task();
     }
 }
 
