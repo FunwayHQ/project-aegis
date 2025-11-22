@@ -1,0 +1,136 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dragonfly-config
+  namespace: aegis
+data:
+  dragonfly.conf: |
+    # DragonflyDB Configuration for AEGIS Edge Cache
+
+    # Bind to all interfaces
+    bind 0.0.0.0
+
+    # Port
+    port 6379
+
+    # Memory limit (80% of container limit)
+    maxmemory 6gb
+
+    # Eviction policy (LRU for cache)
+    maxmemory-policy allkeys-lru
+
+    # Persistence (disabled for pure cache)
+    save ""
+    appendonly no
+
+    # Performance
+    tcp-backlog 511
+    timeout 0
+    tcp-keepalive 300
+
+    # Logging
+    loglevel notice
+
+    # Multi-threading (DragonflyDB automatically uses all cores)
+    # No configuration needed - Dragonfly is multi-threaded by default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dragonfly
+  namespace: aegis
+  labels:
+    app: dragonfly
+    component: cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dragonfly
+  template:
+    metadata:
+      labels:
+        app: dragonfly
+        component: cache
+    spec:
+      containers:
+      - name: dragonfly
+        image: docker.dragonflydb.io/dragonflydb/dragonfly:v1.13.0
+        args:
+          - "--logtostderr"
+          - "--maxmemory=6gb"
+          - "--proactor_threads=4"
+        ports:
+        - name: dragonfly
+          containerPort: 6379
+          protocol: TCP
+        resources:
+          requests:
+            cpu: "2"
+            memory: 8Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+        livenessProbe:
+          tcpSocket:
+            port: 6379
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        volumeMounts:
+        - name: config
+          mountPath: /etc/dragonfly
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: dragonfly-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonfly
+  namespace: aegis
+  labels:
+    app: dragonfly
+    component: cache
+spec:
+  type: ClusterIP
+  ports:
+  - name: dragonfly
+    port: 6379
+    targetPort: 6379
+    protocol: TCP
+  selector:
+    app: dragonfly
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dragonfly-metrics
+  namespace: aegis
+  labels:
+    app: dragonfly
+    component: cache
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "6379"
+spec:
+  type: ClusterIP
+  clusterIP: None  # Headless service for metrics
+  ports:
+  - name: metrics
+    port: 6379
+    targetPort: 6379
+  selector:
+    app: dragonfly
