@@ -1,0 +1,180 @@
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: river-proxy
+  namespace: aegis
+spec:
+  # Target deployment to manage
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: river-proxy
+  # HPA reference (optional)
+  autoscalerRef:
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    name: river-proxy
+  # Service configuration
+  service:
+    port: 80
+    targetPort: 80
+    portDiscovery: true
+  # Canary analysis configuration
+  analysis:
+    # Check metrics every 1 minute
+    interval: 1m
+    # Promote to next step after 5 successful checks
+    threshold: 5
+    # Maximum traffic weight to canary
+    maxWeight: 50
+    # Traffic increment per step
+    stepWeight: 10
+    # Rollback threshold (failures)
+    maxFailures: 3
+    # Metrics to monitor
+    metrics:
+    # 1. Success rate must stay above 99%
+    - name: request-success-rate
+      templateRef:
+        name: request-success-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 99
+      interval: 1m
+    # 2. Average latency must stay below 500ms
+    - name: request-duration
+      templateRef:
+        name: request-duration
+        namespace: flagger-system
+      thresholdRange:
+        max: 500
+      interval: 1m
+    # 3. Error rate must stay below 1%
+    - name: error-rate
+      templateRef:
+        name: error-rate
+        namespace: flagger-system
+      thresholdRange:
+        max: 1
+      interval: 1m
+    # Webhooks for notifications (optional)
+    webhooks:
+    - name: alert
+      type: pre-rollout
+      url: http://alerting-service/canary-start
+      metadata:
+        deployment: river-proxy
+    - name: load-test
+      type: rollout
+      url: http://loadtester.test/
+      timeout: 5s
+      metadata:
+        cmd: "hey -z 1m -q 10 -c 2 http://river-proxy-canary.aegis/"
+---
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: dragonfly
+  namespace: aegis
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: dragonfly
+  service:
+    port: 6379
+  analysis:
+    interval: 1m
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+    - name: redis-success-rate
+      templateRef:
+        name: redis-success-rate
+        namespace: flagger-system
+      thresholdRange:
+        min: 99.5
+      interval: 1m
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: request-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    sum(
+      rate(
+        http_requests_total{
+          namespace="{{ namespace }}",
+          deployment=~"{{ target }}",
+          status!~"5.."
+        }[{{ interval }}]
+      )
+    )
+    /
+    sum(
+      rate(
+        http_requests_total{
+          namespace="{{ namespace }}",
+          deployment=~"{{ target }}"
+        }[{{ interval }}]
+      )
+    )
+    * 100
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: request-duration
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    histogram_quantile(
+      0.99,
+      sum(
+        rate(
+          http_request_duration_seconds_bucket{
+            namespace="{{ namespace }}",
+            deployment=~"{{ target }}"
+          }[{{ interval }}]
+        )
+      ) by (le)
+    ) * 1000
+---
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: error-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://prometheus.monitoring:9090
+  query: |
+    sum(
+      rate(
+        http_requests_total{
+          namespace="{{ namespace }}",
+          deployment=~"{{ target }}",
+          status=~"5.."
+        }[{{ interval }}]
+      )
+    )
+    /
+    sum(
+      rate(
+        http_requests_total{
+          namespace="{{ namespace }}",
+          deployment=~"{{ target }}"
+        }[{{ interval }}]
+      )
+    )
+    * 100

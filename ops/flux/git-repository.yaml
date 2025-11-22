@@ -1,0 +1,31 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: aegis-repo
+  namespace: flux-system
+spec:
+  interval: 1m0s
+  url: https://github.com/FunwayHQ/project-aegis
+  ref:
+    branch: main
+  secretRef:
+    name: flux-system  # Optional: for private repos
+  timeout: 60s
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: aegis-repo-ops
+  namespace: flux-system
+spec:
+  interval: 1m0s
+  url: https://github.com/FunwayHQ/project-aegis
+  ref:
+    branch: main
+  include:
+    - repository:
+        name: aegis-repo
+  # Only watch ops/ directory for efficiency
+  ignore: |
+    /*
+    !/ops/**

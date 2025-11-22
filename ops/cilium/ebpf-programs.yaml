@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aegis-ebpf-programs
+  namespace: aegis
+data:
+  # SYN flood filter from Sprint 7
+  syn-flood-filter.o: |
+    # Binary eBPF object file would be stored here
+    # In practice, this would be base64 encoded or loaded from a volume
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ebpf-loader
+  namespace: aegis
+  labels:
+    app: ebpf-loader
+    component: security
+spec:
+  selector:
+    matchLabels:
+      app: ebpf-loader
+  template:
+    metadata:
+      labels:
+        app: ebpf-loader
+        component: security
+    spec:
+      hostNetwork: true
+      hostPID: true
+      serviceAccountName: ebpf-loader
+      containers:
+      - name: ebpf-loader
+        image: aegis/ebpf-loader:latest
+        imagePullPolicy: Always
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - SYS_ADMIN
+            - BPF
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: INTERFACE
+          value: "eth0"  # Primary network interface
+        - name: SYN_THRESHOLD
+          value: "100"   # SYN packets/sec threshold
+        volumeMounts:
+        - name: bpffs
+          mountPath: /sys/fs/bpf
+          mountPropagation: Bidirectional
+        - name: cgroup
+          mountPath: /sys/fs/cgroup
+        - name: ebpf-programs
+          mountPath: /opt/aegis/ebpf
+        command:
+        - /bin/sh
+        - -c
+        - |
+          #!/bin/sh
+          set -e
+
+          echo "Loading AEGIS eBPF programs on node: $NODE_NAME"
+          echo "Interface: $INTERFACE"
+          echo "SYN Threshold: $SYN_THRESHOLD"
+
+          # Load SYN flood filter
+          /usr/local/bin/aegis-ebpf-loader attach \
+            --interface $INTERFACE \
+            --program /opt/aegis/ebpf/syn-flood-filter \
+            --threshold $SYN_THRESHOLD
+
+          # Monitor statistics
+          /usr/local/bin/aegis-ebpf-loader monitor --interval 60
+
+          # Keep container running
+          tail -f /dev/null
+      volumes:
+      - name: bpffs
+        hostPath:
+          path: /sys/fs/bpf
+          type: DirectoryOrCreate
+      - name: cgroup
+        hostPath:
+          path: /sys/fs/cgroup
+          type: Directory
+      - name: ebpf-programs
+        configMap:
+          name: aegis-ebpf-programs
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ebpf-loader
+  namespace: aegis
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ebpf-loader
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ebpf-loader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ebpf-loader
+subjects:
+- kind: ServiceAccount
+  name: ebpf-loader
+  namespace: aegis
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: aegis-ddos-protection
+  namespace: aegis
+spec:
+  description: "DDoS protection policy using eBPF/XDP"
+  endpointSelector:
+    matchLabels:
+      app: river-proxy
+  ingress:
+  - fromEntities:
+    - world
+    - cluster
+    toPorts:
+    - ports:
+      - port: "80"
+        protocol: TCP
+      - port: "443"
+        protocol: TCP
+      rules:
+        l7:
+        - {}
+  # Rate limiting via eBPF
+  ingressDeny:
+  - fromCIDR:
+    - 0.0.0.0/0
+    toPorts:
+    - ports:
+      - port: "80"
+      - port: "443"
+    # Deny if source matches blocklist (managed by eBPF program)

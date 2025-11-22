@@ -1,0 +1,36 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 5m0s
+  retryInterval: 1m0s
+  timeout: 5m0s
+  sourceRef:
+    kind: GitRepository
+    name: aegis-repo-ops
+  path: ./ops/k3s
+  prune: true
+  wait: true
+  # Wait for infrastructure to be ready first
+  dependsOn:
+    - name: infrastructure
+  healthChecks:
+    - apiVersion: apps/v1
+      kind: Deployment
+      name: river-proxy
+      namespace: aegis
+    - apiVersion: v1
+      kind: Service
+      name: river-proxy
+      namespace: aegis
+  postBuild:
+    substitute:
+      # Environment variables that can be used in manifests
+      AEGIS_VERSION: "v0.1.0"
+      CLUSTER_NAME: "aegis-edge-01"
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-config
+        optional: true

@@ -1,0 +1,130 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cilium-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cilium-config
+  namespace: cilium-system
+data:
+  # Enable eBPF-based networking
+  enable-bpf-masquerade: "true"
+  enable-bpf-tproxy: "true"
+  enable-host-reachable-services: "true"
+
+  # XDP acceleration
+  enable-xdp-prefilter: "true"
+  xdp-mode: "native"  # Use native XDP for best performance
+
+  # eBPF host routing
+  enable-host-firewall: "true"
+  enable-endpoint-routes: "true"
+
+  # AEGIS-specific: eBPF programs for DDoS protection
+  bpf-lb-algorithm: "maglev"
+  bpf-lb-mode: "dsr"
+
+  # Monitoring
+  enable-metrics: "true"
+  prometheus-serve-addr: ":9090"
+
+  # Logging
+  debug: "false"
+  log-driver: "syslog"
+---
+# Helm chart values for Cilium installation
+# Apply with: helm install cilium cilium/cilium --namespace=cilium-system -f install.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cilium-helm-values
+  namespace: cilium-system
+data:
+  values.yaml: |
+    # Cilium Helm Chart Values for AEGIS Edge Nodes
+
+    # Basic configuration
+    cluster:
+      name: aegis-edge
+      id: 1
+
+    # Enable eBPF host routing (bypass iptables)
+    bpf:
+      hostRouting: true
+      masquerade: true
+      tproxy: true
+
+    # XDP acceleration for DDoS protection
+    xdp:
+      enabled: true
+      mode: "native"  # Best performance (requires kernel 4.18+)
+
+    # Load balancing
+    loadBalancer:
+      algorithm: "maglev"
+      mode: "dsr"  # Direct Server Return
+      acceleration: "native"
+
+    # Host firewall for eBPF-based filtering
+    hostFirewall:
+      enabled: true
+
+    # Monitoring and observability
+    prometheus:
+      enabled: true
+      port: 9090
+      serviceMonitor:
+        enabled: true
+        labels:
+          prometheus: kube-prometheus
+
+    hubble:
+      enabled: true
+      metrics:
+        enabled:
+          - dns
+          - drop
+          - tcp
+          - flow
+          - port-distribution
+          - icmp
+      relay:
+        enabled: true
+      ui:
+        enabled: true
+
+    # Operator configuration
+    operator:
+      replicas: 1
+      prometheus:
+        enabled: true
+
+    # IPv4/IPv6
+    ipv4:
+      enabled: true
+    ipv6:
+      enabled: true
+
+    # Tunnel mode (disabled for native routing)
+    tunnel: "disabled"
+
+    # Auto direct node routes
+    autoDirectNodeRoutes: true
+
+    # Enable bandwidth manager
+    bandwidthManager:
+      enabled: true
+
+    # Enable BBR congestion control
+    enableBBR: true
+
+    # Resources
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 512Mi

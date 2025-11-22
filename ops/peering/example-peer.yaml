@@ -1,0 +1,47 @@
+# Example BGP Peer Configuration
+# Copy this file to data/peers/ and customize for each peer
+
+name: example-transit
+description: "Example Transit Provider"
+
+# Peer IP and AS number
+neighbor_ip: 192.0.2.1
+neighbor_as: 65001
+
+# Peer type: transit, ixp, or private
+peer_type: transit
+
+# BGP authentication (highly recommended)
+authentication:
+  enabled: true
+  password: "CHANGE_THIS_TO_STRONG_PASSWORD"
+
+# Multihop BGP (for eBGP peers not directly connected)
+multihop: 2
+
+# Local preference (higher = more preferred)
+# Default: 100
+# Transit: 100, IXP: 200, Private: 300
+local_pref: 100
+
+# AS path prepending for traffic engineering
+# 0 = no prepending, 1-3 = number of times to prepend own AS
+prepend_count: 0
+
+# Route limits (protection against route leaks)
+import_limit: 100000
+export_limit: 10
+
+# BFD fast failure detection
+bfd_enabled: true
+
+# Enable/disable this peer
+enabled: true
+
+# Additional metadata (for documentation)
+metadata:
+  contact: "noc@example-transit.com"
+  phone: "+1-555-0123"
+  contract: "Transit-2025-001"
+  bandwidth: "10 Gbps"
+  location: "Equinix NY5"
