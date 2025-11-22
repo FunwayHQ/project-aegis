@@ -292,13 +292,13 @@ const functionCid = await client.deployEdgeFunction({
 
 ## Development Roadmap
 
-### Phase 1: Foundation (Q1 2026) ✓
+### Phase 1: Foundation (Q3 2025) ✓
 - [x] Solana smart contracts ($AEGIS token, registry, staking)
 - [x] River proxy with DragonflyDB caching
 - [x] Basic node operator CLI
 - [x] Devnet deployment
 
-### Phase 2: Security & State (Q2 2026) - 67% COMPLETE
+### Phase 2: Security & State (Q4 2025)
 - [x] eBPF/XDP DDoS protection
 - [x] WAF integration (Rust-native, Wasm migration planned)
 - [x] Bot management modules (Wasm-based)
