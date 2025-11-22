@@ -7,6 +7,30 @@ use tracing::{info, warn};
 #[cfg(target_os = "linux")]
 use crate::ebpf_loader::EbpfLoader;
 
+/// Get current Unix timestamp in seconds
+/// Returns 0 if system clock is before Unix epoch (should never happen on modern systems)
+fn current_timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_else(|e| {
+            warn!("System clock before Unix epoch: {} - using timestamp 0", e);
+            0
+        })
+}
+
+/// Get current Unix timestamp in microseconds
+/// Returns 0 if system clock is before Unix epoch (should never happen on modern systems)
+fn current_timestamp_micros() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_micros() as u64)
+        .unwrap_or_else(|e| {
+            warn!("System clock before Unix epoch: {} - using timestamp 0", e);
+            0
+        })
+}
+
 /// Blocklist entry for persistence
 #[derive(Debug, Clone)]
 pub struct BlocklistEntry {
@@ -19,16 +43,8 @@ pub struct BlocklistEntry {
 impl BlocklistEntry {
     /// Create a new blocklist entry
     pub fn new(ip: String, duration_secs: u64, reason: String) -> Self {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-
-        let blocked_until_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64
-            + (duration_secs * 1_000_000);
+        let now = current_timestamp_secs();
+        let blocked_until_us = current_timestamp_micros() + (duration_secs * 1_000_000);
 
         Self {
             ip,
@@ -40,20 +56,13 @@ impl BlocklistEntry {
 
     /// Check if this entry has expired
     pub fn is_expired(&self) -> bool {
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
-
+        let now_us = current_timestamp_micros();
         now_us > self.blocked_until_us
     }
 
     /// Get remaining duration in seconds
     pub fn remaining_secs(&self) -> u64 {
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+        let now_us = current_timestamp_micros();
 
         if now_us >= self.blocked_until_us {
             0
@@ -137,10 +146,7 @@ impl BlocklistPersistence {
 
     /// Get all non-expired blocklist entries
     pub fn get_active_entries(&self) -> Result<Vec<BlocklistEntry>> {
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+        let now_us = current_timestamp_micros();
 
         let mut stmt = self.conn.prepare(
             "SELECT ip, blocked_until_us, reason, created_at
@@ -187,10 +193,7 @@ impl BlocklistPersistence {
 
     /// Clean up expired entries from the database
     pub fn cleanup_expired(&self) -> Result<usize> {
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+        let now_us = current_timestamp_micros();
 
         let deleted = self.conn.execute(
             "DELETE FROM blocklist WHERE blocked_until_us <= ?1",
@@ -214,10 +217,7 @@ impl BlocklistPersistence {
 
     /// Get count of active (non-expired) entries
     pub fn count_active(&self) -> Result<usize> {
-        let now_us = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as u64;
+        let now_us = current_timestamp_micros();
 
         let count: usize = self.conn.query_row(
             "SELECT COUNT(*) FROM blocklist WHERE blocked_until_us > ?1",
@@ -265,10 +265,7 @@ impl BlocklistPersistence {
                 ip: ip.clone(),
                 blocked_until_us,
                 reason: "Restored from eBPF".to_string(),
-                created_at: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs(),
+                created_at: current_timestamp_secs(),
             };
 
             if !entry.is_expired() {
@@ -299,78 +296,88 @@ mod tests {
 
     #[test]
     fn test_create_database() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test_blocklist.db");
 
-        let persistence = BlocklistPersistence::new(&db_path).unwrap();
-        assert_eq!(persistence.count().unwrap(), 0);
+        let persistence = BlocklistPersistence::new(&db_path)
+            .expect("Failed to create database");
+        assert_eq!(persistence.count().expect("count should succeed"), 0);
     }
 
     #[test]
     fn test_add_and_retrieve_entry() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test_blocklist.db");
-        let persistence = BlocklistPersistence::new(&db_path).unwrap();
+        let persistence = BlocklistPersistence::new(&db_path)
+            .expect("Failed to create database");
 
         let entry = BlocklistEntry::new("192.168.1.100".to_string(), 60, "Test block".to_string());
 
-        persistence.add_entry(&entry).unwrap();
-        assert_eq!(persistence.count().unwrap(), 1);
+        persistence.add_entry(&entry).expect("add_entry should succeed");
+        assert_eq!(persistence.count().expect("count should succeed"), 1);
 
-        let entries = persistence.get_active_entries().unwrap();
+        let entries = persistence.get_active_entries()
+            .expect("get_active_entries should succeed");
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].ip, "192.168.1.100");
     }
 
     #[test]
     fn test_remove_entry() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test_blocklist.db");
-        let persistence = BlocklistPersistence::new(&db_path).unwrap();
+        let persistence = BlocklistPersistence::new(&db_path)
+            .expect("Failed to create database");
 
         let entry = BlocklistEntry::new("192.168.1.100".to_string(), 60, "Test block".to_string());
 
-        persistence.add_entry(&entry).unwrap();
-        assert_eq!(persistence.count().unwrap(), 1);
+        persistence.add_entry(&entry).expect("add_entry should succeed");
+        assert_eq!(persistence.count().expect("count should succeed"), 1);
 
-        persistence.remove_entry("192.168.1.100").unwrap();
-        assert_eq!(persistence.count().unwrap(), 0);
+        persistence.remove_entry("192.168.1.100")
+            .expect("remove_entry should succeed");
+        assert_eq!(persistence.count().expect("count should succeed"), 0);
     }
 
     #[test]
     fn test_cleanup_expired() {
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let db_path = temp_dir.path().join("test_blocklist.db");
-        let persistence = BlocklistPersistence::new(&db_path).unwrap();
+        let persistence = BlocklistPersistence::new(&db_path)
+            .expect("Failed to create database");
 
         // Add entry that expires in 1 second
         let entry =
             BlocklistEntry::new("192.168.1.100".to_string(), 1, "Short block".to_string());
-        persistence.add_entry(&entry).unwrap();
+        persistence.add_entry(&entry).expect("add_entry should succeed");
 
         // Should have 1 active entry
-        assert_eq!(persistence.count_active().unwrap(), 1);
+        assert_eq!(persistence.count_active().expect("count_active should succeed"), 1);
 
         // Wait for expiration
         thread::sleep(Duration::from_secs(2));
 
         // Should have 0 active entries
-        assert_eq!(persistence.count_active().unwrap(), 0);
+        assert_eq!(persistence.count_active().expect("count_active should succeed"), 0);
 
         // Cleanup should remove expired entry
-        let deleted = persistence.cleanup_expired().unwrap();
+        let deleted = persistence.cleanup_expired()
+            .expect("cleanup_expired should succeed");
         assert_eq!(deleted, 1);
-        assert_eq!(persistence.count().unwrap(), 0);
+        assert_eq!(persistence.count().expect("count should succeed"), 0);
     }
 
     #[test]
     fn test_entry_expiration() {
-        let entry = BlocklistEntry::new("192.168.1.100".to_string(), 1, "Test".to_string());
+        // Use 5 second duration to avoid timing issues
+        let entry = BlocklistEntry::new("192.168.1.100".to_string(), 5, "Test".to_string());
 
         assert!(!entry.is_expired());
         assert!(entry.remaining_secs() > 0);
+        assert!(entry.remaining_secs() <= 5);
 
-        thread::sleep(Duration::from_secs(2));
+        // Wait for expiration (6 seconds to be safe)
+        thread::sleep(Duration::from_secs(6));
 
         assert!(entry.is_expired());
         assert_eq!(entry.remaining_secs(), 0);
