@@ -18,6 +18,7 @@
 //! - IPFS CID resolution for deployment
 
 use anyhow::{Context, Result};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
@@ -46,6 +47,9 @@ pub enum WasmRuntimeError {
 
     #[error("Resource limit exceeded: {0}")]
     ResourceLimitExceeded(String),
+
+    #[error("Signature verification failed: {0}")]
+    SignatureVerificationFailed(String),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
@@ -114,6 +118,12 @@ pub struct WasmModuleMetadata {
     pub version: String,
     pub ipfs_cid: Option<String>,
     pub loaded_at: Instant,
+    /// Ed25519 signature of the Wasm module bytes (hex-encoded)
+    pub signature: Option<String>,
+    /// Ed25519 public key for signature verification (hex-encoded)
+    pub public_key: Option<String>,
+    /// Whether signature was verified
+    pub signature_verified: bool,
 }
 
 /// Wasm execution context for request/response data
@@ -251,6 +261,9 @@ impl WasmRuntime {
             version: "1.0.0".to_string(),
             ipfs_cid: None,
             loaded_at: Instant::now(),
+            signature: None,
+            public_key: None,
+            signature_verified: false,
         };
 
         self.write_modules()
@@ -262,6 +275,47 @@ impl WasmRuntime {
     }
 
     /// Load Wasm module from bytes
+    /// Verify Ed25519 signature of Wasm module bytes
+    pub fn verify_module_signature(
+        wasm_bytes: &[u8],
+        signature_hex: &str,
+        public_key_hex: &str,
+    ) -> Result<(), WasmRuntimeError> {
+        // Decode hex signature
+        let signature_bytes = hex::decode(signature_hex)
+            .map_err(|e| WasmRuntimeError::SignatureVerificationFailed(
+                format!("Invalid signature hex: {}", e)
+            ))?;
+
+        let signature = Signature::from_slice(&signature_bytes)
+            .map_err(|e| WasmRuntimeError::SignatureVerificationFailed(
+                format!("Invalid signature format: {}", e)
+            ))?;
+
+        // Decode hex public key
+        let public_key_bytes = hex::decode(public_key_hex)
+            .map_err(|e| WasmRuntimeError::SignatureVerificationFailed(
+                format!("Invalid public key hex: {}", e)
+            ))?;
+
+        let public_key = VerifyingKey::from_bytes(
+            public_key_bytes.as_slice().try_into()
+                .map_err(|_| WasmRuntimeError::SignatureVerificationFailed(
+                    "Public key must be 32 bytes".to_string()
+                ))?
+        ).map_err(|e| WasmRuntimeError::SignatureVerificationFailed(
+            format!("Invalid public key: {}", e)
+        ))?;
+
+        // Verify signature
+        public_key.verify(wasm_bytes, &signature)
+            .map_err(|e| WasmRuntimeError::SignatureVerificationFailed(
+                format!("Signature verification failed: {}", e)
+            ))?;
+
+        Ok(())
+    }
+
     pub fn load_module_from_bytes(
         &self,
         module_id: &str,
@@ -269,6 +323,30 @@ impl WasmRuntime {
         module_type: WasmModuleType,
         ipfs_cid: Option<String>,
     ) -> Result<()> {
+        self.load_module_from_bytes_with_signature(module_id, bytes, module_type, ipfs_cid, None, None)
+    }
+
+    /// Load Wasm module from bytes with optional signature verification
+    pub fn load_module_from_bytes_with_signature(
+        &self,
+        module_id: &str,
+        bytes: &[u8],
+        module_type: WasmModuleType,
+        ipfs_cid: Option<String>,
+        signature: Option<String>,
+        public_key: Option<String>,
+    ) -> Result<()> {
+        let mut signature_verified = false;
+
+        // Verify signature if provided
+        if let (Some(ref sig), Some(ref pk)) = (&signature, &public_key) {
+            Self::verify_module_signature(bytes, sig, pk)?;
+            signature_verified = true;
+            info!("Wasm module signature verified for: {}", module_id);
+        } else if signature.is_some() || public_key.is_some() {
+            warn!("Partial signature info provided for {}, skipping verification", module_id);
+        }
+
         let module = Module::new(&self.engine, bytes)
             .context("Failed to compile Wasm module from bytes")?;
 
@@ -278,13 +356,17 @@ impl WasmRuntime {
             version: "1.0.0".to_string(),
             ipfs_cid,
             loaded_at: Instant::now(),
+            signature,
+            public_key,
+            signature_verified,
         };
 
         self.write_modules()
             .map_err(|e| anyhow::anyhow!("Failed to write modules: {}", e))?
             .insert(module_id.to_string(), (module, metadata));
 
-        info!("Loaded Wasm module from bytes: {} (type: {:?})", module_id, module_type);
+        info!("Loaded Wasm module from bytes: {} (type: {:?}, signed: {})",
+            module_id, module_type, signature_verified);
         Ok(())
     }
 
@@ -1241,5 +1323,127 @@ mod tests {
         let runtime = WasmRuntime::new().expect("Failed to create runtime");
         let modules = runtime.list_modules().expect("Failed to list modules");
         assert_eq!(modules.len(), 0);
+    }
+
+    #[test]
+    fn test_signature_verification() {
+        use ed25519_dalek::{SigningKey, Signer};
+
+        // Generate a test keypair
+        let signing_key = SigningKey::from_bytes(&[
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create test Wasm module bytes
+        let test_wasm = b"fake wasm module bytes for testing";
+
+        // Sign the bytes
+        let signature = signing_key.sign(test_wasm);
+
+        // Convert to hex
+        let signature_hex = hex::encode(signature.to_bytes());
+        let public_key_hex = hex::encode(verifying_key.to_bytes());
+
+        // Test successful verification
+        let result = WasmRuntime::verify_module_signature(
+            test_wasm,
+            &signature_hex,
+            &public_key_hex,
+        );
+        assert!(result.is_ok(), "Valid signature should verify");
+
+        // Test with wrong signature
+        let wrong_signature = hex::encode([0u8; 64]);
+        let result = WasmRuntime::verify_module_signature(
+            test_wasm,
+            &wrong_signature,
+            &public_key_hex,
+        );
+        assert!(result.is_err(), "Invalid signature should fail");
+
+        // Test with wrong public key
+        let wrong_public_key = hex::encode([1u8; 32]);
+        let result = WasmRuntime::verify_module_signature(
+            test_wasm,
+            &signature_hex,
+            &wrong_public_key,
+        );
+        assert!(result.is_err(), "Wrong public key should fail");
+
+        // Test with wrong data
+        let wrong_data = b"different data";
+        let result = WasmRuntime::verify_module_signature(
+            wrong_data,
+            &signature_hex,
+            &public_key_hex,
+        );
+        assert!(result.is_err(), "Signature of different data should fail");
+    }
+
+    #[test]
+    fn test_load_module_with_signature() {
+        use ed25519_dalek::{SigningKey, Signer};
+
+        let runtime = WasmRuntime::new().expect("Failed to create runtime");
+
+        // Generate a test keypair
+        let signing_key = SigningKey::from_bytes(&[
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+
+        // Create minimal valid Wasm module
+        let test_wasm = wat::parse_str(
+            r#"
+            (module
+                (func (export "test") (result i32)
+                    i32.const 42
+                )
+            )
+            "#
+        ).expect("Failed to parse WAT");
+
+        // Sign the module
+        let signature = signing_key.sign(&test_wasm);
+        let signature_hex = hex::encode(signature.to_bytes());
+        let public_key_hex = hex::encode(verifying_key.to_bytes());
+
+        // Load module with valid signature
+        let result = runtime.load_module_from_bytes_with_signature(
+            "test-module",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+            Some(signature_hex.clone()),
+            Some(public_key_hex.clone()),
+        );
+        assert!(result.is_ok(), "Should load module with valid signature");
+
+        // Verify metadata
+        let metadata = runtime.get_module_metadata("test-module")
+            .expect("Should get metadata")
+            .expect("Module should exist");
+        assert_eq!(metadata.signature, Some(signature_hex));
+        assert_eq!(metadata.public_key, Some(public_key_hex.clone()));
+        assert!(metadata.signature_verified, "Signature should be verified");
+
+        // Test loading with invalid signature
+        let wrong_signature = hex::encode([0u8; 64]);
+        let result = runtime.load_module_from_bytes_with_signature(
+            "test-module-invalid",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+            Some(wrong_signature),
+            Some(public_key_hex),
+        );
+        assert!(result.is_err(), "Should fail with invalid signature");
     }
 }

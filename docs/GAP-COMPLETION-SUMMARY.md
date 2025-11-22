@@ -825,6 +825,141 @@ A comprehensive technical debt analysis identified **significant production bloc
 - **After**: 0 crash points (proper error handling throughout)
 - **Production Safety**: ✅ Database errors won't crash the node
 
+**Commit**: `564d697` - "refactor: replace unwrap() with proper error handling in blocklist_persistence.rs"
+
+---
+
+### Week 3 - Missing Features Implementation ✅
+
+**Date**: November 22, 2025
+**Status**: ✅ **COMPLETE**
+**Time Taken**: ~4 hours
+**Complexity**: Medium-High
+
+**Features Implemented**:
+
+#### 1. Uptime Tracking ✅
+
+**Status**: Already implemented
+**File**: `node/src/metrics.rs` (lines 210, 217)
+
+**Implementation**:
+- MetricsCollector tracks `start_time: Instant` at initialization
+- `update_system_metrics()` calculates uptime: `start_time.elapsed().as_secs()`
+- Uptime exposed in NodeMetrics and verifiable_metrics API
+- **No changes needed** - feature already complete
+
+**Test Coverage**:
+- ✅ Existing tests verify uptime calculation
+- ✅ Prometheus format includes `aegis_uptime_seconds`
+
+---
+
+#### 2. Bot Metrics Tracking ✅
+
+**Status**: Newly implemented
+**File**: `node/src/bot_management.rs`
+**Lines Added**: 163 lines
+
+**New Struct - `BotMetrics`**:
+```rust
+pub struct BotMetrics {
+    pub total_analyzed: u64,
+    pub human_count: u64,
+    pub known_bot_count: u64,
+    pub suspicious_count: u64,
+    pub blocked_count: u64,
+    pub challenged_count: u64,
+    pub allowed_count: u64,
+    pub logged_count: u64,
+    pub rate_limit_violations: u64,
+}
+```
+
+**Methods Added**:
+- `detection_confidence()` - Calculates percentage of confident detections
+- `block_rate()` - Calculates percentage of blocked requests
+- `get_metrics()` - Retrieve current metrics
+- `reset_metrics()` - Reset all counters
+
+**Integration**:
+- Metrics tracked in `analyze_request()` method
+- Verdict counts (Human/Bot/Suspicious) incremented
+- Action counts (Allow/Block/Challenge/Log) incremented
+- Rate limit violations tracked in `check_rate_limit()`
+
+**Test Coverage**:
+- ✅ `test_metrics_tracking()` - Verifies counter increments and derived metrics
+- ✅ `test_rate_limit_metrics()` - Verifies rate limit violation tracking
+- ✅ 8 total tests passing (6 original + 2 new)
+
+---
+
+#### 3. Wasm Module Signature Verification ✅
+
+**Status**: Newly implemented
+**File**: `node/src/wasm_runtime.rs`
+**Lines Added**: 145 lines
+
+**New Fields in `WasmModuleMetadata`**:
+```rust
+pub signature: Option<String>,        // Ed25519 signature (hex)
+pub public_key: Option<String>,       // Ed25519 public key (hex)
+pub signature_verified: bool,         // Verification status
+```
+
+**New Methods**:
+- `verify_module_signature()` - Static method to verify Ed25519 signatures
+  - Decodes hex-encoded signature and public key
+  - Verifies signature against Wasm module bytes
+  - Returns WasmRuntimeError::SignatureVerificationFailed on failure
+
+- `load_module_from_bytes_with_signature()` - Load with optional verification
+  - Accepts optional signature and public_key parameters
+  - Verifies before compilation if both provided
+  - Sets `signature_verified` flag in metadata
+  - Logs verification status
+
+**Signature Verification Flow**:
+1. Decode hex-encoded signature (64 bytes) and public key (32 bytes)
+2. Parse as Ed25519 Signature and VerifyingKey
+3. Verify signature against Wasm bytes using ed25519_dalek
+4. Compile module only if verification succeeds (or signature not provided)
+
+**Backwards Compatibility**:
+- `load_module_from_bytes()` wrapper calls new method with `None, None`
+- Signature verification is **optional** - modules without signatures still load
+- Existing code continues to work unchanged
+
+**Error Handling**:
+- New error variant: `WasmRuntimeError::SignatureVerificationFailed`
+- Clear error messages for invalid hex, wrong key size, verification failure
+
+**Test Coverage**:
+- ✅ `test_signature_verification()` - Tests all failure modes:
+  - Valid signature verification
+  - Invalid signature rejection
+  - Wrong public key rejection
+  - Modified data rejection
+- ✅ `test_load_module_with_signature()` - Integration test:
+  - Load module with valid signature
+  - Verify metadata fields populated correctly
+  - Reject module with invalid signature
+- ✅ 6 total tests passing (4 original + 2 new)
+
+---
+
+**Overall Week 3 Impact**:
+- **New Features**: 2 major features implemented (bot metrics, signature verification)
+- **Existing Features**: 1 verified complete (uptime tracking)
+- **Lines of Code Added**: 308 lines (163 bot_management + 145 wasm_runtime)
+- **New Tests**: 4 comprehensive tests
+- **Total Tests Passing**: 127 (all library tests)
+- **Production Readiness**:
+  - ✅ Bot detection now has comprehensive metrics for monitoring
+  - ✅ Wasm modules can be cryptographically verified for authenticity
+  - ✅ No breaking changes to existing APIs
+
 **Commit**: Ready for commit
 
 ---

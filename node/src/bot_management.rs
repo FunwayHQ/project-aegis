@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use wasmtime::*;
 
@@ -72,6 +72,58 @@ impl Default for BotPolicy {
     }
 }
 
+/// Bot detection metrics for monitoring and analytics
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BotMetrics {
+    /// Total requests analyzed
+    pub total_analyzed: u64,
+    /// Requests classified as human
+    pub human_count: u64,
+    /// Requests classified as known bots
+    pub known_bot_count: u64,
+    /// Requests classified as suspicious
+    pub suspicious_count: u64,
+    /// Requests blocked
+    pub blocked_count: u64,
+    /// Challenges issued
+    pub challenged_count: u64,
+    /// Requests allowed
+    pub allowed_count: u64,
+    /// Requests logged (but allowed)
+    pub logged_count: u64,
+    /// Rate limit violations
+    pub rate_limit_violations: u64,
+}
+
+impl BotMetrics {
+    /// Create new empty metrics
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Reset all counters to zero
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Get detection accuracy (percentage of non-suspicious detections)
+    pub fn detection_confidence(&self) -> f64 {
+        if self.total_analyzed == 0 {
+            return 0.0;
+        }
+        let confident_detections = self.human_count + self.known_bot_count;
+        (confident_detections as f64 / self.total_analyzed as f64) * 100.0
+    }
+
+    /// Get block rate (percentage of blocked requests)
+    pub fn block_rate(&self) -> f64 {
+        if self.total_analyzed == 0 {
+            return 0.0;
+        }
+        (self.blocked_count as f64 / self.total_analyzed as f64) * 100.0
+    }
+}
+
 /// Rate limiter entry for tracking request rates per IP
 #[derive(Debug, Clone)]
 struct RateLimitEntry {
@@ -88,7 +140,9 @@ pub struct BotManager {
     /// Bot policy configuration
     policy: BotPolicy,
     /// Rate limiter (IP -> RateLimitEntry)
-    rate_limiter: Arc<std::sync::Mutex<HashMap<String, RateLimitEntry>>>,
+    rate_limiter: Arc<Mutex<HashMap<String, RateLimitEntry>>>,
+    /// Bot detection metrics
+    metrics: Arc<Mutex<BotMetrics>>,
 }
 
 impl BotManager {
@@ -102,7 +156,8 @@ impl BotManager {
             engine,
             module,
             policy,
-            rate_limiter: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+            metrics: Arc::new(Mutex::new(BotMetrics::new())),
         })
     }
 
@@ -116,7 +171,8 @@ impl BotManager {
             engine,
             module,
             policy,
-            rate_limiter: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            rate_limiter: Arc::new(Mutex::new(HashMap::new())),
+            metrics: Arc::new(Mutex::new(BotMetrics::new())),
         })
     }
 
@@ -198,7 +254,14 @@ impl BotManager {
             } else {
                 // Increment count
                 entry.count += 1;
-                entry.count > self.policy.rate_limit_threshold
+                let exceeded = entry.count > self.policy.rate_limit_threshold;
+                if exceeded {
+                    // Track rate limit violation
+                    if let Ok(mut metrics) = self.metrics.lock() {
+                        metrics.rate_limit_violations += 1;
+                    }
+                }
+                exceeded
             }
         } else {
             // New IP, create entry
@@ -222,6 +285,12 @@ impl BotManager {
         // Check rate limit first
         if self.check_rate_limit(ip) {
             log::warn!("Rate limit exceeded for IP: {}", ip);
+            // Track metrics for rate limit block
+            if let Ok(mut metrics) = self.metrics.lock() {
+                metrics.total_analyzed += 1;
+                metrics.suspicious_count += 1;
+                metrics.blocked_count += 1;
+            }
             return Ok((BotVerdict::Suspicious, BotAction::Block));
         }
 
@@ -234,6 +303,26 @@ impl BotManager {
             BotVerdict::KnownBot => self.policy.known_bot_action,
             BotVerdict::Suspicious => self.policy.suspicious_action,
         };
+
+        // Track metrics
+        if let Ok(mut metrics) = self.metrics.lock() {
+            metrics.total_analyzed += 1;
+
+            // Track verdict
+            match verdict {
+                BotVerdict::Human => metrics.human_count += 1,
+                BotVerdict::KnownBot => metrics.known_bot_count += 1,
+                BotVerdict::Suspicious => metrics.suspicious_count += 1,
+            }
+
+            // Track action
+            match action {
+                BotAction::Allow => metrics.allowed_count += 1,
+                BotAction::Block => metrics.blocked_count += 1,
+                BotAction::Challenge => metrics.challenged_count += 1,
+                BotAction::Log => metrics.logged_count += 1,
+            }
+        }
 
         Ok((verdict, action))
     }
@@ -259,6 +348,16 @@ impl BotManager {
         let total_tracked = limiter.len();
         let max_count = limiter.values().map(|e| e.count).max().unwrap_or(0);
         (total_tracked, max_count)
+    }
+
+    /// Get current bot detection metrics
+    pub fn get_metrics(&self) -> BotMetrics {
+        self.metrics.lock().unwrap().clone()
+    }
+
+    /// Reset bot detection metrics
+    pub fn reset_metrics(&self) {
+        self.metrics.lock().unwrap().reset();
     }
 }
 
@@ -408,5 +507,67 @@ mod tests {
             .expect("Failed");
         assert_eq!(verdict, BotVerdict::Human);
         assert_eq!(action, BotAction::Allow);
+    }
+
+    #[test]
+    fn test_metrics_tracking() {
+        let manager = get_test_manager();
+
+        // Initial metrics should be zero
+        let metrics = manager.get_metrics();
+        assert_eq!(metrics.total_analyzed, 0);
+        assert_eq!(metrics.human_count, 0);
+        assert_eq!(metrics.known_bot_count, 0);
+        assert_eq!(metrics.suspicious_count, 0);
+        assert_eq!(metrics.blocked_count, 0);
+        assert_eq!(metrics.challenged_count, 0);
+
+        // Analyze some requests
+        let _ = manager.analyze_request("Googlebot", "192.168.1.1");
+        let _ = manager.analyze_request(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0",
+            "192.168.1.2",
+        );
+        let _ = manager.analyze_request("", "192.168.1.3"); // Suspicious
+
+        // Check metrics
+        let metrics = manager.get_metrics();
+        assert_eq!(metrics.total_analyzed, 3);
+        assert!(metrics.known_bot_count > 0, "Should detect at least one bot");
+        assert!(metrics.total_analyzed == metrics.human_count + metrics.known_bot_count + metrics.suspicious_count);
+
+        // Check derived metrics
+        assert!(metrics.detection_confidence() >= 0.0);
+        assert!(metrics.detection_confidence() <= 100.0);
+        assert!(metrics.block_rate() >= 0.0);
+        assert!(metrics.block_rate() <= 100.0);
+
+        // Reset and verify
+        manager.reset_metrics();
+        let metrics = manager.get_metrics();
+        assert_eq!(metrics.total_analyzed, 0);
+        assert_eq!(metrics.known_bot_count, 0);
+    }
+
+    #[test]
+    fn test_rate_limit_metrics() {
+        let policy = BotPolicy {
+            rate_limiting_enabled: true,
+            rate_limit_threshold: 2,
+            rate_limit_window_secs: 60,
+            ..Default::default()
+        };
+        let manager = BotManager::new(WASM_PATH, policy).expect("Failed to create");
+
+        let ip = "192.168.1.100";
+
+        // Make requests until rate limited
+        for _ in 0..3 {
+            let _ = manager.analyze_request("Mozilla/5.0", ip);
+        }
+
+        // Check that rate limit violation was tracked
+        let metrics = manager.get_metrics();
+        assert!(metrics.rate_limit_violations > 0, "Should track rate limit violations");
     }
 }
