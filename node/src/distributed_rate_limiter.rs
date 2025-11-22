@@ -332,7 +332,9 @@ impl DistributedRateLimiter {
             anyhow::bail!("Not connected to NATS");
         }
 
-        let nats = self.nats.as_ref().unwrap().clone();
+        let nats = self.nats.as_ref()
+            .expect("NATS connection verified by guard above")
+            .clone();
 
         // Get or create window for this resource
         let counter = {
@@ -463,7 +465,8 @@ mod tests {
         let limiter = DistributedRateLimiter::new(config);
 
         // First request should be allowed
-        let decision = limiter.check_rate_limit("test-resource").await.unwrap();
+        let decision = limiter.check_rate_limit("test-resource").await
+            .expect("check_rate_limit should succeed");
         match decision {
             RateLimitDecision::Allowed {
                 current_count,
@@ -490,11 +493,13 @@ mod tests {
 
         // Make 3 requests (max)
         for _ in 0..3 {
-            limiter.check_rate_limit("test-resource").await.unwrap();
+            limiter.check_rate_limit("test-resource").await
+                .expect("check_rate_limit should succeed");
         }
 
         // 4th request should be denied
-        let decision = limiter.check_rate_limit("test-resource").await.unwrap();
+        let decision = limiter.check_rate_limit("test-resource").await
+            .expect("check_rate_limit should succeed");
         match decision {
             RateLimitDecision::Denied {
                 current_count,
@@ -520,17 +525,19 @@ mod tests {
         let limiter = DistributedRateLimiter::new(config);
 
         // Initially should be 0
-        assert_eq!(limiter.get_count("test-resource").unwrap(), 0);
+        assert_eq!(limiter.get_count("test-resource").expect("get_count should succeed"), 0);
 
         // After one request
-        limiter.check_rate_limit("test-resource").await.unwrap();
-        assert_eq!(limiter.get_count("test-resource").unwrap(), 1);
+        limiter.check_rate_limit("test-resource").await
+            .expect("check_rate_limit should succeed");
+        assert_eq!(limiter.get_count("test-resource").expect("get_count should succeed"), 1);
 
         // After three more requests
         for _ in 0..3 {
-            limiter.check_rate_limit("test-resource").await.unwrap();
+            limiter.check_rate_limit("test-resource").await
+                .expect("check_rate_limit should succeed");
         }
-        assert_eq!(limiter.get_count("test-resource").unwrap(), 4);
+        assert_eq!(limiter.get_count("test-resource").expect("get_count should succeed"), 4);
     }
 
     #[tokio::test]
@@ -546,13 +553,16 @@ mod tests {
         let limiter = DistributedRateLimiter::new(config);
 
         // Different resources should have independent counters
-        limiter.check_rate_limit("resource-1").await.unwrap();
-        limiter.check_rate_limit("resource-1").await.unwrap();
+        limiter.check_rate_limit("resource-1").await
+            .expect("check_rate_limit should succeed");
+        limiter.check_rate_limit("resource-1").await
+            .expect("check_rate_limit should succeed");
 
-        limiter.check_rate_limit("resource-2").await.unwrap();
+        limiter.check_rate_limit("resource-2").await
+            .expect("check_rate_limit should succeed");
 
-        assert_eq!(limiter.get_count("resource-1").unwrap(), 2);
-        assert_eq!(limiter.get_count("resource-2").unwrap(), 1);
+        assert_eq!(limiter.get_count("resource-1").expect("get_count should succeed"), 2);
+        assert_eq!(limiter.get_count("resource-2").expect("get_count should succeed"), 1);
     }
 
     #[tokio::test]
@@ -573,16 +583,18 @@ mod tests {
             value: 5,
         };
 
-        limiter.merge_operation("test-resource", op).unwrap();
+        limiter.merge_operation("test-resource", op)
+            .expect("merge_operation should succeed");
 
         // Count should reflect merged operation
-        assert_eq!(limiter.get_count("test-resource").unwrap(), 5);
+        assert_eq!(limiter.get_count("test-resource").expect("get_count should succeed"), 5);
 
         // Local increment
-        limiter.check_rate_limit("test-resource").await.unwrap();
+        limiter.check_rate_limit("test-resource").await
+            .expect("check_rate_limit should succeed");
 
         // Should be 6 total (5 from remote + 1 local)
-        assert_eq!(limiter.get_count("test-resource").unwrap(), 6);
+        assert_eq!(limiter.get_count("test-resource").expect("get_count should succeed"), 6);
     }
 
     #[tokio::test]
@@ -597,14 +609,20 @@ mod tests {
 
         let limiter = DistributedRateLimiter::new(config);
 
-        limiter.check_rate_limit("resource-a").await.unwrap();
-        limiter.check_rate_limit("resource-a").await.unwrap();
+        limiter.check_rate_limit("resource-a").await
+            .expect("check_rate_limit should succeed");
+        limiter.check_rate_limit("resource-a").await
+            .expect("check_rate_limit should succeed");
 
-        limiter.check_rate_limit("resource-b").await.unwrap();
-        limiter.check_rate_limit("resource-b").await.unwrap();
-        limiter.check_rate_limit("resource-b").await.unwrap();
+        limiter.check_rate_limit("resource-b").await
+            .expect("check_rate_limit should succeed");
+        limiter.check_rate_limit("resource-b").await
+            .expect("check_rate_limit should succeed");
+        limiter.check_rate_limit("resource-b").await
+            .expect("check_rate_limit should succeed");
 
-        let counts = limiter.get_all_counts().unwrap();
+        let counts = limiter.get_all_counts()
+            .expect("get_all_counts should succeed");
         assert_eq!(counts.get("resource-a"), Some(&2));
         assert_eq!(counts.get("resource-b"), Some(&3));
     }
