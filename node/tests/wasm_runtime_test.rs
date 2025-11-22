@@ -17,7 +17,7 @@ fn test_wasm_runtime_creation() {
     assert!(runtime.is_ok(), "Runtime should be created successfully");
 
     let runtime = runtime.unwrap();
-    assert_eq!(runtime.list_modules().len(), 0, "No modules should be loaded initially");
+    assert_eq!(runtime.list_modules().expect("list_modules should succeed").len(), 0, "No modules should be loaded initially");
 }
 
 #[test]
@@ -87,9 +87,9 @@ fn test_module_metadata() {
     let runtime = WasmRuntime::new().unwrap();
 
     // Initially no modules
-    assert!(runtime.get_module_metadata("waf").is_none());
+    assert!(runtime.get_module_metadata("waf").expect("get_module_metadata should succeed").is_none());
 
-    let modules = runtime.list_modules();
+    let modules = runtime.list_modules().expect("list_modules should succeed");
     assert_eq!(modules.len(), 0);
 }
 
@@ -265,16 +265,16 @@ fn test_module_lifecycle() {
     let runtime = WasmRuntime::new().unwrap();
 
     // Initially empty
-    assert_eq!(runtime.list_modules().len(), 0);
+    assert_eq!(runtime.list_modules().expect("list_modules should succeed").len(), 0);
 
     // After adding this would be:
     // runtime.load_module("test", "test.wasm", WasmModuleType::Waf)
-    // assert_eq!(runtime.list_modules().len(), 1);
-    // assert!(runtime.get_module_metadata("test").is_some());
+    // assert_eq!(runtime.list_modules().expect("list_modules should succeed").len(), 1);
+    // assert!(runtime.get_module_metadata("test").expect("get_module_metadata should succeed").is_some());
 
     // And unloading:
     // runtime.unload_module("test")
-    // assert_eq!(runtime.list_modules().len(), 0);
+    // assert_eq!(runtime.list_modules().expect("list_modules should succeed").len(), 0);
 
     // This demonstrates the hot-reload capability
 }

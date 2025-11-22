@@ -23,10 +23,65 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
+use thiserror::Error;
 use tracing::{debug, info, warn, error};
 use wasmtime::*;
 
 use crate::cache::CacheClient;
+
+/// Custom error type for Wasm runtime operations
+#[derive(Debug, Error)]
+pub enum WasmRuntimeError {
+    #[error("Failed to acquire lock (poisoned): {0}")]
+    LockPoisoned(String),
+
+    #[error("Module not found: {0}")]
+    ModuleNotFound(String),
+
+    #[error("Wasm execution failed: {0}")]
+    ExecutionFailed(String),
+
+    #[error("Invalid module type: expected {expected}, got {actual}")]
+    InvalidModuleType { expected: String, actual: String },
+
+    #[error("Resource limit exceeded: {0}")]
+    ResourceLimitExceeded(String),
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl<T> From<std::sync::PoisonError<T>> for WasmRuntimeError {
+    fn from(err: std::sync::PoisonError<T>) -> Self {
+        WasmRuntimeError::LockPoisoned(err.to_string())
+    }
+}
+
+/// Helper macro for host functions to safely acquire read locks
+macro_rules! try_read_lock {
+    ($lock:expr, $err_ret:expr) => {
+        match $lock.read() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Lock poisoned (read): {}", e);
+                return $err_ret;
+            }
+        }
+    };
+}
+
+/// Helper macro for host functions to safely acquire write locks
+macro_rules! try_write_lock {
+    ($lock:expr, $err_ret:expr) => {
+        match $lock.write() {
+            Ok(guard) => guard,
+            Err(e) => {
+                error!("Lock poisoned (write): {}", e);
+                return $err_ret;
+            }
+        }
+    };
+}
 
 /// Maximum execution time for Wasm modules (10ms for WAF, 50ms for edge functions)
 const WAF_EXECUTION_TIMEOUT_MS: u64 = 10;
@@ -137,6 +192,24 @@ pub struct WasmRuntime {
 }
 
 impl WasmRuntime {
+    /// Safe read lock with proper error handling
+    fn read_modules(&self) -> Result<std::sync::RwLockReadGuard<'_, HashMap<String, (Module, WasmModuleMetadata)>>, WasmRuntimeError> {
+        self.modules.read()
+            .map_err(|e| {
+                error!("Failed to acquire read lock on modules: {}", e);
+                WasmRuntimeError::LockPoisoned(format!("modules read lock: {}", e))
+            })
+    }
+
+    /// Safe write lock with proper error handling
+    fn write_modules(&self) -> Result<std::sync::RwLockWriteGuard<'_, HashMap<String, (Module, WasmModuleMetadata)>>, WasmRuntimeError> {
+        self.modules.write()
+            .map_err(|e| {
+                error!("Failed to acquire write lock on modules: {}", e);
+                WasmRuntimeError::LockPoisoned(format!("modules write lock: {}", e))
+            })
+    }
+
     /// Create new Wasm runtime with resource limits
     pub fn new() -> Result<Self> {
         let mut config = Config::new();
@@ -180,7 +253,9 @@ impl WasmRuntime {
             loaded_at: Instant::now(),
         };
 
-        self.modules.write().unwrap().insert(module_id.to_string(), (module, metadata));
+        self.write_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to write modules: {}", e))?
+            .insert(module_id.to_string(), (module, metadata));
 
         info!("Loaded Wasm module: {} (type: {:?})", module_id, module_type);
         Ok(())
@@ -205,7 +280,9 @@ impl WasmRuntime {
             loaded_at: Instant::now(),
         };
 
-        self.modules.write().unwrap().insert(module_id.to_string(), (module, metadata));
+        self.write_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to write modules: {}", e))?
+            .insert(module_id.to_string(), (module, metadata));
 
         info!("Loaded Wasm module from bytes: {} (type: {:?})", module_id, module_type);
         Ok(())
@@ -217,12 +294,13 @@ impl WasmRuntime {
         module_id: &str,
         context: &WasmExecutionContext,
     ) -> Result<WafResult> {
-        let modules = self.modules.read().unwrap();
+        let modules = self.read_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to read modules: {}", e))?;
         let (module, metadata) = modules.get(module_id)
-            .context("WAF module not found")?;
+            .ok_or_else(|| anyhow::anyhow!("WAF module '{}' not found", module_id))?;
 
         if metadata.module_type != WasmModuleType::Waf {
-            anyhow::bail!("Module is not a WAF module");
+            anyhow::bail!("Module '{}' is not a WAF module (type: {:?})", module_id, metadata.module_type);
         }
 
         let start = Instant::now();
@@ -332,12 +410,13 @@ impl WasmRuntime {
         cache_client: Option<Arc<tokio::sync::Mutex<CacheClient>>>,
         context: WasmExecutionContext,
     ) -> Result<EdgeFunctionResult> {
-        let modules = self.modules.read().unwrap();
+        let modules = self.read_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to read modules: {}", e))?;
         let (module, metadata) = modules.get(module_id)
-            .context("Edge function module not found")?;
+            .ok_or_else(|| anyhow::anyhow!("Edge function module '{}' not found", module_id))?;
 
         if metadata.module_type != WasmModuleType::EdgeFunction {
-            anyhow::bail!("Module is not an edge function module");
+            anyhow::bail!("Module '{}' is not an edge function module (type: {:?})", module_id, metadata.module_type);
         }
 
         let start = Instant::now();
@@ -381,8 +460,11 @@ impl WasmRuntime {
         // Get result from shared buffer and updated context if function returned success
         if result == 0 {
             let store_data = store.data();
-            let buffer = store_data.shared_buffer.read().unwrap();
-            let updated_context = store_data.execution_context.read().unwrap().clone();
+            let buffer = store_data.shared_buffer.read()
+                .map_err(|e| anyhow::anyhow!("Failed to read shared buffer: {}", e))?;
+            let updated_context = store_data.execution_context.read()
+                .map_err(|e| anyhow::anyhow!("Failed to read execution context: {}", e))?
+                .clone();
 
             Ok(EdgeFunctionResult {
                 result_data: buffer.clone(),
@@ -477,7 +559,7 @@ impl WasmRuntime {
                         }
 
                         let data = caller.data_mut();
-                        *data.shared_buffer.write().unwrap() = value.clone();
+                        *try_write_lock!(data.shared_buffer, -1) = value.clone();
                         value.len() as i32
                     }
                     Ok(None) => {
@@ -656,7 +738,7 @@ impl WasmRuntime {
                                 }
 
                                 let data = caller.data_mut();
-                                *data.shared_buffer.write().unwrap() = body.to_vec();
+                                *try_write_lock!(data.shared_buffer, -1) = body.to_vec();
                                 body.len() as i32
                             }
                             Err(e) => {
@@ -695,7 +777,7 @@ impl WasmRuntime {
                 // This allows us to drop the lock before writing to Wasm memory
                 let data_to_write = {
                     let data = caller.data_mut();
-                    let buffer = data.shared_buffer.read().unwrap();
+                    let buffer = try_read_lock!(data.shared_buffer, -1);
 
                     if offset + length > buffer.len() {
                         error!("Invalid buffer read: offset={}, length={}, buffer_len={}", offset, length, buffer.len());
@@ -726,10 +808,10 @@ impl WasmRuntime {
             "request_get_method",
             |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
                 let data = caller.data_mut();
-                let context = data.execution_context.read().unwrap();
+                let context = try_read_lock!(data.execution_context, -1);
                 let method_bytes = context.request_method.as_bytes();
 
-                *data.shared_buffer.write().unwrap() = method_bytes.to_vec();
+                *try_write_lock!(data.shared_buffer, -1) = method_bytes.to_vec();
                 method_bytes.len() as i32
             },
         )?;
@@ -741,10 +823,10 @@ impl WasmRuntime {
             "request_get_uri",
             |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
                 let data = caller.data_mut();
-                let context = data.execution_context.read().unwrap();
+                let context = try_read_lock!(data.execution_context, -1);
                 let uri_bytes = context.request_uri.as_bytes();
 
-                *data.shared_buffer.write().unwrap() = uri_bytes.to_vec();
+                *try_write_lock!(data.shared_buffer, -1) = uri_bytes.to_vec();
                 uri_bytes.len() as i32
             },
         )?;
@@ -780,14 +862,14 @@ impl WasmRuntime {
 
                 // Look up header in execution context
                 let data = caller.data_mut();
-                let context = data.execution_context.read().unwrap();
+                let context = try_read_lock!(data.execution_context, -1);
 
                 // Case-insensitive header lookup
                 let header_name_lower = header_name.to_lowercase();
                 for (name, value) in &context.request_headers {
                     if name.to_lowercase() == header_name_lower {
                         let value_bytes = value.as_bytes();
-                        *data.shared_buffer.write().unwrap() = value_bytes.to_vec();
+                        *try_write_lock!(data.shared_buffer, -1) = value_bytes.to_vec();
                         return value_bytes.len() as i32;
                     }
                 }
@@ -804,7 +886,7 @@ impl WasmRuntime {
             "request_get_header_names",
             |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
                 let data = caller.data_mut();
-                let context = data.execution_context.read().unwrap();
+                let context = try_read_lock!(data.execution_context, -1);
 
                 // Collect all header names into a Vec
                 let header_names: Vec<String> = context.request_headers
@@ -816,7 +898,7 @@ impl WasmRuntime {
                 match serde_json::to_vec(&header_names) {
                     Ok(json_bytes) => {
                         let len = json_bytes.len() as i32;
-                        *data.shared_buffer.write().unwrap() = json_bytes;
+                        *try_write_lock!(data.shared_buffer, -1) = json_bytes;
                         len
                     }
                     Err(e) => {
@@ -834,9 +916,9 @@ impl WasmRuntime {
             "request_get_body",
             |mut caller: Caller<EdgeFunctionStoreData>| -> i32 {
                 let data = caller.data_mut();
-                let context = data.execution_context.read().unwrap();
+                let context = try_read_lock!(data.execution_context, -1);
 
-                *data.shared_buffer.write().unwrap() = context.request_body.clone();
+                *try_write_lock!(data.shared_buffer, -1) = context.request_body.clone();
                 context.request_body.len() as i32
             },
         )?;
@@ -857,7 +939,7 @@ impl WasmRuntime {
                 }
 
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
                 context.response_status = Some(status as u16);
 
                 debug!("Response status set to: {}", status);
@@ -912,7 +994,7 @@ impl WasmRuntime {
 
                 // Update response headers in execution context
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
 
                 // Remove existing header with same name (case-insensitive)
                 let header_name_lower = header_name.to_lowercase();
@@ -973,7 +1055,7 @@ impl WasmRuntime {
 
                 // Add header to execution context (allows duplicates)
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
                 context.response_headers.push((header_name.clone(), header_value.clone()));
 
                 debug!("Response header added: {} = {}", header_name, header_value);
@@ -1012,7 +1094,7 @@ impl WasmRuntime {
 
                 // Remove headers from execution context
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
                 let header_name_lower = header_name.to_lowercase();
                 let original_len = context.response_headers.len();
 
@@ -1047,7 +1129,7 @@ impl WasmRuntime {
 
                 // Update response body in execution context
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
                 context.response_body = body_bytes;
 
                 debug!("Response body set ({} bytes)", body_len);
@@ -1072,7 +1154,7 @@ impl WasmRuntime {
                 }
 
                 let data = caller.data_mut();
-                let mut context = data.execution_context.write().unwrap();
+                let mut context = try_write_lock!(data.execution_context, -1);
                 context.terminate_early = true;
                 context.response_status = Some(status as u16);
 
@@ -1085,34 +1167,31 @@ impl WasmRuntime {
     }
 
     /// Get module metadata
-    pub fn get_module_metadata(&self, module_id: &str) -> Option<WasmModuleMetadata> {
-        self.modules.read().unwrap()
+    pub fn get_module_metadata(&self, module_id: &str) -> Result<Option<WasmModuleMetadata>> {
+        Ok(self.read_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to read modules: {}", e))?
             .get(module_id)
-            .map(|(_, meta)| meta.clone())
+            .map(|(_, meta)| meta.clone()))
     }
 
     /// List all loaded modules
-    pub fn list_modules(&self) -> Vec<String> {
-        self.modules.read().unwrap()
+    pub fn list_modules(&self) -> Result<Vec<String>> {
+        Ok(self.read_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to read modules: {}", e))?
             .keys()
             .cloned()
-            .collect()
+            .collect())
     }
 
     /// Unload module (for hot-reload)
     pub fn unload_module(&self, module_id: &str) -> Result<()> {
-        self.modules.write().unwrap()
+        self.write_modules()
+            .map_err(|e| anyhow::anyhow!("Failed to write modules: {}", e))?
             .remove(module_id)
-            .context("Module not found")?;
+            .ok_or_else(|| anyhow::anyhow!("Module '{}' not found", module_id))?;
 
         info!("Unloaded Wasm module: {}", module_id);
         Ok(())
-    }
-}
-
-impl Default for WasmRuntime {
-    fn default() -> Self {
-        Self::new().expect("Failed to create Wasm runtime")
     }
 }
 
@@ -1159,8 +1238,8 @@ mod tests {
 
     #[test]
     fn test_module_listing() {
-        let runtime = WasmRuntime::new().unwrap();
-        let modules = runtime.list_modules();
+        let runtime = WasmRuntime::new().expect("Failed to create runtime");
+        let modules = runtime.list_modules().expect("Failed to list modules");
         assert_eq!(modules.len(), 0);
     }
 }

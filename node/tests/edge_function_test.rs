@@ -89,7 +89,7 @@ async fn test_load_edge_function_module() {
     assert!(result.is_ok());
 
     // Verify module is loaded
-    let metadata = runtime.get_module_metadata("test-edge-function");
+    let metadata = runtime.get_module_metadata("test-edge-function").expect("get_module_metadata should succeed");
     assert!(metadata.is_some());
 
     let meta = metadata.unwrap();
@@ -210,13 +210,13 @@ async fn test_module_hot_reload() {
     ).unwrap();
 
     // Verify loaded
-    assert!(runtime.get_module_metadata("reloadable").is_some());
+    assert!(runtime.get_module_metadata("reloadable").expect("get_module_metadata should succeed").is_some());
 
     // Unload
     runtime.unload_module("reloadable").unwrap();
 
     // Verify unloaded
-    assert!(runtime.get_module_metadata("reloadable").is_none());
+    assert!(runtime.get_module_metadata("reloadable").expect("get_module_metadata should succeed").is_none());
 
     // Reload
     runtime.load_module_from_bytes(
@@ -227,7 +227,7 @@ async fn test_module_hot_reload() {
     ).unwrap();
 
     // Verify reloaded with new CID
-    let metadata = runtime.get_module_metadata("reloadable").unwrap();
+    let metadata = runtime.get_module_metadata("reloadable").expect("get_module_metadata should succeed").unwrap();
     assert_eq!(metadata.ipfs_cid, Some("QmTest456".to_string()));
 }
 
@@ -237,15 +237,15 @@ async fn test_edge_function_list_modules() {
     let wasm_bytes = create_test_wasm_module();
 
     // Initially empty
-    assert_eq!(runtime.list_modules().len(), 0);
+    assert_eq!(runtime.list_modules().expect("list_modules should succeed").len(), 0);
 
     // Load multiple modules
     runtime.load_module_from_bytes("module1", &wasm_bytes, WasmModuleType::EdgeFunction, None).unwrap();
     runtime.load_module_from_bytes("module2", &wasm_bytes, WasmModuleType::EdgeFunction, None).unwrap();
-    runtime.load_module_from_bytes("module3", &wasm_bytes, WasmModuleType::WAF, None).unwrap();
+    runtime.load_module_from_bytes("module3", &wasm_bytes, WasmModuleType::Waf, None).unwrap();
 
     // Verify count
-    let modules = runtime.list_modules();
+    let modules = runtime.list_modules().expect("list_modules should succeed");
     assert_eq!(modules.len(), 3);
     assert!(modules.contains(&"module1".to_string()));
     assert!(modules.contains(&"module2".to_string()));
