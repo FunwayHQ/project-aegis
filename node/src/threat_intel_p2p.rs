@@ -17,6 +17,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
+/// Get current Unix timestamp in seconds
+/// Returns 0 if system clock is before Unix epoch (should never happen on modern systems)
+fn current_timestamp() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_else(|e| {
+            warn!("System clock before Unix epoch: {} - using timestamp 0", e);
+            0
+        })
+}
+
 /// Threat intelligence message shared across the P2P network
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThreatIntelligence {
@@ -45,10 +57,7 @@ impl ThreatIntelligence {
         block_duration_secs: u64,
         source_node: String,
     ) -> Self {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let timestamp = current_timestamp();
 
         Self {
             ip,
@@ -84,10 +93,7 @@ impl ThreatIntelligence {
         }
 
         // Validate timestamp (not too far in the past or future)
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = current_timestamp();
 
         if self.timestamp > now + 300 {
             anyhow::bail!("Timestamp is too far in the future");
@@ -441,11 +447,12 @@ mod tests {
         )
         .with_description("Multiple failed login attempts".to_string());
 
-        let json = threat.to_json().unwrap();
+        let json = threat.to_json().expect("Serialization should succeed");
         assert!(json.contains("172.16.0.50"));
         assert!(json.contains("brute_force"));
 
-        let deserialized = ThreatIntelligence::from_json(&json).unwrap();
+        let deserialized = ThreatIntelligence::from_json(&json)
+            .expect("Deserialization should succeed");
         assert_eq!(deserialized, threat);
     }
 
@@ -470,7 +477,7 @@ mod tests {
 
         assert!(threat.description.is_some());
         assert_eq!(
-            threat.description.unwrap(),
+            threat.description.expect("Description should be set"),
             "Port scan detected on ports 22, 80, 443"
         );
     }
@@ -494,7 +501,7 @@ mod tests {
             return;
         }
 
-        let p2p = p2p.unwrap();
+        let p2p = p2p.expect("P2P network creation should succeed if permissions are available");
         assert!(p2p.peer_id().to_string().len() > 0);
     }
 
@@ -509,11 +516,7 @@ mod tests {
         );
 
         // Set timestamp too far in the future (>5 minutes)
-        threat.timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            + 400;
+        threat.timestamp = current_timestamp() + 400;
 
         assert!(threat.validate().is_err());
     }
@@ -529,11 +532,7 @@ mod tests {
         );
 
         // Set timestamp too far in the past (>1 hour)
-        threat.timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-            .saturating_sub(3700);
+        threat.timestamp = current_timestamp().saturating_sub(3700);
 
         assert!(threat.validate().is_err());
     }
