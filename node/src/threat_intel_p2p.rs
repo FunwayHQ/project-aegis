@@ -497,7 +497,7 @@ mod tests {
         // If this still fails due to permissions, that's acceptable for tests
         if p2p.is_err() {
             // Permission errors are expected in restricted test environments
-            eprintln!("Note: P2P network creation requires network permissions");
+            tracing::warn!("Note: P2P network creation requires network permissions");
             return;
         }
 

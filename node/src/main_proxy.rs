@@ -29,19 +29,19 @@ async fn main() -> Result<()> {
         toml::from_str(&config_str)?
     };
 
-    println!("╔════════════════════════════════════════════╗");
-    println!("║   AEGIS Edge Node - Reverse Proxy v0.2    ║");
-    println!("║         Sprint 3: HTTP/S & TLS             ║");
-    println!("╚════════════════════════════════════════════╝");
-    println!();
-    println!("HTTP:   {}", config.http_addr);
+    tracing::info!("╔════════════════════════════════════════════╗");
+    tracing::info!("║   AEGIS Edge Node - Reverse Proxy v0.2    ║");
+    tracing::info!("║         Sprint 3: HTTP/S & TLS             ║");
+    tracing::info!("╚════════════════════════════════════════════╝");
+    tracing::info!("");
+    tracing::info!("HTTP:   {}", config.http_addr);
     if let Some(https) = &config.https_addr {
-        println!("HTTPS:  {} (TLS enabled)", https);
+        tracing::info!("HTTPS:  {} (TLS enabled)", https);
     }
-    println!("Origin: {}", config.origin);
-    println!();
-    println!("Access logs enabled: {}", config.log_requests);
-    println!();
+    tracing::info!("Origin: {}", config.origin);
+    tracing::info!("");
+    tracing::info!("Access logs enabled: {}", config.log_requests);
+    tracing::info!("");
 
     // Run HTTP proxy
     proxy::run_http_proxy(config).await?;
