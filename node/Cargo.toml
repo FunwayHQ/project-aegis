@@ -101,3 +101,7 @@ required-features = []
 name = "aegis-threat-intel"
 path = "src/main_threat_intel.rs"
 required-features = []
+
+[[bin]]
+name = "aegis-cdn"
+path = "src/main_cdn.rs"

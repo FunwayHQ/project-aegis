@@ -325,6 +325,188 @@ Edge Nodes → Load by CID → Multi-tier fetch:
 - 4 tests require IPFS daemon (marked `#[ignore]`)
 - End-to-end workflow test validates complete integration
 
+### Content Publisher CLI (`aegis-cdn`)
+
+**GitOps-Friendly Website Deployment Tool**
+
+The `aegis-cdn` CLI enables developers and content creators to publish static websites and web applications to the AEGIS decentralized CDN with zero blockchain transaction costs for regular content.
+
+**Commands:**
+
+1. **`init <project-name>`** - Initialize new CDN project
+   - Creates project directory structure
+   - Generates `aegis-cdn.yaml` configuration
+   - Creates sample `index.html` with AEGIS branding
+   - Outputs README with quick start guide
+
+2. **`upload <source>`** - Upload content to IPFS
+   - Supports single files or directories
+   - Automatic pinning to prevent garbage collection
+   - Returns IPFS CID and public gateway URLs
+   - Saves deployment record locally
+
+3. **`deploy <source>`** - Full deployment with routing
+   - Uploads content to IPFS
+   - Generates route configuration (YAML)
+   - Applies WAF and bot management rules
+   - Creates GitOps-ready config for FluxCD sync
+
+4. **`status <project>`** - Check deployment metrics
+   - Shows IPFS CID and deployment timestamp
+   - Displays edge node distribution (~150 nodes)
+   - Cache hit ratio and latency metrics
+   - WAF blocks and bot challenge counts
+
+5. **`config show/set <key> <value>`** - Manage configuration
+   - View current project settings
+   - Update IPFS, routing, or cache settings
+   - Generate default configuration templates
+
+6. **`list [--active]`** - List all deployments
+   - Shows project names and CIDs
+   - Deployment timestamps
+   - Filter by active status
+
+7. **`remove <project> [--force]`** - Remove deployment
+   - Deletes deployment record
+   - Content remains in IPFS (not deleted)
+   - Requires --force flag for safety
+
+**Project Structure:**
+
+```
+my-website/
+├── aegis-cdn.yaml       # Project configuration
+├── public/              # Content directory
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+├── README.md
+└── .aegis/
+    └── deployments/     # Local deployment records
+        └── my-website.json
+```
+
+**Configuration Format (`aegis-cdn.yaml`):**
+
+```yaml
+name: my-website
+description: AEGIS CDN Project
+source_dir: ./public
+
+ipfs:
+  api_endpoint: http://127.0.0.1:5001
+  pin: true
+  use_filecoin: false
+
+routing:
+  enable_waf: true
+  enable_bot_management: true
+  custom_routes: []
+
+cache:
+  ttl: 3600
+  cache_control: public, max-age=3600
+```
+
+**Deployment Workflow:**
+
+```
+Developer → aegis-cdn init my-site
+         → Edit public/index.html
+         → aegis-cdn deploy public/
+              ↓
+         Upload to IPFS → Get CID (QmXxx...)
+              ↓
+         Generate routes-production.yaml
+              ↓
+         Commit to Git → FluxCD pulls config
+              ↓
+         Edge nodes fetch via IPFS → Serve traffic
+```
+
+**Generated Route Configuration Example:**
+
+```yaml
+routes:
+  - name: my-website_waf
+    priority: 100
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/*"
+    methods: "*"
+    wasm_modules:
+      - type: waf
+        module_id: default-waf
+
+  - name: my-website_bot_mgmt
+    priority: 90
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/*"
+    methods: "*"
+    wasm_modules:
+      - type: edge_function
+        module_id: bot-detector
+```
+
+**Cost Model:**
+
+- ✅ **FREE** for static content (HTML, CSS, JS, images)
+- No $AEGIS tokens required for publishing
+- IPFS uploads use local daemon (no transaction fees)
+- Route configs deployed via Git (no blockchain interaction)
+- Optional: Filecoin pinning for guaranteed long-term storage
+
+**Example Usage:**
+
+```bash
+# Initialize new project
+aegis-cdn init my-website
+cd my-website
+
+# Edit your content
+vim public/index.html
+
+# Deploy to decentralized CDN
+aegis-cdn deploy public/
+
+# Output:
+# 📦 IPFS CID: QmXxx...
+# 🌐 Public Gateway URLs:
+#    • https://ipfs.io/ipfs/QmXxx...
+#    • https://cloudflare-ipfs.com/ipfs/QmXxx...
+# 📝 Route config saved to: routes-production.yaml
+# ✅ Deployment complete!
+
+# Check deployment status
+aegis-cdn status my-website
+
+# List all deployments
+aegis-cdn list
+```
+
+**Integration with AEGIS Edge Network:**
+
+1. Developer deploys via `aegis-cdn deploy`
+2. Content uploaded to IPFS (CID: QmXxx...)
+3. Route config committed to Git repository
+4. FluxCD syncs config to all edge nodes
+5. Edge nodes fetch content from IPFS (with CDN fallback)
+6. Content cached locally on each node
+7. Requests served with WAF protection and bot management
+
+**Key Advantages:**
+
+- **Zero Token Cost**: No $AEGIS required for static content
+- **Decentralized**: Content distributed via IPFS
+- **GitOps-Ready**: Configuration in Git, auto-synced
+- **Security Built-in**: WAF and bot management by default
+- **High Availability**: Multi-tier CDN strategy
+- **Simple Workflow**: 3 commands to go live (init, edit, deploy)
+
 ## Development Phases
 
 ### Phase 1: Foundation & Core Node (Sprints 1-6) ✅ COMPLETE
