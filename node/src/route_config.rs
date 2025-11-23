@@ -390,4 +390,228 @@ routes:
 
         assert!(!route.matches_request("GET", "/test", &[]));
     }
+
+    #[test]
+    fn test_route_with_header_matching() {
+        let mut headers_map = HashMap::new();
+        headers_map.insert("X-API-Key".to_string(), "secret123".to_string());
+
+        let route = Route {
+            name: Some("authenticated_route".to_string()),
+            path: RoutePattern::Exact("/admin".to_string()),
+            methods: MethodMatcher::Single("GET".to_string()),
+            headers: Some(headers_map),
+            wasm_modules: vec![],
+            priority: 0,
+            enabled: true,
+        };
+
+        // Match with correct header
+        let request_headers = vec![
+            ("X-API-Key".to_string(), "secret123".to_string()),
+            ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+        ];
+        assert!(route.matches_request("GET", "/admin", &request_headers));
+
+        // No match without header
+        assert!(!route.matches_request("GET", "/admin", &[]));
+
+        // No match with wrong header value
+        let wrong_headers = vec![("X-API-Key".to_string(), "wrong".to_string())];
+        assert!(!route.matches_request("GET", "/admin", &wrong_headers));
+    }
+
+    #[test]
+    fn test_route_case_insensitive_headers() {
+        let mut headers_map = HashMap::new();
+        headers_map.insert("Content-Type".to_string(), "application/json".to_string());
+
+        let route = Route {
+            name: Some("json_route".to_string()),
+            path: RoutePattern::Exact("/api/data".to_string()),
+            methods: MethodMatcher::default(),
+            headers: Some(headers_map),
+            wasm_modules: vec![],
+            priority: 0,
+            enabled: true,
+        };
+
+        // Header names should be case-insensitive
+        let headers_lowercase = vec![("content-type".to_string(), "application/json".to_string())];
+        assert!(route.matches_request("POST", "/api/data", &headers_lowercase));
+
+        let headers_uppercase = vec![("CONTENT-TYPE".to_string(), "application/json".to_string())];
+        assert!(route.matches_request("POST", "/api/data", &headers_uppercase));
+    }
+
+    #[test]
+    fn test_prefix_pattern_edge_cases() {
+        let pattern = RoutePattern::Prefix("/api/*".to_string());
+
+        // Should match exact prefix without trailing slash
+        assert!(pattern.matches("/api"));
+
+        // Should match with trailing slash
+        assert!(pattern.matches("/api/"));
+
+        // Should match nested paths
+        assert!(pattern.matches("/api/v1/users"));
+
+        // Should not match similar but different paths
+        assert!(!pattern.matches("/apis"));
+        assert!(!pattern.matches("/api_v2"));
+    }
+
+    #[test]
+    fn test_regex_pattern_validation() {
+        // Valid regex patterns
+        let pattern1 = RoutePattern::Regex(r"^/api/v[0-9]+/.*".to_string());
+        assert!(pattern1.matches("/api/v1/users"));
+        assert!(pattern1.matches("/api/v2/products"));
+        assert!(pattern1.matches("/api/v999/items"));
+        assert!(!pattern1.matches("/api/users"));
+
+        // Complex regex with groups
+        let pattern2 = RoutePattern::Regex(r"^/files/[a-z]+\.(jpg|png|gif)$".to_string());
+        assert!(pattern2.matches("/files/image.jpg"));
+        assert!(pattern2.matches("/files/photo.png"));
+        assert!(!pattern2.matches("/files/document.pdf"));
+    }
+
+    #[test]
+    fn test_find_matching_route_no_match() {
+        let config = RouteConfig {
+            routes: vec![
+                Route {
+                    name: Some("api_route".to_string()),
+                    path: RoutePattern::Prefix("/api/*".to_string()),
+                    methods: MethodMatcher::Single("GET".to_string()),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 0,
+                    enabled: true,
+                },
+            ],
+            default_modules: None,
+            settings: None,
+        };
+
+        // No match - wrong method
+        assert!(config.find_matching_route("POST", "/api/users", &[]).is_none());
+
+        // No match - wrong path
+        assert!(config.find_matching_route("GET", "/other", &[]).is_none());
+    }
+
+    #[test]
+    fn test_route_config_default_values() {
+        let config = RouteConfig::new();
+        assert_eq!(config.routes.len(), 0);
+        assert!(config.default_modules.is_none());
+        assert!(config.settings.is_none());
+    }
+
+    #[test]
+    fn test_route_settings_defaults() {
+        let settings = RouteSettings::default();
+        assert_eq!(settings.max_modules_per_request, 10);
+        assert_eq!(settings.continue_on_error, false);
+    }
+
+    #[test]
+    fn test_multiple_routes_priority_ordering() {
+        let config = RouteConfig {
+            routes: vec![
+                Route {
+                    name: Some("catch_all".to_string()),
+                    path: RoutePattern::Prefix("/*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 1,
+                    enabled: true,
+                },
+                Route {
+                    name: Some("specific_api".to_string()),
+                    path: RoutePattern::Prefix("/api/*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 50,
+                    enabled: true,
+                },
+                Route {
+                    name: Some("very_specific".to_string()),
+                    path: RoutePattern::Exact("/api/users".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 100,
+                    enabled: true,
+                },
+            ],
+            default_modules: None,
+            settings: None,
+        };
+
+        // Most specific route should match first (highest priority)
+        let matched = config.find_matching_route("GET", "/api/users", &[]);
+        assert_eq!(matched.unwrap().name, Some("very_specific".to_string()));
+
+        // Second most specific for other API paths
+        let matched = config.find_matching_route("GET", "/api/products", &[]);
+        assert_eq!(matched.unwrap().name, Some("specific_api".to_string()));
+
+        // Catch-all for everything else
+        let matched = config.find_matching_route("GET", "/other", &[]);
+        assert_eq!(matched.unwrap().name, Some("catch_all".to_string()));
+    }
+
+    #[test]
+    fn test_route_config_from_toml() {
+        let toml = r#"
+[[routes]]
+name = "api_route"
+priority = 10
+enabled = true
+
+[routes.path]
+type = "prefix"
+pattern = "/api/*"
+
+routes.methods = ["GET", "POST"]
+
+[[routes.wasm_modules]]
+type = "waf"
+module_id = "security-waf"
+"#;
+
+        let config = RouteConfig::from_toml(toml).unwrap();
+        assert_eq!(config.routes.len(), 1);
+        assert_eq!(config.routes[0].name, Some("api_route".to_string()));
+    }
+
+    #[test]
+    fn test_method_matcher_edge_cases() {
+        // Empty string should not match anything
+        let matcher = MethodMatcher::Single("GET".to_string());
+        assert!(!matcher.matches(""));
+
+        // Case insensitivity
+        let matcher = MethodMatcher::Single("post".to_string());
+        assert!(matcher.matches("POST"));
+        assert!(matcher.matches("Post"));
+        assert!(matcher.matches("post"));
+
+        // Multiple methods
+        let matcher = MethodMatcher::Multiple(vec![
+            "GET".to_string(),
+            "HEAD".to_string(),
+            "OPTIONS".to_string(),
+        ]);
+        assert!(matcher.matches("GET"));
+        assert!(matcher.matches("head"));
+        assert!(matcher.matches("Options"));
+        assert!(!matcher.matches("POST"));
+    }
 }

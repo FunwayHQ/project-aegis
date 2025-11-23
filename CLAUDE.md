@@ -120,11 +120,117 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 1. **BGP Anycast** routes user to nearest edge node
 2. **eBPF/XDP** drops malicious/blocklisted packets at kernel level (uses P2P threat intel)
 3. **River Proxy** terminates TLS using BoringSSL
-4. **WAF + Bot Management** inspects for Layer 7 attacks (SQLi, XSS, bots)
-5. **DragonflyDB** cache lookup (hit = immediate response, miss = proxy to origin)
-6. **P2P Threat Intelligence** shares detected threats with network (libp2p gossipsub)
-7. **NATS JetStream** broadcasts state updates (rate limits, cache invalidation) via CRDTs
-8. **FluxCD** ensures config matches Git, validated by Flagger canaries
+4. **Sprint 16: Route-based Dispatch** matches request to configured route, executes Wasm module pipeline
+5. **WAF + Bot Management** inspects for Layer 7 attacks (SQLi, XSS, bots) - via routes or legacy
+6. **DragonflyDB** cache lookup (hit = immediate response, miss = proxy to origin)
+7. **P2P Threat Intelligence** shares detected threats with network (libp2p gossipsub)
+8. **NATS JetStream** broadcasts state updates (rate limits, cache invalidation) via CRDTs
+9. **FluxCD** ensures config matches Git, validated by Flagger canaries
+
+### Sprint 16: Route-based Dispatch Architecture
+
+**Configuration-Driven Routing for Wasm Modules**
+
+Sprint 16 introduces a flexible routing system that maps HTTP request patterns to sequences of Wasm modules, enabling GitOps-managed edge logic without code changes.
+
+**Core Components:**
+
+1. **RouteConfig** (`route_config.rs`):
+   - RoutePattern: Exact (`/api/users`), Prefix (`/api/*`), or Regex (`^/api/v[0-9]+/.*`) matching
+   - MethodMatcher: Single method, multiple methods, or wildcard (`*`)
+   - Priority-based route selection (higher priority = checked first)
+   - Header matching for fine-grained control
+   - YAML/TOML configuration support
+
+2. **ModuleDispatcher** (`module_dispatcher.rs`):
+   - Sequential execution of Wasm module pipelines
+   - Early termination when WAF blocks request (403 Forbidden)
+   - Error handling: fail fast or continue on error (per route settings)
+   - Resource governance: max_modules_per_request safety limit (default: 10)
+   - Execution time tracking (microsecond precision) for profiling
+
+3. **Pingora Integration** (`pingora_proxy.rs`):
+   - Route matching in request_filter phase (before cache lookup)
+   - Falls back to legacy WAF if no route matches (backward compatibility)
+   - Fail-open behavior: pipeline errors don't crash proxy
+
+**Request Flow with Routes:**
+
+```
+HTTP Request → Route Matching → Pipeline Execution → Response
+                     ↓                    ↓
+              Find route by:      Execute modules:
+              - Path pattern      1. WAF (security)
+              - HTTP method       2. Auth (validation)
+              - Headers           3. Rate limit
+                                 4. Transform
+                                 5. Custom logic
+                     ↓                    ↓
+              If no match:        If blocked:
+              → Legacy WAF        → Return 403
+              → Continue          → Log & skip upstream
+```
+
+**Example Route Configuration (YAML):**
+
+```yaml
+settings:
+  max_modules_per_request: 10
+  continue_on_error: false
+
+routes:
+  - name: api_endpoints
+    priority: 100
+    path:
+      type: prefix
+      pattern: "/api/*"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    wasm_modules:
+      - type: waf
+        module_id: api-waf
+        ipfs_cid: QmWafCID
+      - type: edge_function
+        module_id: api-auth
+      - type: edge_function
+        module_id: api-rate-limiter
+```
+
+**Key Advantages:**
+
+- **GitOps-Friendly**: Routes stored in YAML, version controlled, FluxCD synced
+- **Zero-Downtime**: Hot-reload capability (future sprint)
+- **Progressive Deployment**: Flagger canary testing for route changes
+- **Fail-Safe**: Pipeline errors don't crash proxy (fail open)
+- **Observable**: Per-module execution times logged
+- **Flexible**: Combine multiple modules (WAF → auth → rate limit → transform)
+
+**Module Pipeline Example:**
+
+```
+Request: POST /api/v1/users
+         ↓
+Route Match: "api_endpoints" (priority: 100)
+         ↓
+Execute Pipeline:
+  1. WAF Module (1.2ms) ✅ PASS
+  2. Auth Module (0.8ms) ✅ PASS
+  3. Rate Limiter (0.5ms) ✅ PASS
+         ↓
+Total: 2.5ms → Continue to cache/upstream
+```
+
+**Module Pipeline with Block:**
+
+```
+Request: POST /api/v1/users?id=1' OR '1'='1
+         ↓
+Route Match: "api_endpoints"
+         ↓
+Execute Pipeline:
+  1. WAF Module (1.5ms) ❌ BLOCKED (SQL injection detected)
+         ↓
+Return 403 Forbidden → Skip remaining modules → Skip upstream
+```
 
 ## Development Phases
 
@@ -143,11 +249,14 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 - ✅ **Sprint 11:** CRDTs + NATS JetStream (G-Counter, distributed rate limiter) - 24 tests
 - ✅ **Sprint 12:** Verifiable Analytics (Ed25519 signatures, SQLite, HTTP API) - 17 tests
 
-### Phase 3: Edge Compute & Governance (Sprints 13-18)
-- Wasm edge functions runtime (custom logic at edge)
-- DAO governance smart contracts (proposals, voting, treasury)
-- Advanced P2P performance routing
-- IPFS/Filecoin integration for decentralized storage
+### Phase 3: Edge Compute & Governance (Sprints 13-18) - 🚧 IN PROGRESS (25%)
+- ✅ **Sprint 13:** Wasm Edge Functions Runtime (custom logic at edge, host API for cache/HTTP)
+- ✅ **Sprint 14:** Extended Host API (DragonflyDB cache ops, controlled HTTP requests)
+- ✅ **Sprint 15:** WAF Migration to Wasm + Ed25519 Module Signatures
+- ✅ **Sprint 15.5:** Architectural Cleanup (PN-Counter migration, HTTPS-only enforcement)
+- ✅ **Sprint 16:** Route-based Dispatch (YAML/TOML config, module pipelines) - 156 tests
+- 🚧 **Sprint 17:** IPFS/Filecoin integration for Wasm module distribution
+- 🚧 **Sprint 18:** DAO governance smart contracts (proposals, voting, treasury)
 
 ### Phase 4: Optimization & Launch (Sprints 19-24)
 - Performance tuning and stress testing
