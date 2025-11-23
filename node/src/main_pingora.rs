@@ -1,9 +1,5 @@
-mod cache;
-mod config;
-mod pingora_proxy;
-
 use anyhow::Result;
-use pingora_proxy::ProxyConfig;
+use aegis_node::pingora_proxy::ProxyConfig;
 use std::fs;
 use tracing_subscriber;
 
@@ -42,7 +38,7 @@ fn main() -> Result<()> {
     tracing::info!("");
 
     // Run the proxy
-    pingora_proxy::run_proxy(config)?;
+    aegis_node::pingora_proxy::run_proxy(config)?;
 
     Ok(())
 }
