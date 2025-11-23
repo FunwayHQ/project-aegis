@@ -1,0 +1,95 @@
+# Sprint 16: Example Route Configuration for Wasm Module Dispatch
+#
+# This file demonstrates how to configure route-based dispatch for Wasm modules.
+# Routes map HTTP request patterns to sequences of Wasm modules (WAF, edge functions, etc.)
+# enabling flexible, GitOps-managed edge logic without code changes.
+
+# Global settings
+settings:
+  # Maximum number of modules to execute per request (safety limit)
+  max_modules_per_request: 10
+  # Whether to continue pipeline on module errors (default: false = stop on error)
+  continue_on_error: false
+
+# Default modules to apply to all requests (executed first)
+default_modules:
+  - type: waf
+    module_id: global-waf
+    ipfs_cid: QmWAFExampleCID123
+    required_public_key: "ed25519_public_key_hex"
+
+# Route definitions (evaluated in priority order)
+routes:
+  # High-priority route for API endpoints
+  - name: api_routes
+    priority: 100
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/api/*"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    wasm_modules:
+      - type: waf
+        module_id: api-waf
+        ipfs_cid: QmApiWafCID456
+      - type: edge_function
+        module_id: api-rate-limiter
+        ipfs_cid: QmRateLimitCID789
+      - type: edge_function
+        module_id: api-auth-validator
+        ipfs_cid: QmAuthCID012
+
+  # Route with regex pattern matching
+  - name: versioned_api
+    priority: 90
+    enabled: true
+    path:
+      type: regex
+      pattern: "^/api/v[0-9]+/.*"
+    methods: ["GET", "POST"]
+    wasm_modules:
+      - type: waf
+        module_id: versioned-api-waf
+      - type: edge_function
+        module_id: api-version-router
+
+  # Exact path match for admin endpoints
+  - name: admin_dashboard
+    priority: 80
+    enabled: true
+    path:
+      type: exact
+      pattern: "/admin/dashboard"
+    methods: ["GET"]
+    # Optional: Require specific header
+    headers:
+      X-Admin-Token: "secret-admin-token"
+    wasm_modules:
+      - type: waf
+        module_id: admin-waf
+      - type: edge_function
+        module_id: admin-auth
+
+  # Catch-all route for static content
+  - name: static_content
+    priority: 10
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/static/*"
+    methods: ["GET"]
+    wasm_modules:
+      - type: edge_function
+        module_id: static-cache-optimizer
+
+  # Example disabled route
+  - name: maintenance_mode
+    priority: 200
+    enabled: false  # Disabled - will not match requests
+    path:
+      type: prefix
+      pattern: "/*"
+    methods: ["*"]  # All methods
+    wasm_modules:
+      - type: edge_function
+        module_id: maintenance-page

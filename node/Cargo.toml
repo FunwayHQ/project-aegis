@@ -21,6 +21,7 @@ reqwest = { version = "0.11", features = ["rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
+serde_yaml = "0.9"  # YAML parsing for route configurations
 
 # Logging and error handling
 tracing = "0.1"
@@ -36,6 +37,8 @@ async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 url = "2.5"  # URL parsing for query parameters
+clap = { version = "4.5", features = ["derive"] }  # CLI argument parsing
+colored = "2.1"  # Terminal color output
 
 # Cache - Redis/DragonflyDB client
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
@@ -61,6 +64,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }  # SQLite for metric sto
 base64 = "0.22"  # Base64 encoding for signatures
 hex = "0.4"  # Hex encoding utilities
 rand = "0.8"  # Random number generation for key generation
+
+# IPFS/Filecoin Integration (Sprint 17)
+ipfs-api-backend-hyper = { version = "0.6", features = ["with-hyper-rustls"] }  # IPFS HTTP API client
+sha2 = "0.10"  # SHA-256 hashing for CID verification
 
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -94,3 +101,7 @@ required-features = []
 name = "aegis-threat-intel"
 path = "src/main_threat_intel.rs"
 required-features = []
+
+[[bin]]
+name = "aegis-cdn"
+path = "src/main_cdn.rs"

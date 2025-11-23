@@ -120,11 +120,392 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 1. **BGP Anycast** routes user to nearest edge node
 2. **eBPF/XDP** drops malicious/blocklisted packets at kernel level (uses P2P threat intel)
 3. **River Proxy** terminates TLS using BoringSSL
-4. **WAF + Bot Management** inspects for Layer 7 attacks (SQLi, XSS, bots)
-5. **DragonflyDB** cache lookup (hit = immediate response, miss = proxy to origin)
-6. **P2P Threat Intelligence** shares detected threats with network (libp2p gossipsub)
-7. **NATS JetStream** broadcasts state updates (rate limits, cache invalidation) via CRDTs
-8. **FluxCD** ensures config matches Git, validated by Flagger canaries
+4. **Sprint 16: Route-based Dispatch** matches request to configured route, executes Wasm module pipeline
+5. **WAF + Bot Management** inspects for Layer 7 attacks (SQLi, XSS, bots) - via routes or legacy
+6. **DragonflyDB** cache lookup (hit = immediate response, miss = proxy to origin)
+7. **P2P Threat Intelligence** shares detected threats with network (libp2p gossipsub)
+8. **NATS JetStream** broadcasts state updates (rate limits, cache invalidation) via CRDTs
+9. **FluxCD** ensures config matches Git, validated by Flagger canaries
+
+### Sprint 16: Route-based Dispatch Architecture
+
+**Configuration-Driven Routing for Wasm Modules**
+
+Sprint 16 introduces a flexible routing system that maps HTTP request patterns to sequences of Wasm modules, enabling GitOps-managed edge logic without code changes.
+
+**Core Components:**
+
+1. **RouteConfig** (`route_config.rs`):
+   - RoutePattern: Exact (`/api/users`), Prefix (`/api/*`), or Regex (`^/api/v[0-9]+/.*`) matching
+   - MethodMatcher: Single method, multiple methods, or wildcard (`*`)
+   - Priority-based route selection (higher priority = checked first)
+   - Header matching for fine-grained control
+   - YAML/TOML configuration support
+
+2. **ModuleDispatcher** (`module_dispatcher.rs`):
+   - Sequential execution of Wasm module pipelines
+   - Early termination when WAF blocks request (403 Forbidden)
+   - Error handling: fail fast or continue on error (per route settings)
+   - Resource governance: max_modules_per_request safety limit (default: 10)
+   - Execution time tracking (microsecond precision) for profiling
+
+3. **Pingora Integration** (`pingora_proxy.rs`):
+   - Route matching in request_filter phase (before cache lookup)
+   - Falls back to legacy WAF if no route matches (backward compatibility)
+   - Fail-open behavior: pipeline errors don't crash proxy
+
+**Request Flow with Routes:**
+
+```
+HTTP Request → Route Matching → Pipeline Execution → Response
+                     ↓                    ↓
+              Find route by:      Execute modules:
+              - Path pattern      1. WAF (security)
+              - HTTP method       2. Auth (validation)
+              - Headers           3. Rate limit
+                                 4. Transform
+                                 5. Custom logic
+                     ↓                    ↓
+              If no match:        If blocked:
+              → Legacy WAF        → Return 403
+              → Continue          → Log & skip upstream
+```
+
+**Example Route Configuration (YAML):**
+
+```yaml
+settings:
+  max_modules_per_request: 10
+  continue_on_error: false
+
+routes:
+  - name: api_endpoints
+    priority: 100
+    path:
+      type: prefix
+      pattern: "/api/*"
+    methods: ["GET", "POST", "PUT", "DELETE"]
+    wasm_modules:
+      - type: waf
+        module_id: api-waf
+        ipfs_cid: QmWafCID
+      - type: edge_function
+        module_id: api-auth
+      - type: edge_function
+        module_id: api-rate-limiter
+```
+
+**Key Advantages:**
+
+- **GitOps-Friendly**: Routes stored in YAML, version controlled, FluxCD synced
+- **Zero-Downtime**: Hot-reload capability (future sprint)
+- **Progressive Deployment**: Flagger canary testing for route changes
+- **Fail-Safe**: Pipeline errors don't crash proxy (fail open)
+- **Observable**: Per-module execution times logged
+- **Flexible**: Combine multiple modules (WAF → auth → rate limit → transform)
+
+**Module Pipeline Example:**
+
+```
+Request: POST /api/v1/users
+         ↓
+Route Match: "api_endpoints" (priority: 100)
+         ↓
+Execute Pipeline:
+  1. WAF Module (1.2ms) ✅ PASS
+  2. Auth Module (0.8ms) ✅ PASS
+  3. Rate Limiter (0.5ms) ✅ PASS
+         ↓
+Total: 2.5ms → Continue to cache/upstream
+```
+
+**Module Pipeline with Block:**
+
+```
+Request: POST /api/v1/users?id=1' OR '1'='1
+         ↓
+Route Match: "api_endpoints"
+         ↓
+Execute Pipeline:
+  1. WAF Module (1.5ms) ❌ BLOCKED (SQL injection detected)
+         ↓
+Return 403 Forbidden → Skip remaining modules → Skip upstream
+```
+
+### Sprint 17: IPFS/Filecoin Integration for Decentralized Module Distribution
+
+**Censorship-Resistant Content Addressing for Wasm Modules**
+
+Sprint 17 enables Wasm modules to be distributed via IPFS (InterPlanetary File System), eliminating single points of failure and enabling censorship-resistant edge logic deployment.
+
+**Core Components:**
+
+1. **IpfsClient** (`ipfs_client.rs`):
+   - Upload modules to IPFS and get Content ID (CID)
+   - Download modules by CID with integrity verification
+   - Pin/unpin modules to control garbage collection
+   - Local disk caching (~/.aegis/modules/) for performance
+   - Multi-tier CDN strategy (local cache → IPFS node → public gateways)
+
+2. **Public IPFS Gateway Fallback** (CDN functionality):
+   - Primary: Local IPFS daemon (http://127.0.0.1:5001)
+   - Fallback 1: Cloudflare IPFS (https://cloudflare-ipfs.com)
+   - Fallback 2: ipfs.io (https://ipfs.io)
+   - Fallback 3: dweb.link (https://dweb.link)
+   - Automatic failover ensures high availability
+
+3. **WasmRuntime Integration**:
+   - `load_module_from_ipfs(cid, module_type, ipfs_client)`
+   - Combines IPFS fetching with Ed25519 signature verification
+   - Seamless integration with existing module loading
+
+4. **Route Config Support**:
+   - Routes reference modules by IPFS CID instead of file paths
+   - GitOps-friendly: CIDs in YAML config files
+   - Version control via content addressing
+
+**Example Usage:**
+
+```yaml
+# Route configuration with IPFS CIDs
+routes:
+  - name: api_waf
+    wasm_modules:
+      - type: waf
+        module_id: waf-v1
+        ipfs_cid: QmWafModuleCID123abc
+        required_public_key: ed25519_pubkey_hex
+```
+
+**Module Distribution Flow:**
+
+```
+Developer → Build Wasm → Upload to IPFS → Get CID (QmXxx...)
+                              ↓
+                    Update route config with CID
+                              ↓
+Edge Nodes → Load by CID → Multi-tier fetch:
+                              1. Check local cache (~/.aegis/modules/)
+                              2. Try local IPFS node
+                              3. Fallback to public gateways (CDN)
+                              ↓
+                    Verify CID integrity + Ed25519 signature
+                              ↓
+                    Cache locally → Load into WasmRuntime → Execute
+```
+
+**Key Advantages:**
+
+- **Censorship Resistance**: No central server can block module distribution
+- **Content Verification**: CID guarantees integrity (hash of content)
+- **High Availability**: Multi-tier CDN strategy with public gateway fallback
+- **Bandwidth Efficiency**: Local caching reduces IPFS fetches
+- **Decentralization**: Aligns with project's core mission
+- **Version Control**: CIDs provide immutable versioning
+
+**Security Features:**
+
+1. **Size Validation**: Max 10MB per module
+2. **CID Verification**: Downloaded content must match CID
+3. **Signature Verification**: Ed25519 signatures (from Sprint 15)
+4. **HTTPS-Only Gateways**: All public gateway requests use HTTPS
+5. **Timeout Protection**: 30s max download time
+
+**Resource Management:**
+
+- Local cache directory: `~/.aegis/modules/<cid>.wasm`
+- Cache statistics API: `cache_stats()` returns count and size
+- Cache clearing: `clear_cache()` for maintenance
+- LRU eviction (planned): Auto-remove old modules when cache > 1GB
+
+**Testing:**
+
+- 11 comprehensive tests covering all functionality
+- 7 tests pass without external dependencies
+- 4 tests require IPFS daemon (marked `#[ignore]`)
+- End-to-end workflow test validates complete integration
+
+### Content Publisher CLI (`aegis-cdn`)
+
+**GitOps-Friendly Website Deployment Tool**
+
+The `aegis-cdn` CLI enables developers and content creators to publish static websites and web applications to the AEGIS decentralized CDN with zero blockchain transaction costs for regular content.
+
+**Commands:**
+
+1. **`init <project-name>`** - Initialize new CDN project
+   - Creates project directory structure
+   - Generates `aegis-cdn.yaml` configuration
+   - Creates sample `index.html` with AEGIS branding
+   - Outputs README with quick start guide
+
+2. **`upload <source>`** - Upload content to IPFS
+   - Supports single files or directories
+   - Automatic pinning to prevent garbage collection
+   - Returns IPFS CID and public gateway URLs
+   - Saves deployment record locally
+
+3. **`deploy <source>`** - Full deployment with routing
+   - Uploads content to IPFS
+   - Generates route configuration (YAML)
+   - Applies WAF and bot management rules
+   - Creates GitOps-ready config for FluxCD sync
+
+4. **`status <project>`** - Check deployment metrics
+   - Shows IPFS CID and deployment timestamp
+   - Displays edge node distribution (~150 nodes)
+   - Cache hit ratio and latency metrics
+   - WAF blocks and bot challenge counts
+
+5. **`config show/set <key> <value>`** - Manage configuration
+   - View current project settings
+   - Update IPFS, routing, or cache settings
+   - Generate default configuration templates
+
+6. **`list [--active]`** - List all deployments
+   - Shows project names and CIDs
+   - Deployment timestamps
+   - Filter by active status
+
+7. **`remove <project> [--force]`** - Remove deployment
+   - Deletes deployment record
+   - Content remains in IPFS (not deleted)
+   - Requires --force flag for safety
+
+**Project Structure:**
+
+```
+my-website/
+├── aegis-cdn.yaml       # Project configuration
+├── public/              # Content directory
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+├── README.md
+└── .aegis/
+    └── deployments/     # Local deployment records
+        └── my-website.json
+```
+
+**Configuration Format (`aegis-cdn.yaml`):**
+
+```yaml
+name: my-website
+description: AEGIS CDN Project
+source_dir: ./public
+
+ipfs:
+  api_endpoint: http://127.0.0.1:5001
+  pin: true
+  use_filecoin: false
+
+routing:
+  enable_waf: true
+  enable_bot_management: true
+  custom_routes: []
+
+cache:
+  ttl: 3600
+  cache_control: public, max-age=3600
+```
+
+**Deployment Workflow:**
+
+```
+Developer → aegis-cdn init my-site
+         → Edit public/index.html
+         → aegis-cdn deploy public/
+              ↓
+         Upload to IPFS → Get CID (QmXxx...)
+              ↓
+         Generate routes-production.yaml
+              ↓
+         Commit to Git → FluxCD pulls config
+              ↓
+         Edge nodes fetch via IPFS → Serve traffic
+```
+
+**Generated Route Configuration Example:**
+
+```yaml
+routes:
+  - name: my-website_waf
+    priority: 100
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/*"
+    methods: "*"
+    wasm_modules:
+      - type: waf
+        module_id: default-waf
+
+  - name: my-website_bot_mgmt
+    priority: 90
+    enabled: true
+    path:
+      type: prefix
+      pattern: "/*"
+    methods: "*"
+    wasm_modules:
+      - type: edge_function
+        module_id: bot-detector
+```
+
+**Cost Model:**
+
+- ✅ **FREE** for static content (HTML, CSS, JS, images)
+- No $AEGIS tokens required for publishing
+- IPFS uploads use local daemon (no transaction fees)
+- Route configs deployed via Git (no blockchain interaction)
+- Optional: Filecoin pinning for guaranteed long-term storage
+
+**Example Usage:**
+
+```bash
+# Initialize new project
+aegis-cdn init my-website
+cd my-website
+
+# Edit your content
+vim public/index.html
+
+# Deploy to decentralized CDN
+aegis-cdn deploy public/
+
+# Output:
+# 📦 IPFS CID: QmXxx...
+# 🌐 Public Gateway URLs:
+#    • https://ipfs.io/ipfs/QmXxx...
+#    • https://cloudflare-ipfs.com/ipfs/QmXxx...
+# 📝 Route config saved to: routes-production.yaml
+# ✅ Deployment complete!
+
+# Check deployment status
+aegis-cdn status my-website
+
+# List all deployments
+aegis-cdn list
+```
+
+**Integration with AEGIS Edge Network:**
+
+1. Developer deploys via `aegis-cdn deploy`
+2. Content uploaded to IPFS (CID: QmXxx...)
+3. Route config committed to Git repository
+4. FluxCD syncs config to all edge nodes
+5. Edge nodes fetch content from IPFS (with CDN fallback)
+6. Content cached locally on each node
+7. Requests served with WAF protection and bot management
+
+**Key Advantages:**
+
+- **Zero Token Cost**: No $AEGIS required for static content
+- **Decentralized**: Content distributed via IPFS
+- **GitOps-Ready**: Configuration in Git, auto-synced
+- **Security Built-in**: WAF and bot management by default
+- **High Availability**: Multi-tier CDN strategy
+- **Simple Workflow**: 3 commands to go live (init, edit, deploy)
 
 ## Development Phases
 
@@ -143,11 +524,14 @@ The architecture is explicitly designed to avoid the failure modes that caused t
 - ✅ **Sprint 11:** CRDTs + NATS JetStream (G-Counter, distributed rate limiter) - 24 tests
 - ✅ **Sprint 12:** Verifiable Analytics (Ed25519 signatures, SQLite, HTTP API) - 17 tests
 
-### Phase 3: Edge Compute & Governance (Sprints 13-18)
-- Wasm edge functions runtime (custom logic at edge)
-- DAO governance smart contracts (proposals, voting, treasury)
-- Advanced P2P performance routing
-- IPFS/Filecoin integration for decentralized storage
+### Phase 3: Edge Compute & Governance (Sprints 13-18) - 🚧 IN PROGRESS (83%)
+- ✅ **Sprint 13:** Wasm Edge Functions Runtime (custom logic at edge, host API for cache/HTTP)
+- ✅ **Sprint 14:** Extended Host API (DragonflyDB cache ops, controlled HTTP requests)
+- ✅ **Sprint 15:** WAF Migration to Wasm + Ed25519 Module Signatures
+- ✅ **Sprint 15.5:** Architectural Cleanup (PN-Counter migration, HTTPS-only enforcement)
+- ✅ **Sprint 16:** Route-based Dispatch (YAML/TOML config, module pipelines) - 156 tests
+- ✅ **Sprint 17:** IPFS/Filecoin Integration (CDN fallback, local caching) - 11 tests
+- 🚧 **Sprint 18:** DAO governance smart contracts (proposals, voting, treasury)
 
 ### Phase 4: Optimization & Launch (Sprints 19-24)
 - Performance tuning and stress testing

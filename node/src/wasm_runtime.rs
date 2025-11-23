@@ -92,7 +92,10 @@ const WAF_EXECUTION_TIMEOUT_MS: u64 = 10;
 const EDGE_FUNCTION_TIMEOUT_MS: u64 = 50;
 
 /// Maximum memory for Wasm modules (10MB for WAF, 50MB for edge functions)
+/// Note: Currently unused, but reserved for future memory governance implementation
+#[allow(dead_code)]
 const WAF_MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024;
+#[allow(dead_code)]
 const EDGE_FUNCTION_MEMORY_LIMIT_BYTES: usize = 50 * 1024 * 1024;
 
 /// Sprint 14: HTTP request limits for edge functions
@@ -379,6 +382,76 @@ impl WasmRuntime {
         Ok(())
     }
 
+    /// Sprint 17: Load Wasm module from IPFS by CID
+    ///
+    /// This method downloads a module from IPFS and loads it into the runtime.
+    /// It uses a multi-tier CDN strategy:
+    /// 1. Local cache
+    /// 2. Local IPFS node
+    /// 3. Public IPFS gateways (CDN fallback)
+    ///
+    /// # Arguments
+    /// * `module_id` - Unique identifier for the module
+    /// * `ipfs_cid` - IPFS Content Identifier (e.g., "QmXxx...")
+    /// * `module_type` - Type of module (WAF or EdgeFunction)
+    /// * `ipfs_client` - Shared IPFS client instance
+    /// * `signature` - Optional Ed25519 signature for verification
+    /// * `public_key` - Optional Ed25519 public key for verification
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use aegis_node::ipfs_client::IpfsClient;
+    /// use aegis_node::wasm_runtime::{WasmRuntime, WasmModuleType};
+    ///
+    /// let runtime = WasmRuntime::new()?;
+    /// let ipfs_client = Arc::new(IpfsClient::new()?);
+    ///
+    /// runtime.load_module_from_ipfs(
+    ///     "waf-v1",
+    ///     "QmWafModuleCID123...",
+    ///     WasmModuleType::Waf,
+    ///     ipfs_client,
+    ///     None,
+    ///     None,
+    /// ).await?;
+    /// ```
+    pub async fn load_module_from_ipfs(
+        &self,
+        module_id: &str,
+        ipfs_cid: &str,
+        module_type: WasmModuleType,
+        ipfs_client: std::sync::Arc<crate::ipfs_client::IpfsClient>,
+        signature: Option<String>,
+        public_key: Option<String>,
+    ) -> Result<()> {
+        info!("Loading Wasm module from IPFS: {} (CID: {})", module_id, ipfs_cid);
+
+        // Fetch module from IPFS (with CDN fallback)
+        let wasm_bytes = ipfs_client
+            .fetch_module(ipfs_cid)
+            .await
+            .context(format!("Failed to fetch module {} from IPFS", ipfs_cid))?;
+
+        info!(
+            "Successfully fetched module {} from IPFS ({} bytes)",
+            ipfs_cid,
+            wasm_bytes.len()
+        );
+
+        // Load module with signature verification if provided
+        self.load_module_from_bytes_with_signature(
+            module_id,
+            &wasm_bytes,
+            module_type,
+            Some(ipfs_cid.to_string()),
+            signature,
+            public_key,
+        )?;
+
+        Ok(())
+    }
+
     /// Execute WAF analysis in Wasm sandbox
     pub fn execute_waf(
         &self,
@@ -628,18 +701,12 @@ impl WasmRuntime {
                 };
 
                 // Perform cache get (blocking operation in async context)
-                // We need to use tokio::runtime::Handle to block on async
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    let mut cache = cache_arc.lock().await;
-                    cache.get(&key).await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let mut cache = cache_arc.lock().await;
+                        cache.get(&key).await
+                    })
                 });
 
                 match result {
@@ -728,17 +795,12 @@ impl WasmRuntime {
                 };
 
                 // Perform cache set
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    let mut cache = cache_arc.lock().await;
-                    cache.set(&key, &value_bytes, Some(ttl as u64)).await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        let mut cache = cache_arc.lock().await;
+                        cache.set(&key, &value_bytes, Some(ttl as u64)).await
+                    })
                 });
 
                 match result {
@@ -785,9 +847,9 @@ impl WasmRuntime {
 
                 debug!("http_get called for URL: {}", url);
 
-                // Validate URL (basic security check)
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -796,20 +858,15 @@ impl WasmRuntime {
                 let http_client = data.http_client.clone();
 
                 // Perform HTTP GET request
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    http_client
-                        .get(&url)
-                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
-                        .send()
-                        .await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        http_client
+                            .get(&url)
+                            .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                            .send()
+                            .await
+                    })
                 });
 
                 match result {
@@ -817,8 +874,10 @@ impl WasmRuntime {
                         let status = response.status();
                         debug!("HTTP GET response status: {}", status);
 
-                        let body_result = runtime_handle.block_on(async {
-                            response.bytes().await
+                        let body_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                response.bytes().await
+                            })
                         });
 
                         match body_result {
@@ -910,9 +969,9 @@ impl WasmRuntime {
 
                 debug!("http_post called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -927,22 +986,17 @@ impl WasmRuntime {
                 let http_client = data.http_client.clone();
 
                 // Perform HTTP POST request
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    http_client
-                        .post(&url)
-                        .header("Content-Type", content_type)
-                        .body(body_bytes)
-                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
-                        .send()
-                        .await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        http_client
+                            .post(&url)
+                            .header("Content-Type", content_type)
+                            .body(body_bytes)
+                            .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                            .send()
+                            .await
+                    })
                 });
 
                 match result {
@@ -950,8 +1004,10 @@ impl WasmRuntime {
                         let status = response.status();
                         debug!("HTTP POST response status: {}", status);
 
-                        let body_result = runtime_handle.block_on(async {
-                            response.bytes().await
+                        let body_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                response.bytes().await
+                            })
                         });
 
                         match body_result {
@@ -1039,9 +1095,9 @@ impl WasmRuntime {
 
                 debug!("http_put called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -1056,22 +1112,17 @@ impl WasmRuntime {
                 let http_client = data.http_client.clone();
 
                 // Perform HTTP PUT request
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    http_client
-                        .put(&url)
-                        .header("Content-Type", content_type)
-                        .body(body_bytes)
-                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
-                        .send()
-                        .await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        http_client
+                            .put(&url)
+                            .header("Content-Type", content_type)
+                            .body(body_bytes)
+                            .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                            .send()
+                            .await
+                    })
                 });
 
                 match result {
@@ -1079,8 +1130,10 @@ impl WasmRuntime {
                         let status = response.status();
                         debug!("HTTP PUT response status: {}", status);
 
-                        let body_result = runtime_handle.block_on(async {
-                            response.bytes().await
+                        let body_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                response.bytes().await
+                            })
                         });
 
                         match body_result {
@@ -1139,9 +1192,9 @@ impl WasmRuntime {
 
                 debug!("http_delete called for URL: {}", url);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -1150,20 +1203,15 @@ impl WasmRuntime {
                 let http_client = data.http_client.clone();
 
                 // Perform HTTP DELETE request
-                let runtime_handle = match tokio::runtime::Handle::try_current() {
-                    Ok(h) => h,
-                    Err(_) => {
-                        error!("No tokio runtime available");
-                        return -1;
-                    }
-                };
-
-                let result = runtime_handle.block_on(async {
-                    http_client
-                        .delete(&url)
-                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
-                        .send()
-                        .await
+                // Use tokio::task::block_in_place to avoid nested block_on issues
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        http_client
+                            .delete(&url)
+                            .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                            .send()
+                            .await
+                    })
                 });
 
                 match result {
@@ -1171,8 +1219,10 @@ impl WasmRuntime {
                         let status = response.status();
                         debug!("HTTP DELETE response status: {}", status);
 
-                        let body_result = runtime_handle.block_on(async {
-                            response.bytes().await
+                        let body_result = tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                response.bytes().await
+                            })
                         });
 
                         match body_result {

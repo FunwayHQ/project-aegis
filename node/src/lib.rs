@@ -34,3 +34,10 @@ pub mod blocklist_persistence;
 
 // Sprint 13: Wasm Edge Functions Runtime & WAF Migration
 pub mod wasm_runtime;
+
+// Sprint 16: Route-based Dispatch for Wasm Modules
+pub mod route_config;
+pub mod module_dispatcher;
+
+// Sprint 17: IPFS/Filecoin Integration for Wasm Module Distribution
+pub mod ipfs_client;
