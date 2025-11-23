@@ -3,7 +3,7 @@ mod ebpf_loader;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use colored::Colorize;
-use ebpf_loader::{DDoSStats, EbpfLoader};
+use ebpf_loader::EbpfLoader;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -162,13 +162,11 @@ fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Re
     println!();
     println!(
         "{}",
-        "DDoS protection is now active on {}".bright_green(),
-        interface
+        format!("DDoS protection is now active on {}", interface).bright_green()
     );
     println!(
         "{}",
-        "SYN flood packets exceeding {} per second will be dropped".dimmed(),
-        threshold
+        format!("SYN flood packets exceeding {} per second will be dropped", threshold).dimmed()
     );
     println!();
     println!("{}", "Press Ctrl+C to detach and exit...".dimmed());
