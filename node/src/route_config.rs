@@ -198,6 +198,34 @@ impl RouteConfig {
         toml::from_str(toml).map_err(|e| anyhow::anyhow!("Failed to parse route config: {}", e))
     }
 
+    /// Load from YAML file
+    pub fn from_yaml_file(path: &str) -> anyhow::Result<Self> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read route config file '{}': {}", path, e))?;
+        Self::from_yaml(&contents)
+    }
+
+    /// Load from TOML file
+    pub fn from_toml_file(path: &str) -> anyhow::Result<Self> {
+        let contents = std::fs::read_to_string(path)
+            .map_err(|e| anyhow::anyhow!("Failed to read route config file '{}': {}", path, e))?;
+        Self::from_toml(&contents)
+    }
+
+    /// Load from file (auto-detect format based on extension)
+    pub fn from_file(path: &str) -> anyhow::Result<Self> {
+        if path.ends_with(".yaml") || path.ends_with(".yml") {
+            Self::from_yaml_file(path)
+        } else if path.ends_with(".toml") {
+            Self::from_toml_file(path)
+        } else {
+            Err(anyhow::anyhow!(
+                "Unsupported route config format for '{}'. Use .yaml, .yml, or .toml",
+                path
+            ))
+        }
+    }
+
     /// Find the best matching route for a request
     /// Returns the first route that matches, prioritized by priority field
     pub fn find_matching_route(&self, method: &str, path: &str, headers: &[(String, String)]) -> Option<&Route> {
@@ -613,5 +641,56 @@ module_id = "security-waf"
         assert!(matcher.matches("head"));
         assert!(matcher.matches("Options"));
         assert!(!matcher.matches("POST"));
+    }
+
+    #[test]
+    fn test_from_file_auto_detect() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Test YAML file
+        let yaml_content = r#"
+routes:
+  - name: test_route
+    path:
+      type: exact
+      pattern: "/test"
+    methods: ["GET"]
+    wasm_modules: []
+    priority: 0
+    enabled: true
+"#;
+        let mut yaml_file = NamedTempFile::new().unwrap();
+        let yaml_path = format!("{}.yaml", yaml_file.path().to_str().unwrap());
+        std::fs::write(&yaml_path, yaml_content).unwrap();
+
+        let config = RouteConfig::from_file(&yaml_path).unwrap();
+        assert_eq!(config.routes.len(), 1);
+        assert_eq!(config.routes[0].name, Some("test_route".to_string()));
+
+        std::fs::remove_file(&yaml_path).ok();
+
+        // Test .yml extension
+        let yml_path = format!("{}.yml", yaml_file.path().to_str().unwrap());
+        std::fs::write(&yml_path, yaml_content).unwrap();
+
+        let config = RouteConfig::from_file(&yml_path).unwrap();
+        assert_eq!(config.routes.len(), 1);
+
+        std::fs::remove_file(&yml_path).ok();
+    }
+
+    #[test]
+    fn test_from_file_unsupported_extension() {
+        let result = RouteConfig::from_file("config.json");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Unsupported route config format"));
+    }
+
+    #[test]
+    fn test_from_file_not_found() {
+        let result = RouteConfig::from_yaml_file("/nonexistent/path/routes.yaml");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to read"));
     }
 }
