@@ -1,6 +1,8 @@
 use crate::bot_management::{BotAction, BotManager};
 use crate::cache::{generate_cache_key, CacheClient, CacheControl};
 use crate::ip_extraction::{extract_client_ip, IpExtractionConfig};
+use crate::module_dispatcher::ModuleDispatcher;
+use crate::route_config::RouteConfig;
 use crate::wasm_runtime::{WasmRuntime, WasmExecutionContext};
 use async_trait::async_trait;
 use hyper::body::Bytes;
@@ -32,12 +34,16 @@ pub struct AegisProxy {
     pub caching_enabled: bool,
     /// Sprint 15.5: Wasm Runtime for WAF and Edge Functions (unified dispatch)
     pub wasm_runtime: Option<Arc<WasmRuntime>>,
-    /// Sprint 15.5: WAF module ID for Wasm execution
+    /// Sprint 15.5: WAF module ID for Wasm execution (legacy - use route_config instead)
     pub waf_module_id: Option<String>,
     /// Bot Management System (Sprint 9)
     pub bot_manager: Option<Arc<BotManager>>,
     /// IP extraction configuration (Sprint 12.5)
     pub ip_extraction_config: IpExtractionConfig,
+    /// Sprint 16: Route-based configuration for Wasm module dispatch
+    pub route_config: Option<Arc<RouteConfig>>,
+    /// Sprint 16: Module dispatcher for executing Wasm pipelines
+    pub module_dispatcher: Option<Arc<ModuleDispatcher>>,
 }
 
 impl AegisProxy {
@@ -105,6 +111,62 @@ impl AegisProxy {
             waf_module_id,
             bot_manager,
             ip_extraction_config: IpExtractionConfig::default(),
+            route_config: None,
+            module_dispatcher: None,
+        }
+    }
+
+    /// Sprint 16: Create proxy with route-based dispatch
+    pub fn new_with_routes(
+        origin: String,
+        cache_client: Option<Arc<tokio::sync::Mutex<CacheClient>>>,
+        cache_ttl: u64,
+        caching_enabled: bool,
+        wasm_runtime: Option<Arc<WasmRuntime>>,
+        route_config: Option<Arc<RouteConfig>>,
+        bot_manager: Option<Arc<BotManager>>,
+    ) -> Self {
+        // Parse origin address
+        let is_https = origin.starts_with("https://");
+        let mut origin_addr = origin.replace("http://", "").replace("https://", "");
+
+        let needs_port = if origin_addr.starts_with('[') {
+            !origin_addr.contains("]:")
+        } else {
+            !origin_addr.contains(':')
+        };
+
+        if needs_port {
+            if is_https {
+                origin_addr.push_str(":443");
+            } else {
+                origin_addr.push_str(":80");
+            }
+        }
+
+        // Create module dispatcher if we have both wasm_runtime and route_config
+        let module_dispatcher = if let (Some(runtime), Some(config)) = (&wasm_runtime, &route_config) {
+            let settings = config.settings.clone().unwrap_or_default();
+            Some(Arc::new(ModuleDispatcher::new(
+                Arc::clone(runtime),
+                cache_client.clone(),
+                settings,
+            )))
+        } else {
+            None
+        };
+
+        Self {
+            origin_addr,
+            cache_client,
+            cache_ttl,
+            caching_enabled,
+            wasm_runtime,
+            waf_module_id: None, // Use route_config instead
+            bot_manager,
+            ip_extraction_config: IpExtractionConfig::default(),
+            route_config,
+            module_dispatcher,
         }
     }
 }
@@ -218,7 +280,109 @@ impl ProxyHttp for AegisProxy {
         }
 
         // ============================================
-        // PHASE 1: WAF Analysis via Wasm Runtime (Sprint 15.5)
+        // PHASE 1: Sprint 16 Route-based Dispatch
+        // ============================================
+        if let (Some(route_config), Some(module_dispatcher)) = (&self.route_config, &self.module_dispatcher) {
+            let method = session.req_header().method.as_str();
+            let uri = session.req_header().uri.path();
+
+            // Collect headers for route matching
+            let headers: Vec<(String, String)> = session
+                .req_header()
+                .headers
+                .iter()
+                .map(|(k, v)| {
+                    (
+                        k.as_str().to_string(),
+                        v.to_str().unwrap_or("").to_string(),
+                    )
+                })
+                .collect();
+
+            // Find matching route
+            if let Some(route) = route_config.find_matching_route(method, uri, &headers) {
+                log::info!(
+                    "Route matched: '{}' for {} {}",
+                    route.name.as_deref().unwrap_or("unnamed"),
+                    method,
+                    uri
+                );
+
+                // Build execution context
+                let execution_context = WasmExecutionContext {
+                    request_method: method.to_string(),
+                    request_uri: uri.to_string(),
+                    request_headers: headers.clone(),
+                    request_body: ctx.request_body.clone(),
+                    response_status: None,
+                    response_headers: Vec::new(),
+                    response_body: Vec::new(),
+                    terminate_early: false,
+                };
+
+                // Execute pipeline
+                match module_dispatcher.execute_pipeline(route, execution_context) {
+                    Ok(pipeline_result) => {
+                        // Log execution times
+                        for (module_id, duration_us) in &pipeline_result.execution_times {
+                            log::debug!("Module '{}' executed in {}μs", module_id, duration_us);
+                        }
+
+                        if pipeline_result.blocked {
+                            // Request was blocked by pipeline (WAF or edge function)
+                            ctx.waf_blocked = true;
+                            log::error!(
+                                "Pipeline BLOCKED: {} {} (status: {})",
+                                method,
+                                uri,
+                                pipeline_result.status_code
+                            );
+
+                            // Send blocking response
+                            let mut header = pingora::http::ResponseHeader::build(
+                                pipeline_result.status_code,
+                                Some(3),
+                            )?;
+                            header.insert_header("Content-Type", "text/plain")?;
+                            session.write_response_header(Box::new(header), true).await?;
+                            session
+                                .write_response_body(Some(Bytes::from(pipeline_result.response_body)), true)
+                                .await?;
+
+                            // Return true to skip upstream
+                            return Ok(true);
+                        } else {
+                            log::info!(
+                                "Pipeline PASSED: {} {} ({} modules executed)",
+                                method,
+                                uri,
+                                pipeline_result.modules_executed
+                            );
+
+                            // Pipeline passed - update context with modifications
+                            // In future sprints, we could apply response modifications here
+                            // For now, just continue to cache/upstream
+                        }
+                    }
+                    Err(e) => {
+                        // Pipeline execution failed
+                        log::error!(
+                            "Pipeline execution error for {} {}: {} - allowing request (fail open)",
+                            method, uri, e
+                        );
+                        // Continue to cache/upstream (fail open)
+                    }
+                }
+
+                // Route matched and pipeline executed - skip legacy WAF logic
+                // Continue to cache lookup phase
+            } else {
+                log::debug!("No route matched for {} {}, using legacy WAF", method, uri);
+            }
+        }
+
+        // ============================================
+        // PHASE 1.5: Legacy WAF Analysis (Sprint 15.5) - fallback if no route matched
         // ============================================
         if let (Some(wasm_runtime), Some(waf_module_id)) = (&self.wasm_runtime, &self.waf_module_id) {
             let method = session.req_header().method.as_str();
