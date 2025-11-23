@@ -232,6 +232,99 @@ Execute Pipeline:
 Return 403 Forbidden → Skip remaining modules → Skip upstream
 ```
 
+### Sprint 17: IPFS/Filecoin Integration for Decentralized Module Distribution
+
+**Censorship-Resistant Content Addressing for Wasm Modules**
+
+Sprint 17 enables Wasm modules to be distributed via IPFS (InterPlanetary File System), eliminating single points of failure and enabling censorship-resistant edge logic deployment.
+
+**Core Components:**
+
+1. **IpfsClient** (`ipfs_client.rs`):
+   - Upload modules to IPFS and get Content ID (CID)
+   - Download modules by CID with integrity verification
+   - Pin/unpin modules to control garbage collection
+   - Local disk caching (~/.aegis/modules/) for performance
+   - Multi-tier CDN strategy (local cache → IPFS node → public gateways)
+
+2. **Public IPFS Gateway Fallback** (CDN functionality):
+   - Primary: Local IPFS daemon (http://127.0.0.1:5001)
+   - Fallback 1: Cloudflare IPFS (https://cloudflare-ipfs.com)
+   - Fallback 2: ipfs.io (https://ipfs.io)
+   - Fallback 3: dweb.link (https://dweb.link)
+   - Automatic failover ensures high availability
+
+3. **WasmRuntime Integration**:
+   - `load_module_from_ipfs(cid, module_type, ipfs_client)`
+   - Combines IPFS fetching with Ed25519 signature verification
+   - Seamless integration with existing module loading
+
+4. **Route Config Support**:
+   - Routes reference modules by IPFS CID instead of file paths
+   - GitOps-friendly: CIDs in YAML config files
+   - Version control via content addressing
+
+**Example Usage:**
+
+```yaml
+# Route configuration with IPFS CIDs
+routes:
+  - name: api_waf
+    wasm_modules:
+      - type: waf
+        module_id: waf-v1
+        ipfs_cid: QmWafModuleCID123abc
+        required_public_key: ed25519_pubkey_hex
+```
+
+**Module Distribution Flow:**
+
+```
+Developer → Build Wasm → Upload to IPFS → Get CID (QmXxx...)
+                              ↓
+                    Update route config with CID
+                              ↓
+Edge Nodes → Load by CID → Multi-tier fetch:
+                              1. Check local cache (~/.aegis/modules/)
+                              2. Try local IPFS node
+                              3. Fallback to public gateways (CDN)
+                              ↓
+                    Verify CID integrity + Ed25519 signature
+                              ↓
+                    Cache locally → Load into WasmRuntime → Execute
+```
+
+**Key Advantages:**
+
+- **Censorship Resistance**: No central server can block module distribution
+- **Content Verification**: CID guarantees integrity (hash of content)
+- **High Availability**: Multi-tier CDN strategy with public gateway fallback
+- **Bandwidth Efficiency**: Local caching reduces IPFS fetches
+- **Decentralization**: Aligns with project's core mission
+- **Version Control**: CIDs provide immutable versioning
+
+**Security Features:**
+
+1. **Size Validation**: Max 10MB per module
+2. **CID Verification**: Downloaded content must match CID
+3. **Signature Verification**: Ed25519 signatures (from Sprint 15)
+4. **HTTPS-Only Gateways**: All public gateway requests use HTTPS
+5. **Timeout Protection**: 30s max download time
+
+**Resource Management:**
+
+- Local cache directory: `~/.aegis/modules/<cid>.wasm`
+- Cache statistics API: `cache_stats()` returns count and size
+- Cache clearing: `clear_cache()` for maintenance
+- LRU eviction (planned): Auto-remove old modules when cache > 1GB
+
+**Testing:**
+
+- 11 comprehensive tests covering all functionality
+- 7 tests pass without external dependencies
+- 4 tests require IPFS daemon (marked `#[ignore]`)
+- End-to-end workflow test validates complete integration
+
 ## Development Phases
 
 ### Phase 1: Foundation & Core Node (Sprints 1-6) ✅ COMPLETE
@@ -249,13 +342,13 @@ Return 403 Forbidden → Skip remaining modules → Skip upstream
 - ✅ **Sprint 11:** CRDTs + NATS JetStream (G-Counter, distributed rate limiter) - 24 tests
 - ✅ **Sprint 12:** Verifiable Analytics (Ed25519 signatures, SQLite, HTTP API) - 17 tests
 
-### Phase 3: Edge Compute & Governance (Sprints 13-18) - 🚧 IN PROGRESS (25%)
+### Phase 3: Edge Compute & Governance (Sprints 13-18) - 🚧 IN PROGRESS (83%)
 - ✅ **Sprint 13:** Wasm Edge Functions Runtime (custom logic at edge, host API for cache/HTTP)
 - ✅ **Sprint 14:** Extended Host API (DragonflyDB cache ops, controlled HTTP requests)
 - ✅ **Sprint 15:** WAF Migration to Wasm + Ed25519 Module Signatures
 - ✅ **Sprint 15.5:** Architectural Cleanup (PN-Counter migration, HTTPS-only enforcement)
 - ✅ **Sprint 16:** Route-based Dispatch (YAML/TOML config, module pipelines) - 156 tests
-- 🚧 **Sprint 17:** IPFS/Filecoin integration for Wasm module distribution
+- ✅ **Sprint 17:** IPFS/Filecoin Integration (CDN fallback, local caching) - 11 tests
 - 🚧 **Sprint 18:** DAO governance smart contracts (proposals, voting, treasury)
 
 ### Phase 4: Optimization & Launch (Sprints 19-24)

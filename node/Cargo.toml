@@ -65,6 +65,10 @@ base64 = "0.22"  # Base64 encoding for signatures
 hex = "0.4"  # Hex encoding utilities
 rand = "0.8"  # Random number generation for key generation
 
+# IPFS/Filecoin Integration (Sprint 17)
+ipfs-api-backend-hyper = { version = "0.6", features = ["with-hyper-rustls"] }  # IPFS HTTP API client
+sha2 = "0.10"  # SHA-256 hashing for CID verification
+
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }

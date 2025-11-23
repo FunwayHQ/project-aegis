@@ -382,6 +382,76 @@ impl WasmRuntime {
         Ok(())
     }
 
+    /// Sprint 17: Load Wasm module from IPFS by CID
+    ///
+    /// This method downloads a module from IPFS and loads it into the runtime.
+    /// It uses a multi-tier CDN strategy:
+    /// 1. Local cache
+    /// 2. Local IPFS node
+    /// 3. Public IPFS gateways (CDN fallback)
+    ///
+    /// # Arguments
+    /// * `module_id` - Unique identifier for the module
+    /// * `ipfs_cid` - IPFS Content Identifier (e.g., "QmXxx...")
+    /// * `module_type` - Type of module (WAF or EdgeFunction)
+    /// * `ipfs_client` - Shared IPFS client instance
+    /// * `signature` - Optional Ed25519 signature for verification
+    /// * `public_key` - Optional Ed25519 public key for verification
+    ///
+    /// # Example
+    /// ```ignore
+    /// use std::sync::Arc;
+    /// use aegis_node::ipfs_client::IpfsClient;
+    /// use aegis_node::wasm_runtime::{WasmRuntime, WasmModuleType};
+    ///
+    /// let runtime = WasmRuntime::new()?;
+    /// let ipfs_client = Arc::new(IpfsClient::new()?);
+    ///
+    /// runtime.load_module_from_ipfs(
+    ///     "waf-v1",
+    ///     "QmWafModuleCID123...",
+    ///     WasmModuleType::Waf,
+    ///     ipfs_client,
+    ///     None,
+    ///     None,
+    /// ).await?;
+    /// ```
+    pub async fn load_module_from_ipfs(
+        &self,
+        module_id: &str,
+        ipfs_cid: &str,
+        module_type: WasmModuleType,
+        ipfs_client: std::sync::Arc<crate::ipfs_client::IpfsClient>,
+        signature: Option<String>,
+        public_key: Option<String>,
+    ) -> Result<()> {
+        info!("Loading Wasm module from IPFS: {} (CID: {})", module_id, ipfs_cid);
+
+        // Fetch module from IPFS (with CDN fallback)
+        let wasm_bytes = ipfs_client
+            .fetch_module(ipfs_cid)
+            .await
+            .context(format!("Failed to fetch module {} from IPFS", ipfs_cid))?;
+
+        info!(
+            "Successfully fetched module {} from IPFS ({} bytes)",
+            ipfs_cid,
+            wasm_bytes.len()
+        );
+
+        // Load module with signature verification if provided
+        self.load_module_from_bytes_with_signature(
+            module_id,
+            &wasm_bytes,
+            module_type,
+            Some(ipfs_cid.to_string()),
+            signature,
+            public_key,
+        )?;
+
+        Ok(())
+    }
+
     /// Execute WAF analysis in Wasm sandbox
     pub fn execute_waf(
         &self,
