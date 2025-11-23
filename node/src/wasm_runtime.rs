@@ -92,7 +92,10 @@ const WAF_EXECUTION_TIMEOUT_MS: u64 = 10;
 const EDGE_FUNCTION_TIMEOUT_MS: u64 = 50;
 
 /// Maximum memory for Wasm modules (10MB for WAF, 50MB for edge functions)
+/// Note: Currently unused, but reserved for future memory governance implementation
+#[allow(dead_code)]
 const WAF_MEMORY_LIMIT_BYTES: usize = 10 * 1024 * 1024;
+#[allow(dead_code)]
 const EDGE_FUNCTION_MEMORY_LIMIT_BYTES: usize = 50 * 1024 * 1024;
 
 /// Sprint 14: HTTP request limits for edge functions
@@ -785,9 +788,9 @@ impl WasmRuntime {
 
                 debug!("http_get called for URL: {}", url);
 
-                // Validate URL (basic security check)
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -910,9 +913,9 @@ impl WasmRuntime {
 
                 debug!("http_post called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -1039,9 +1042,9 @@ impl WasmRuntime {
 
                 debug!("http_put called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
@@ -1139,9 +1142,9 @@ impl WasmRuntime {
 
                 debug!("http_delete called for URL: {}", url);
 
-                // Validate URL
-                if !url.starts_with("http://") && !url.starts_with("https://") {
-                    error!("Invalid URL scheme: {}", url);
+                // Security fix: HTTPS-only validation
+                if !url.starts_with("https://") {
+                    error!("Invalid URL scheme (HTTPS required): {}", url);
                     return -1;
                 }
 
