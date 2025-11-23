@@ -101,6 +101,15 @@ const MAX_HTTP_RESPONSE_SIZE: usize = 1024 * 1024; // 1MB max response size
 const MAX_CACHE_KEY_SIZE: usize = 256; // Max cache key length
 const MAX_CACHE_VALUE_SIZE: usize = 1024 * 1024; // 1MB max cache value
 
+/// Security fix: Max body size for HTTP POST/PUT/DELETE (1MB)
+const MAX_HTTP_REQUEST_BODY_SIZE: usize = 1024 * 1024;
+
+/// Security fix: Validate header value for CRLF injection
+/// Returns true if the header value is safe (no CR or LF characters)
+fn is_header_value_safe(value: &str) -> bool {
+    !value.contains('\r') && !value.contains('\n')
+}
+
 /// Wasm module type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasmModuleType {
@@ -837,6 +846,360 @@ impl WasmRuntime {
             },
         )?;
 
+        // ============================================
+        // Security fix: HTTP POST/PUT/DELETE support with body size limits
+        // ============================================
+
+        // Host function: http_post(url_ptr, url_len, body_ptr, body_len, content_type_ptr, content_type_len) -> i32
+        // Returns the length of the response (stored in shared buffer), or -1 on error
+        linker.func_wrap(
+            "env",
+            "http_post",
+            |mut caller: Caller<EdgeFunctionStoreData>,
+             url_ptr: u32, url_len: u32,
+             body_ptr: u32, body_len: u32,
+             content_type_ptr: u32, content_type_len: u32| -> i32 {
+                // Validate body size
+                if body_len as usize > MAX_HTTP_REQUEST_BODY_SIZE {
+                    error!("HTTP POST body too large: {} bytes (max: {})", body_len, MAX_HTTP_REQUEST_BODY_SIZE);
+                    return -1;
+                }
+
+                // Read URL, body, and content-type from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut url_bytes = vec![0u8; url_len as usize];
+                if memory.read(&caller, url_ptr as usize, &mut url_bytes).is_err() {
+                    error!("Failed to read URL from Wasm memory");
+                    return -1;
+                }
+
+                let mut body_bytes = vec![0u8; body_len as usize];
+                if memory.read(&caller, body_ptr as usize, &mut body_bytes).is_err() {
+                    error!("Failed to read body from Wasm memory");
+                    return -1;
+                }
+
+                let mut content_type_bytes = vec![0u8; content_type_len as usize];
+                if memory.read(&caller, content_type_ptr as usize, &mut content_type_bytes).is_err() {
+                    error!("Failed to read content-type from Wasm memory");
+                    return -1;
+                }
+
+                let url = match String::from_utf8(url_bytes) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in URL");
+                        return -1;
+                    }
+                };
+
+                let content_type = match String::from_utf8(content_type_bytes) {
+                    Ok(ct) => ct,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in content-type");
+                        return -1;
+                    }
+                };
+
+                debug!("http_post called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
+
+                // Validate URL
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    error!("Invalid URL scheme: {}", url);
+                    return -1;
+                }
+
+                // Validate content-type (basic check)
+                if content_type.is_empty() {
+                    error!("Content-Type is required for POST requests");
+                    return -1;
+                }
+
+                // Access HTTP client from store data
+                let data = caller.data_mut();
+                let http_client = data.http_client.clone();
+
+                // Perform HTTP POST request
+                let runtime_handle = match tokio::runtime::Handle::try_current() {
+                    Ok(h) => h,
+                    Err(_) => {
+                        error!("No tokio runtime available");
+                        return -1;
+                    }
+                };
+
+                let result = runtime_handle.block_on(async {
+                    http_client
+                        .post(&url)
+                        .header("Content-Type", content_type)
+                        .body(body_bytes)
+                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                        .send()
+                        .await
+                });
+
+                match result {
+                    Ok(response) => {
+                        let status = response.status();
+                        debug!("HTTP POST response status: {}", status);
+
+                        let body_result = runtime_handle.block_on(async {
+                            response.bytes().await
+                        });
+
+                        match body_result {
+                            Ok(body) => {
+                                if body.len() > MAX_HTTP_RESPONSE_SIZE {
+                                    warn!("HTTP response too large: {} bytes", body.len());
+                                    return -1;
+                                }
+
+                                let data = caller.data_mut();
+                                *try_write_lock!(data.shared_buffer, -1) = body.to_vec();
+                                body.len() as i32
+                            }
+                            Err(e) => {
+                                error!("Failed to read HTTP response body: {}", e);
+                                -1
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("HTTP POST error: {}", e);
+                        -1
+                    }
+                }
+            },
+        )?;
+
+        // Host function: http_put(url_ptr, url_len, body_ptr, body_len, content_type_ptr, content_type_len) -> i32
+        // Returns the length of the response (stored in shared buffer), or -1 on error
+        linker.func_wrap(
+            "env",
+            "http_put",
+            |mut caller: Caller<EdgeFunctionStoreData>,
+             url_ptr: u32, url_len: u32,
+             body_ptr: u32, body_len: u32,
+             content_type_ptr: u32, content_type_len: u32| -> i32 {
+                // Validate body size
+                if body_len as usize > MAX_HTTP_REQUEST_BODY_SIZE {
+                    error!("HTTP PUT body too large: {} bytes (max: {})", body_len, MAX_HTTP_REQUEST_BODY_SIZE);
+                    return -1;
+                }
+
+                // Read URL, body, and content-type from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut url_bytes = vec![0u8; url_len as usize];
+                if memory.read(&caller, url_ptr as usize, &mut url_bytes).is_err() {
+                    error!("Failed to read URL from Wasm memory");
+                    return -1;
+                }
+
+                let mut body_bytes = vec![0u8; body_len as usize];
+                if memory.read(&caller, body_ptr as usize, &mut body_bytes).is_err() {
+                    error!("Failed to read body from Wasm memory");
+                    return -1;
+                }
+
+                let mut content_type_bytes = vec![0u8; content_type_len as usize];
+                if memory.read(&caller, content_type_ptr as usize, &mut content_type_bytes).is_err() {
+                    error!("Failed to read content-type from Wasm memory");
+                    return -1;
+                }
+
+                let url = match String::from_utf8(url_bytes) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in URL");
+                        return -1;
+                    }
+                };
+
+                let content_type = match String::from_utf8(content_type_bytes) {
+                    Ok(ct) => ct,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in content-type");
+                        return -1;
+                    }
+                };
+
+                debug!("http_put called for URL: {} (body size: {}, content-type: {})", url, body_len, content_type);
+
+                // Validate URL
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    error!("Invalid URL scheme: {}", url);
+                    return -1;
+                }
+
+                // Validate content-type
+                if content_type.is_empty() {
+                    error!("Content-Type is required for PUT requests");
+                    return -1;
+                }
+
+                // Access HTTP client from store data
+                let data = caller.data_mut();
+                let http_client = data.http_client.clone();
+
+                // Perform HTTP PUT request
+                let runtime_handle = match tokio::runtime::Handle::try_current() {
+                    Ok(h) => h,
+                    Err(_) => {
+                        error!("No tokio runtime available");
+                        return -1;
+                    }
+                };
+
+                let result = runtime_handle.block_on(async {
+                    http_client
+                        .put(&url)
+                        .header("Content-Type", content_type)
+                        .body(body_bytes)
+                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                        .send()
+                        .await
+                });
+
+                match result {
+                    Ok(response) => {
+                        let status = response.status();
+                        debug!("HTTP PUT response status: {}", status);
+
+                        let body_result = runtime_handle.block_on(async {
+                            response.bytes().await
+                        });
+
+                        match body_result {
+                            Ok(body) => {
+                                if body.len() > MAX_HTTP_RESPONSE_SIZE {
+                                    warn!("HTTP response too large: {} bytes", body.len());
+                                    return -1;
+                                }
+
+                                let data = caller.data_mut();
+                                *try_write_lock!(data.shared_buffer, -1) = body.to_vec();
+                                body.len() as i32
+                            }
+                            Err(e) => {
+                                error!("Failed to read HTTP response body: {}", e);
+                                -1
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("HTTP PUT error: {}", e);
+                        -1
+                    }
+                }
+            },
+        )?;
+
+        // Host function: http_delete(url_ptr, url_len) -> i32
+        // Returns the length of the response (stored in shared buffer), or -1 on error
+        linker.func_wrap(
+            "env",
+            "http_delete",
+            |mut caller: Caller<EdgeFunctionStoreData>, url_ptr: u32, url_len: u32| -> i32 {
+                // Read URL from Wasm memory
+                let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
+                    Some(m) => m,
+                    None => {
+                        error!("Failed to get Wasm memory");
+                        return -1;
+                    }
+                };
+
+                let mut url_bytes = vec![0u8; url_len as usize];
+                if memory.read(&caller, url_ptr as usize, &mut url_bytes).is_err() {
+                    error!("Failed to read URL from Wasm memory");
+                    return -1;
+                }
+
+                let url = match String::from_utf8(url_bytes) {
+                    Ok(u) => u,
+                    Err(_) => {
+                        error!("Invalid UTF-8 in URL");
+                        return -1;
+                    }
+                };
+
+                debug!("http_delete called for URL: {}", url);
+
+                // Validate URL
+                if !url.starts_with("http://") && !url.starts_with("https://") {
+                    error!("Invalid URL scheme: {}", url);
+                    return -1;
+                }
+
+                // Access HTTP client from store data
+                let data = caller.data_mut();
+                let http_client = data.http_client.clone();
+
+                // Perform HTTP DELETE request
+                let runtime_handle = match tokio::runtime::Handle::try_current() {
+                    Ok(h) => h,
+                    Err(_) => {
+                        error!("No tokio runtime available");
+                        return -1;
+                    }
+                };
+
+                let result = runtime_handle.block_on(async {
+                    http_client
+                        .delete(&url)
+                        .timeout(Duration::from_millis(MAX_HTTP_REQUEST_TIMEOUT_MS))
+                        .send()
+                        .await
+                });
+
+                match result {
+                    Ok(response) => {
+                        let status = response.status();
+                        debug!("HTTP DELETE response status: {}", status);
+
+                        let body_result = runtime_handle.block_on(async {
+                            response.bytes().await
+                        });
+
+                        match body_result {
+                            Ok(body) => {
+                                if body.len() > MAX_HTTP_RESPONSE_SIZE {
+                                    warn!("HTTP response too large: {} bytes", body.len());
+                                    return -1;
+                                }
+
+                                let data = caller.data_mut();
+                                *try_write_lock!(data.shared_buffer, -1) = body.to_vec();
+                                body.len() as i32
+                            }
+                            Err(e) => {
+                                error!("Failed to read HTTP response body: {}", e);
+                                -1
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("HTTP DELETE error: {}", e);
+                        -1
+                    }
+                }
+            },
+        )?;
+
         // Host function: get_shared_buffer(dest_ptr, offset, length) -> i32
         // Copies data from shared buffer to Wasm memory
         // Returns number of bytes copied, or -1 on error
@@ -1074,6 +1437,12 @@ impl WasmRuntime {
                     }
                 };
 
+                // Security fix: Validate header value for CRLF injection
+                if !is_header_value_safe(&header_value) {
+                    error!("Header value contains CRLF characters (injection attempt): {}", header_name);
+                    return -1;
+                }
+
                 // Update response headers in execution context
                 let data = caller.data_mut();
                 let mut context = try_write_lock!(data.execution_context, -1);
@@ -1134,6 +1503,12 @@ impl WasmRuntime {
                         return -1;
                     }
                 };
+
+                // Security fix: Validate header value for CRLF injection
+                if !is_header_value_safe(&header_value) {
+                    error!("Header value contains CRLF characters (injection attempt): {}", header_name);
+                    return -1;
+                }
 
                 // Add header to execution context (allows duplicates)
                 let data = caller.data_mut();
@@ -1445,5 +1820,25 @@ mod tests {
             Some(public_key_hex),
         );
         assert!(result.is_err(), "Should fail with invalid signature");
+    }
+
+    // ============================================
+    // Security Fix Tests
+    // ============================================
+
+    #[test]
+    fn test_header_value_safety_check() {
+        // Valid header values
+        assert!(is_header_value_safe("Normal-Value"));
+        assert!(is_header_value_safe("Value with spaces"));
+        assert!(is_header_value_safe("session=abc123; HttpOnly; Secure"));
+        assert!(is_header_value_safe(""));
+
+        // Invalid header values with CRLF characters
+        assert!(!is_header_value_safe("Value\r\nX-Injected: malicious"));
+        assert!(!is_header_value_safe("Value\n"));
+        assert!(!is_header_value_safe("Value\r"));
+        assert!(!is_header_value_safe("\r\nEvil-Header: true"));
+        assert!(!is_header_value_safe("normal\nvalue"));
     }
 }
