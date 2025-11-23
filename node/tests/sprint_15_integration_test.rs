@@ -8,7 +8,7 @@
 /// These tests use inline WAT (WebAssembly Text Format) to create test modules
 /// that exercise all the new host functions.
 
-use node::wasm_runtime::{WasmRuntime, WasmModuleType, WasmExecutionContext, EdgeFunctionResult};
+use aegis_node::wasm_runtime::{WasmRuntime, WasmModuleType, WasmExecutionContext, EdgeFunctionResult};
 use anyhow::Result;
 
 /// Helper function to create a simple WAT module that tests request context access

@@ -182,15 +182,16 @@ impl DistributedRateLimiter {
         }
     }
 
-    /// Sprint 13.5: Start background CRDT compaction task
-    /// Periodically compacts G-Counters to prevent unbounded memory growth
-    /// from accumulating actor IDs over time
+    /// Sprint 15.5: Start background CRDT compaction task (PN-Counter based)
+    /// Periodically compacts PN-Counters to prevent unbounded memory growth
+    /// Uses PN-Counter's decrement capability for mathematically sound compaction
+    /// that maintains CRDT convergence guarantees (unlike manual state replacement)
     pub fn start_compaction_task(&mut self, compact_interval_secs: u64) {
         let windows = self.windows.clone();
         let compact_interval = Duration::from_secs(compact_interval_secs);
 
         info!(
-            "Starting CRDT compaction task (interval: {}s)",
+            "Starting PN-Counter compaction task (interval: {}s)",
             compact_interval_secs
         );
 
@@ -210,12 +211,14 @@ impl DistributedRateLimiter {
                             if let Ok(size) = window.counter.estimated_size() {
                                 // Compact if size > 1KB (indicates many actors)
                                 if size > 1024 {
+                                    // Sprint 15.5: PN-Counter compaction uses decrements
+                                    // to reduce stale actors to 0, maintaining CRDT semantics
                                     if let Err(e) = window.counter.compact() {
-                                        warn!("Failed to compact counter for {}: {}", resource_id, e);
+                                        warn!("Failed to compact PN-Counter for {}: {}", resource_id, e);
                                     } else {
                                         total_compacted += 1;
                                         debug!(
-                                            "Compacted counter for {} (size was {} bytes)",
+                                            "Compacted PN-Counter for {} (size was {} bytes)",
                                             resource_id, size
                                         );
                                     }
@@ -225,7 +228,7 @@ impl DistributedRateLimiter {
 
                         if total_compacted > 0 {
                             info!(
-                                "Compaction completed: compacted {} counters across {} resources",
+                                "PN-Counter compaction completed: compacted {} counters across {} resources",
                                 total_compacted,
                                 windows_guard.len()
                             );

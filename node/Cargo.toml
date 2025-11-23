@@ -36,6 +36,8 @@ async-trait = "0.1"
 futures = "0.3"
 regex = "1.10"
 url = "2.5"  # URL parsing for query parameters
+clap = { version = "4.5", features = ["derive"] }  # CLI argument parsing
+colored = "2.1"  # Terminal color output
 
 # Cache - Redis/DragonflyDB client
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }

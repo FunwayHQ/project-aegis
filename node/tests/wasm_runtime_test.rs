@@ -107,6 +107,9 @@ fn test_wasm_module_type() {
         version: "1.0.0".to_string(),
         ipfs_cid: Some("QmTest123".to_string()),
         loaded_at: std::time::Instant::now(),
+        signature: None,
+        public_key: None,
+        signature_verified: false,
     };
 
     assert_eq!(metadata.module_type, Waf);
