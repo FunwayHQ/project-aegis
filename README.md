@@ -341,7 +341,7 @@ We welcome contributions from the community! AEGIS is open-source and thrives on
 
 ```bash
 # Clone the repository
-git clone https://github.com/aegis-network/aegis.git
+git clone https://github.com/FunwayHQ/project-aegis.git
 cd aegis
 
 # Install Rust dependencies
