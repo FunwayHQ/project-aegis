@@ -102,6 +102,42 @@ pub mod dao {
         Ok(())
     }
 
+    /// Close the DAO config account (returns rent to authority)
+    /// WARNING: This is destructive and should only be used for migration/cleanup
+    pub fn close_dao_config(ctx: Context<CloseDaoConfig>) -> Result<()> {
+        let dao_config = &ctx.accounts.dao_config;
+        let authority = &ctx.accounts.authority;
+
+        // Verify the account is owned by this program
+        require!(
+            dao_config.owner == &crate::ID,
+            DaoError::UnauthorizedAuthority
+        );
+
+        // Transfer lamports from dao_config to authority
+        let lamports = dao_config.lamports();
+        **dao_config.try_borrow_mut_lamports()? = 0;
+        **authority.try_borrow_mut_lamports()? = authority
+            .lamports()
+            .checked_add(lamports)
+            .ok_or(DaoError::Overflow)?;
+
+        // Zero out the account data to mark it as closed
+        dao_config.try_borrow_mut_data()?.fill(0);
+
+        // Assign to system program to fully close
+        dao_config.assign(&anchor_lang::system_program::ID);
+
+        msg!("DAO config closed, {} lamports returned to authority", lamports);
+
+        emit!(DaoConfigClosedEvent {
+            authority: ctx.accounts.authority.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
     /// Queue a DAO config update (subject to timelock)
     pub fn queue_config_update(
         ctx: Context<QueueConfigUpdate>,
@@ -1233,6 +1269,24 @@ pub struct InitializeDao<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// Close DAO configuration (for migration/cleanup)
+#[derive(Accounts)]
+pub struct CloseDaoConfig<'info> {
+    #[account(
+        mut,
+        seeds = [b"dao_config"],
+        bump
+    )]
+    /// CHECK: We intentionally don't deserialize the old account since it may have incompatible structure.
+    /// This is safe because we only transfer lamports and zero the account data.
+    pub dao_config: AccountInfo<'info>,
+
+    #[account(mut)]
+    pub authority: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
 /// Queue DAO configuration update (with timelock)
 #[derive(Accounts)]
 pub struct QueueConfigUpdate<'info> {
@@ -1675,6 +1729,12 @@ pub struct DaoInitializedEvent {
     pub treasury: Pubkey,
     pub voting_period: i64,
     pub proposal_bond: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct DaoConfigClosedEvent {
+    pub authority: Pubkey,
     pub timestamp: i64,
 }
 
