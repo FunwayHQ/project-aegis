@@ -308,6 +308,11 @@ pub struct InitializeOperatorRewards<'info> {
 /// Record performance
 #[derive(Accounts)]
 pub struct RecordPerformance<'info> {
+    /// SECURITY FIX: Added has_one constraint to verify authority matches reward_pool.authority
+    /// This prevents unauthorized users from reporting fake performance metrics
+    #[account(
+        has_one = authority @ RewardsError::UnauthorizedAuthority
+    )]
     pub reward_pool: Account<'info, RewardPool>,
 
     #[account(
@@ -317,7 +322,8 @@ pub struct RecordPerformance<'info> {
     )]
     pub operator_rewards: Account<'info, OperatorRewards>,
 
-    /// Authority that can record performance (oracle/validator)
+    /// SECURITY FIX: Authority that can record performance (oracle/validator)
+    /// Must match reward_pool.authority - enforced by has_one constraint above
     pub authority: Signer<'info>,
 }
 

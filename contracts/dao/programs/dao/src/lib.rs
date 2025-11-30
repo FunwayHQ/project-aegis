@@ -33,6 +33,9 @@ const MAX_DESCRIPTION_CID_LENGTH: usize = 64;
 /// Timelock delay for config changes (48 hours)
 const CONFIG_TIMELOCK_DELAY: i64 = 48 * 60 * 60;
 
+/// PDA seeds for vote vault
+const VOTE_VAULT_SEED: &[u8] = b"vote_vault";
+
 #[program]
 pub mod dao {
     use super::*;
@@ -69,6 +72,7 @@ pub mod dao {
         dao_config.treasury = ctx.accounts.treasury.key();
         dao_config.governance_token_mint = ctx.accounts.governance_token_mint.key();
         dao_config.bond_escrow = ctx.accounts.bond_escrow.key();
+        dao_config.vote_vault = ctx.accounts.vote_vault.key();
         dao_config.voting_period = voting_period;
         dao_config.proposal_bond = proposal_bond;
         dao_config.quorum_percentage = quorum_percentage;
@@ -376,10 +380,25 @@ pub mod dao {
         Ok(())
     }
 
-    /// Register vote weight snapshot for a voter (must be done before voting)
-    pub fn register_vote_snapshot(ctx: Context<RegisterVoteSnapshot>) -> Result<()> {
+    /// SECURITY FIX: Deposit tokens to vote vault (Vote Escrow Pattern)
+    ///
+    /// This replaces the vulnerable `register_vote_snapshot` function.
+    /// Instead of just recording a balance snapshot, tokens are TRANSFERRED
+    /// to a PDA-owned vault, preventing:
+    /// 1. Double voting (can't transfer tokens to another wallet and vote again)
+    /// 2. Flash loan attacks (borrowed tokens are locked until proposal ends)
+    ///
+    /// Tokens are locked until EITHER:
+    /// - The proposal's vote_end time has passed, OR
+    /// - The voter retracts their vote (which removes their vote weight)
+    pub fn deposit_vote_tokens(
+        ctx: Context<DepositVoteTokens>,
+        amount: u64,
+    ) -> Result<()> {
         let proposal = &ctx.accounts.proposal;
         let clock = Clock::get()?;
+
+        require!(amount > 0, DaoError::InvalidAmount);
 
         // Check proposal is active
         require!(
@@ -393,39 +412,52 @@ pub mod dao {
             DaoError::VotingNotActive
         );
 
-        // Get voter's token balance at this point
-        let vote_weight = ctx.accounts.voter_token_account.amount;
+        // Transfer tokens from voter to vote vault (ESCROW)
+        // This is the key security fix - tokens are now LOCKED, not just read
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.voter_token_account.to_account_info(),
+            to: ctx.accounts.vote_vault.to_account_info(),
+            authority: ctx.accounts.voter.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        token::transfer(cpi_ctx, amount)?;
 
-        // Initialize snapshot record
-        let snapshot = &mut ctx.accounts.vote_snapshot;
-        snapshot.proposal_id = proposal.proposal_id;
-        snapshot.voter = ctx.accounts.voter.key();
-        snapshot.vote_weight = vote_weight;
-        snapshot.registered_at = clock.unix_timestamp;
-        snapshot.has_voted = false;
-        snapshot.bump = ctx.bumps.vote_snapshot;
+        // Initialize vote escrow record
+        let vote_escrow = &mut ctx.accounts.vote_escrow;
+        vote_escrow.proposal_id = proposal.proposal_id;
+        vote_escrow.voter = ctx.accounts.voter.key();
+        vote_escrow.deposited_amount = amount;
+        vote_escrow.deposited_at = clock.unix_timestamp;
+        vote_escrow.has_voted = false;
+        vote_escrow.vote_choice = None;
+        vote_escrow.withdrawn = false;
+        vote_escrow.bump = ctx.bumps.vote_escrow;
 
         msg!(
-            "Vote snapshot registered for proposal {}: voter={}, weight={}",
+            "Vote tokens deposited for proposal {}: voter={}, amount={}",
             proposal.proposal_id,
-            snapshot.voter,
-            vote_weight
+            vote_escrow.voter,
+            amount
         );
 
-        emit!(VoteSnapshotRegisteredEvent {
+        emit!(VoteTokensDepositedEvent {
             proposal_id: proposal.proposal_id,
-            voter: snapshot.voter,
-            vote_weight,
+            voter: vote_escrow.voter,
+            amount,
             timestamp: clock.unix_timestamp,
         });
 
         Ok(())
     }
 
-    /// Cast a vote on a proposal (requires prior snapshot registration)
+    /// SECURITY FIX: Cast a vote using escrowed tokens
+    ///
+    /// Vote weight is determined by the tokens locked in the vote escrow,
+    /// not by current wallet balance. This prevents flash loan attacks.
     pub fn cast_vote(ctx: Context<CastVote>, vote_choice: VoteChoice) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
-        let vote_snapshot = &mut ctx.accounts.vote_snapshot;
+        let vote_escrow = &mut ctx.accounts.vote_escrow;
         let clock = Clock::get()?;
 
         // Check proposal is active
@@ -444,11 +476,12 @@ pub mod dao {
             DaoError::VotingEnded
         );
 
-        // Check voter hasn't already voted (snapshot-based double-vote prevention)
-        require!(!vote_snapshot.has_voted, DaoError::AlreadyVoted);
+        // Check voter hasn't already voted (escrow-based double-vote prevention)
+        require!(!vote_escrow.has_voted, DaoError::AlreadyVoted);
 
-        // Get vote weight from snapshot (prevents flash loan attacks!)
-        let vote_weight = vote_snapshot.vote_weight;
+        // SECURITY FIX: Get vote weight from ESCROWED tokens (prevents flash loan attacks!)
+        // The voter had to lock these tokens before voting, so they can't borrow and return
+        let vote_weight = vote_escrow.deposited_amount;
         require!(vote_weight > 0, DaoError::NoVotingPower);
 
         // Initialize vote record
@@ -460,10 +493,11 @@ pub mod dao {
         vote_record.voted_at = clock.unix_timestamp;
         vote_record.bump = ctx.bumps.vote_record;
 
-        // Mark snapshot as used
-        vote_snapshot.has_voted = true;
+        // Mark escrow as used and record vote choice
+        vote_escrow.has_voted = true;
+        vote_escrow.vote_choice = Some(vote_choice);
 
-        // Update proposal vote counts (using u128 internally to prevent overflow)
+        // Update proposal vote counts
         match vote_choice {
             VoteChoice::For => {
                 proposal.for_votes = proposal
@@ -498,6 +532,146 @@ pub mod dao {
             voter: vote_record.voter,
             vote_choice,
             vote_weight,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// SECURITY FIX: Retract a vote and allow token withdrawal
+    ///
+    /// This allows voters to change their mind before the voting period ends.
+    /// When a vote is retracted:
+    /// 1. The vote weight is removed from the proposal's vote counts
+    /// 2. The vote_escrow is updated to allow withdrawal
+    /// 3. The vote_record is closed (rent returned to voter)
+    pub fn retract_vote(ctx: Context<RetractVote>) -> Result<()> {
+        let proposal = &mut ctx.accounts.proposal;
+        let vote_escrow = &mut ctx.accounts.vote_escrow;
+        let vote_record = &ctx.accounts.vote_record;
+        let clock = Clock::get()?;
+
+        // Check proposal is still active
+        require!(
+            proposal.status == ProposalStatus::Active,
+            DaoError::ProposalNotActive
+        );
+
+        // Check voting period hasn't ended
+        require!(
+            clock.unix_timestamp <= proposal.vote_end,
+            DaoError::VotingEnded
+        );
+
+        // Check the voter has actually voted
+        require!(vote_escrow.has_voted, DaoError::NotVoted);
+
+        // Get the vote weight and choice from the escrow
+        let vote_weight = vote_escrow.deposited_amount;
+        let vote_choice = vote_escrow.vote_choice.ok_or(DaoError::NotVoted)?;
+
+        // Decrement proposal vote counts
+        match vote_choice {
+            VoteChoice::For => {
+                proposal.for_votes = proposal
+                    .for_votes
+                    .checked_sub(vote_weight)
+                    .ok_or(DaoError::Underflow)?;
+            }
+            VoteChoice::Against => {
+                proposal.against_votes = proposal
+                    .against_votes
+                    .checked_sub(vote_weight)
+                    .ok_or(DaoError::Underflow)?;
+            }
+            VoteChoice::Abstain => {
+                proposal.abstain_votes = proposal
+                    .abstain_votes
+                    .checked_sub(vote_weight)
+                    .ok_or(DaoError::Underflow)?;
+            }
+        }
+
+        // Mark escrow as not voted (allows re-voting or withdrawal)
+        vote_escrow.has_voted = false;
+        vote_escrow.vote_choice = None;
+
+        msg!(
+            "Vote retracted on proposal {}: weight {} by {}",
+            proposal.proposal_id,
+            vote_weight,
+            vote_escrow.voter
+        );
+
+        emit!(VoteRetractedEvent {
+            proposal_id: proposal.proposal_id,
+            voter: vote_escrow.voter,
+            vote_weight,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// SECURITY FIX: Withdraw escrowed vote tokens
+    ///
+    /// Tokens can only be withdrawn if:
+    /// 1. The proposal's voting period has ended (vote_end has passed), OR
+    /// 2. The voter has NOT voted (or has retracted their vote)
+    ///
+    /// This prevents voters from:
+    /// - Voting with borrowed tokens and returning them before the vote counts
+    /// - Double voting by transferring tokens between wallets
+    pub fn withdraw_vote_tokens(ctx: Context<WithdrawVoteTokens>) -> Result<()> {
+        let proposal = &ctx.accounts.proposal;
+        let vote_escrow = &mut ctx.accounts.vote_escrow;
+        let dao_config = &ctx.accounts.dao_config;
+        let clock = Clock::get()?;
+
+        // Check tokens haven't already been withdrawn
+        require!(!vote_escrow.withdrawn, DaoError::AlreadyWithdrawn);
+
+        // SECURITY CHECK: Tokens can only be withdrawn if:
+        // 1. Voting period has ended, OR
+        // 2. The voter hasn't voted (or retracted their vote)
+        let voting_ended = clock.unix_timestamp > proposal.vote_end;
+        let not_voted = !vote_escrow.has_voted;
+
+        require!(
+            voting_ended || not_voted,
+            DaoError::TokensLockedDuringVoting
+        );
+
+        let amount = vote_escrow.deposited_amount;
+
+        // Transfer tokens back to voter from vote vault
+        let dao_bump = dao_config.bump;
+        let seeds = &[b"dao_config".as_ref(), &[dao_bump]];
+        let signer = &[&seeds[..]];
+
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.vote_vault.to_account_info(),
+            to: ctx.accounts.voter_token_account.to_account_info(),
+            authority: ctx.accounts.dao_config.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        token::transfer(cpi_ctx, amount)?;
+
+        // Mark as withdrawn
+        vote_escrow.withdrawn = true;
+
+        msg!(
+            "Vote tokens withdrawn for proposal {}: voter={}, amount={}",
+            proposal.proposal_id,
+            vote_escrow.voter,
+            amount
+        );
+
+        emit!(VoteTokensWithdrawnEvent {
+            proposal_id: proposal.proposal_id,
+            voter: vote_escrow.voter,
+            amount,
             timestamp: clock.unix_timestamp,
         });
 
@@ -802,6 +976,8 @@ pub struct DaoConfig {
     pub governance_token_mint: Pubkey,
     /// Bond escrow token account (PDA-owned)
     pub bond_escrow: Pubkey,
+    /// SECURITY FIX: Vote vault for escrowed voting tokens (PDA-owned)
+    pub vote_vault: Pubkey,
     /// Voting period in seconds
     pub voting_period: i64,
     /// Bond required to create proposal (in tokens)
@@ -828,6 +1004,7 @@ impl DaoConfig {
         32 +                         // treasury
         32 +                         // governance_token_mint
         32 +                         // bond_escrow
+        32 +                         // vote_vault (SECURITY FIX)
         8 +                          // voting_period
         8 +                          // proposal_bond
         1 +                          // quorum_percentage
@@ -899,30 +1076,37 @@ impl Proposal {
         1; // bump
 }
 
-/// Vote snapshot for a voter (registered before voting)
+/// SECURITY FIX: Vote escrow account - tracks deposited tokens for voting
+/// Replaces the vulnerable VoteSnapshot that only recorded balance
 #[account]
-pub struct VoteSnapshot {
+pub struct VoteEscrow {
     /// Proposal ID
     pub proposal_id: u64,
     /// Voter's public key
     pub voter: Pubkey,
-    /// Vote weight (token balance at snapshot time)
-    pub vote_weight: u64,
-    /// When snapshot was registered
-    pub registered_at: i64,
-    /// Whether the voter has already voted
+    /// Amount of tokens deposited (escrowed)
+    pub deposited_amount: u64,
+    /// When tokens were deposited
+    pub deposited_at: i64,
+    /// Whether the voter has cast their vote
     pub has_voted: bool,
+    /// Vote choice (if voted)
+    pub vote_choice: Option<VoteChoice>,
+    /// Whether tokens have been withdrawn
+    pub withdrawn: bool,
     /// PDA bump
     pub bump: u8,
 }
 
-impl VoteSnapshot {
+impl VoteEscrow {
     pub const MAX_SIZE: usize = 8 + // discriminator
         8 +                          // proposal_id
         32 +                         // voter
-        8 +                          // vote_weight
-        8 +                          // registered_at
+        8 +                          // deposited_amount
+        8 +                          // deposited_at
         1 +                          // has_voted
+        1 + 1 +                      // vote_choice (Option<enum>)
+        1 +                          // withdrawn
         1; // bump
 }
 
@@ -935,7 +1119,7 @@ pub struct VoteRecord {
     pub voter: Pubkey,
     /// Vote choice
     pub vote_choice: VoteChoice,
-    /// Vote weight (from snapshot)
+    /// Vote weight (from escrow)
     pub vote_weight: u64,
     /// When the vote was cast
     pub voted_at: i64,
@@ -1031,6 +1215,14 @@ pub struct InitializeDao<'info> {
         constraint = bond_escrow.owner == dao_config.key() @ DaoError::InvalidBondEscrowOwner
     )]
     pub bond_escrow: Account<'info, TokenAccount>,
+
+    /// SECURITY FIX: Vote vault token account for escrowing vote tokens (must be owned by DAO PDA)
+    #[account(
+        mut,
+        constraint = vote_vault.mint == governance_token_mint.key() @ DaoError::InvalidMint,
+        constraint = vote_vault.owner == dao_config.key() @ DaoError::InvalidVoteVaultOwner
+    )]
+    pub vote_vault: Account<'info, TokenAccount>,
 
     /// Governance token mint ($AEGIS)
     pub governance_token_mint: Account<'info, Mint>,
@@ -1179,12 +1371,13 @@ pub struct CancelProposal<'info> {
     pub token_program: Program<'info, Token>,
 }
 
-/// Register vote snapshot
+/// SECURITY FIX: Deposit vote tokens (Vote Escrow pattern)
 #[derive(Accounts)]
-pub struct RegisterVoteSnapshot<'info> {
+pub struct DepositVoteTokens<'info> {
     #[account(
         seeds = [b"dao_config"],
-        bump = dao_config.bump
+        bump = dao_config.bump,
+        has_one = vote_vault @ DaoError::InvalidVoteVault
     )]
     pub dao_config: Account<'info, DaoConfig>,
 
@@ -1197,14 +1390,22 @@ pub struct RegisterVoteSnapshot<'info> {
     #[account(
         init,
         payer = voter,
-        space = VoteSnapshot::MAX_SIZE,
-        seeds = [b"vote_snapshot", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        space = VoteEscrow::MAX_SIZE,
+        seeds = [b"vote_escrow", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
         bump
     )]
-    pub vote_snapshot: Account<'info, VoteSnapshot>,
+    pub vote_escrow: Account<'info, VoteEscrow>,
 
-    /// Voter's token account (balance = vote weight at snapshot)
+    /// Vote vault token account (PDA-owned)
     #[account(
+        mut,
+        constraint = vote_vault.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub vote_vault: Account<'info, TokenAccount>,
+
+    /// Voter's token account
+    #[account(
+        mut,
         constraint = voter_token_account.owner == voter.key() @ DaoError::InvalidTokenOwner,
         constraint = voter_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
     )]
@@ -1213,10 +1414,11 @@ pub struct RegisterVoteSnapshot<'info> {
     #[account(mut)]
     pub voter: Signer<'info>,
 
+    pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
 }
 
-/// Cast a vote (requires prior snapshot registration)
+/// SECURITY FIX: Cast a vote (using escrowed tokens)
 #[derive(Accounts)]
 pub struct CastVote<'info> {
     #[account(
@@ -1234,12 +1436,13 @@ pub struct CastVote<'info> {
 
     #[account(
         mut,
-        seeds = [b"vote_snapshot", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
-        bump = vote_snapshot.bump,
-        constraint = vote_snapshot.voter == voter.key() @ DaoError::InvalidVoter,
-        constraint = vote_snapshot.proposal_id == proposal.proposal_id @ DaoError::InvalidProposal
+        seeds = [b"vote_escrow", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump = vote_escrow.bump,
+        constraint = vote_escrow.voter == voter.key() @ DaoError::InvalidVoter,
+        constraint = vote_escrow.proposal_id == proposal.proposal_id @ DaoError::InvalidProposal,
+        constraint = !vote_escrow.withdrawn @ DaoError::AlreadyWithdrawn
     )]
-    pub vote_snapshot: Account<'info, VoteSnapshot>,
+    pub vote_escrow: Account<'info, VoteEscrow>,
 
     #[account(
         init,
@@ -1254,6 +1457,90 @@ pub struct CastVote<'info> {
     pub voter: Signer<'info>,
 
     pub system_program: Program<'info, System>,
+}
+
+/// SECURITY FIX: Retract a vote
+#[derive(Accounts)]
+pub struct RetractVote<'info> {
+    #[account(
+        seeds = [b"dao_config"],
+        bump = dao_config.bump
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"proposal", proposal.proposal_id.to_le_bytes().as_ref()],
+        bump = proposal.bump
+    )]
+    pub proposal: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"vote_escrow", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump = vote_escrow.bump,
+        constraint = vote_escrow.voter == voter.key() @ DaoError::InvalidVoter,
+        constraint = vote_escrow.proposal_id == proposal.proposal_id @ DaoError::InvalidProposal
+    )]
+    pub vote_escrow: Account<'info, VoteEscrow>,
+
+    /// Vote record (will be closed, returning rent to voter)
+    #[account(
+        mut,
+        seeds = [b"vote", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump = vote_record.bump,
+        constraint = vote_record.voter == voter.key() @ DaoError::InvalidVoter,
+        close = voter
+    )]
+    pub vote_record: Account<'info, VoteRecord>,
+
+    #[account(mut)]
+    pub voter: Signer<'info>,
+}
+
+/// SECURITY FIX: Withdraw vote tokens
+#[derive(Accounts)]
+pub struct WithdrawVoteTokens<'info> {
+    #[account(
+        seeds = [b"dao_config"],
+        bump = dao_config.bump,
+        has_one = vote_vault @ DaoError::InvalidVoteVault
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    #[account(
+        seeds = [b"proposal", proposal.proposal_id.to_le_bytes().as_ref()],
+        bump = proposal.bump
+    )]
+    pub proposal: Account<'info, Proposal>,
+
+    #[account(
+        mut,
+        seeds = [b"vote_escrow", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump = vote_escrow.bump,
+        constraint = vote_escrow.voter == voter.key() @ DaoError::InvalidVoter,
+        constraint = vote_escrow.proposal_id == proposal.proposal_id @ DaoError::InvalidProposal
+    )]
+    pub vote_escrow: Account<'info, VoteEscrow>,
+
+    /// Vote vault token account (PDA-owned)
+    #[account(
+        mut,
+        constraint = vote_vault.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub vote_vault: Account<'info, TokenAccount>,
+
+    /// Voter's token account
+    #[account(
+        mut,
+        constraint = voter_token_account.owner == voter.key() @ DaoError::InvalidTokenOwner,
+        constraint = voter_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub voter_token_account: Account<'info, TokenAccount>,
+
+    pub voter: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
 }
 
 /// Finalize a proposal
@@ -1441,11 +1728,12 @@ pub struct ProposalCancelledEvent {
     pub timestamp: i64,
 }
 
+/// SECURITY FIX: New event for vote token deposits
 #[event]
-pub struct VoteSnapshotRegisteredEvent {
+pub struct VoteTokensDepositedEvent {
     pub proposal_id: u64,
     pub voter: Pubkey,
-    pub vote_weight: u64,
+    pub amount: u64,
     pub timestamp: i64,
 }
 
@@ -1455,6 +1743,24 @@ pub struct VoteCastEvent {
     pub voter: Pubkey,
     pub vote_choice: VoteChoice,
     pub vote_weight: u64,
+    pub timestamp: i64,
+}
+
+/// SECURITY FIX: New event for vote retractions
+#[event]
+pub struct VoteRetractedEvent {
+    pub proposal_id: u64,
+    pub voter: Pubkey,
+    pub vote_weight: u64,
+    pub timestamp: i64,
+}
+
+/// SECURITY FIX: New event for vote token withdrawals
+#[event]
+pub struct VoteTokensWithdrawnEvent {
+    pub proposal_id: u64,
+    pub voter: Pubkey,
+    pub amount: u64,
     pub timestamp: i64,
 }
 
@@ -1578,6 +1884,9 @@ pub enum DaoError {
     #[msg("Arithmetic overflow")]
     Overflow,
 
+    #[msg("Arithmetic underflow")]
+    Underflow,
+
     #[msg("Invalid token mint")]
     InvalidMint,
 
@@ -1610,4 +1919,20 @@ pub enum DaoError {
 
     #[msg("Invalid proposal")]
     InvalidProposal,
+
+    // SECURITY FIX: New error codes for Vote Escrow pattern
+    #[msg("Vote vault must be owned by DAO PDA")]
+    InvalidVoteVaultOwner,
+
+    #[msg("Invalid vote vault account")]
+    InvalidVoteVault,
+
+    #[msg("Tokens are locked during active voting - retract vote first or wait for vote_end")]
+    TokensLockedDuringVoting,
+
+    #[msg("Tokens have already been withdrawn")]
+    AlreadyWithdrawn,
+
+    #[msg("User has not voted on this proposal")]
+    NotVoted,
 }

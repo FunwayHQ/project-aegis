@@ -537,6 +537,17 @@ aegis-cdn list
   - Token account ownership/mint validation
   - Recipient validation in treasury execution
   - 13 instructions including `register_vote_snapshot`, `queue_config_update`, `cancel_proposal`
+- ✅ **Sprint 18.5:** Critical Security Hardening (3 High-Severity Fixes)
+  - **DAO Vote Escrow Pattern**: Replaced vulnerable snapshot voting with token locking
+    - `deposit_vote_tokens`: Transfers tokens to PDA-owned vault (prevents double voting)
+    - `cast_vote`: Uses escrowed token amount as vote weight (prevents flash loans)
+    - `retract_vote`: Allows vote removal and unlocks tokens
+    - `withdraw_vote_tokens`: Returns tokens after vote_end or if not voted
+  - **Rewards Access Control**: Added `has_one = authority` constraint to `RecordPerformance`
+  - **Staking-Registry CPI**: Implemented cross-program invocation to sync stake amounts
+    - `stake()`, `execute_unstake()`, `slash_stake()` now call `registry::update_stake()`
+    - Added `staking_authority` PDA for signing CPI calls
+    - Added `registry_program_id` to `GlobalConfig`
 
 ### Phase 4: Advanced Security & Mainnet (Sprints 19-30)
 

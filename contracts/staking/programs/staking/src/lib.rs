@@ -14,11 +14,13 @@ pub mod staking {
 
     /// SECURITY FIX: Initialize global configuration (one-time, by deployer)
     /// This stores the admin authority who can slash stakes and update parameters
+    /// Now also stores registry_program_id for CPI integration
     pub fn initialize_global_config(
         ctx: Context<InitializeGlobalConfig>,
         admin_authority: Pubkey,
         min_stake_amount: u64,
         unstake_cooldown_period: i64,
+        registry_program_id: Pubkey,
     ) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
 
@@ -26,14 +28,16 @@ pub mod staking {
         config.min_stake_amount = min_stake_amount;
         config.unstake_cooldown_period = unstake_cooldown_period;
         config.treasury = ctx.accounts.treasury.key();
+        config.registry_program_id = registry_program_id;
         config.paused = false;
         config.bump = ctx.bumps.global_config;
 
         msg!(
-            "Global config initialized: admin={}, min_stake={}, cooldown={}",
+            "Global config initialized: admin={}, min_stake={}, cooldown={}, registry={}",
             admin_authority,
             min_stake_amount,
-            unstake_cooldown_period
+            unstake_cooldown_period,
+            registry_program_id
         );
 
         Ok(())
@@ -45,6 +49,7 @@ pub mod staking {
         new_admin: Option<Pubkey>,
         new_min_stake: Option<u64>,
         new_cooldown: Option<i64>,
+        new_registry_program: Option<Pubkey>,
     ) -> Result<()> {
         let config = &mut ctx.accounts.global_config;
 
@@ -68,6 +73,11 @@ pub mod staking {
         if let Some(cooldown) = new_cooldown {
             config.unstake_cooldown_period = cooldown;
             msg!("Unstake cooldown updated to: {}s", cooldown);
+        }
+
+        if let Some(registry) = new_registry_program {
+            config.registry_program_id = registry;
+            msg!("Registry program updated to: {}", registry);
         }
 
         Ok(())
@@ -116,6 +126,7 @@ pub mod staking {
     }
 
     /// Stake AEGIS tokens
+    /// SECURITY FIX: Now calls Registry via CPI to keep stake amounts synchronized
     pub fn stake(ctx: Context<Stake>, amount: u64) -> Result<()> {
         let config = &ctx.accounts.global_config;
 
@@ -152,7 +163,29 @@ pub mod staking {
             .ok_or(StakingError::Overflow)?;
         stake_account.updated_at = clock.unix_timestamp;
 
+        // SECURITY FIX: Call Registry to update stake via CPI
+        // This ensures the registry stays in sync with staking state
+        let new_total_stake = stake_account.staked_amount;
+
+        let cpi_program = ctx.accounts.registry_program.to_account_info();
+        let cpi_accounts = registry::cpi::accounts::UpdateStake {
+            registry_config: ctx.accounts.registry_config.to_account_info(),
+            node_account: ctx.accounts.node_account.to_account_info(),
+            authority: ctx.accounts.staking_authority.to_account_info(),
+        };
+
+        // Sign with staking program PDA
+        let seeds = &[
+            b"staking_authority".as_ref(),
+            &[ctx.bumps.staking_authority],
+        ];
+        let signer = &[&seeds[..]];
+
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        registry::cpi::update_stake(cpi_ctx, new_total_stake)?;
+
         msg!("Staked {} tokens for operator: {}", amount, stake_account.operator);
+        msg!("Registry updated via CPI with new stake: {}", new_total_stake);
 
         emit!(StakedEvent {
             operator: stake_account.operator,
@@ -211,6 +244,7 @@ pub mod staking {
     }
 
     /// Execute unstake after cooldown period
+    /// SECURITY FIX: Now calls Registry via CPI to keep stake amounts synchronized
     pub fn execute_unstake(ctx: Context<ExecuteUnstake>) -> Result<()> {
         let config = &ctx.accounts.global_config;
         let clock = Clock::get()?;
@@ -258,7 +292,32 @@ pub mod staking {
             .ok_or(StakingError::Overflow)?;
         stake_account.updated_at = clock.unix_timestamp;
 
+        // SECURITY FIX: Call Registry to update stake via CPI
+        let new_total_stake = stake_account.staked_amount;
+
+        let registry_cpi_program = ctx.accounts.registry_program.to_account_info();
+        let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
+            registry_config: ctx.accounts.registry_config.to_account_info(),
+            node_account: ctx.accounts.node_account.to_account_info(),
+            authority: ctx.accounts.staking_authority.to_account_info(),
+        };
+
+        // Sign with staking program PDA
+        let staking_seeds = &[
+            b"staking_authority".as_ref(),
+            &[ctx.bumps.staking_authority],
+        ];
+        let staking_signer = &[&staking_seeds[..]];
+
+        let registry_cpi_ctx = CpiContext::new_with_signer(
+            registry_cpi_program,
+            registry_cpi_accounts,
+            staking_signer
+        );
+        registry::cpi::update_stake(registry_cpi_ctx, new_total_stake)?;
+
         msg!("Unstaked {} tokens for operator: {}", amount, operator);
+        msg!("Registry updated via CPI with new stake: {}", new_total_stake);
 
         emit!(UnstakedEvent {
             operator,
@@ -304,6 +363,7 @@ pub mod staking {
 
     /// SECURITY FIX: Slash stake (NOW REQUIRES ADMIN AUTHORIZATION)
     /// Only the admin_authority from GlobalConfig can slash stakes
+    /// SECURITY FIX: Now calls Registry via CPI to keep stake amounts synchronized
     pub fn slash_stake(
         ctx: Context<SlashStake>,
         amount: u64,
@@ -355,8 +415,33 @@ pub mod staking {
             .ok_or(StakingError::Underflow)?;
         stake_account.updated_at = clock.unix_timestamp;
 
+        // SECURITY FIX: Call Registry to update stake via CPI
+        let new_total_stake = stake_account.staked_amount;
+
+        let registry_cpi_program = ctx.accounts.registry_program.to_account_info();
+        let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
+            registry_config: ctx.accounts.registry_config.to_account_info(),
+            node_account: ctx.accounts.node_account.to_account_info(),
+            authority: ctx.accounts.staking_authority.to_account_info(),
+        };
+
+        // Sign with staking program PDA
+        let staking_seeds = &[
+            b"staking_authority".as_ref(),
+            &[ctx.bumps.staking_authority],
+        ];
+        let staking_signer = &[&staking_seeds[..]];
+
+        let registry_cpi_ctx = CpiContext::new_with_signer(
+            registry_cpi_program,
+            registry_cpi_accounts,
+            staking_signer
+        );
+        registry::cpi::update_stake(registry_cpi_ctx, new_total_stake)?;
+
         msg!("Slashed {} tokens from operator: {} - Reason: {} - By: {}",
             amount, operator, reason, ctx.accounts.authority.key());
+        msg!("Registry updated via CPI with new stake: {}", new_total_stake);
 
         emit!(StakeSlashedEvent {
             operator,
@@ -372,12 +457,14 @@ pub mod staking {
 
 /// SECURITY FIX: Global configuration for staking program
 /// Stores admin authority and configurable parameters
+/// Now includes registry_program_id for CPI integration
 #[account]
 pub struct GlobalConfig {
     pub admin_authority: Pubkey,        // Admin who can slash and update config (32 bytes)
     pub min_stake_amount: u64,          // Minimum stake required (8 bytes)
     pub unstake_cooldown_period: i64,   // Cooldown in seconds (8 bytes)
     pub treasury: Pubkey,               // Treasury for slashed tokens (32 bytes)
+    pub registry_program_id: Pubkey,    // SECURITY FIX: Registry program for CPI (32 bytes)
     pub paused: bool,                   // Emergency pause flag (1 byte)
     pub bump: u8,                       // PDA bump (1 byte)
 }
@@ -388,6 +475,7 @@ impl GlobalConfig {
         8 +                           // min_stake_amount
         8 +                           // unstake_cooldown_period
         32 +                          // treasury
+        32 +                          // registry_program_id
         1 +                           // paused
         1;                            // bump
 }
@@ -420,6 +508,7 @@ impl StakeAccount {
 }
 
 /// SECURITY FIX: Initialize global config (one-time setup)
+/// Now includes registry_program_id parameter
 #[derive(Accounts)]
 pub struct InitializeGlobalConfig<'info> {
     #[account(
@@ -487,6 +576,7 @@ pub struct InitializeStake<'info> {
 }
 
 /// Stake tokens
+/// SECURITY FIX: Now includes registry accounts for CPI integration
 #[derive(Accounts)]
 pub struct Stake<'info> {
     /// SECURITY FIX: Added global_config for min_stake and pause check
@@ -512,6 +602,28 @@ pub struct Stake<'info> {
 
     pub operator: Signer<'info>,
     pub token_program: Program<'info, Token>,
+
+    // SECURITY FIX: Registry CPI accounts
+    /// CHECK: Registry program validated against global_config.registry_program_id
+    #[account(
+        constraint = registry_program.key() == global_config.registry_program_id @ StakingError::InvalidRegistryProgram
+    )]
+    pub registry_program: AccountInfo<'info>,
+
+    /// CHECK: Registry config PDA
+    #[account(mut)]
+    pub registry_config: AccountInfo<'info>,
+
+    /// CHECK: Node account in registry
+    #[account(mut)]
+    pub node_account: AccountInfo<'info>,
+
+    /// SECURITY FIX: Staking program PDA that acts as authority for registry CPI
+    #[account(
+        seeds = [b"staking_authority"],
+        bump
+    )]
+    pub staking_authority: SystemAccount<'info>,
 }
 
 /// Request unstake
@@ -536,6 +648,7 @@ pub struct RequestUnstake<'info> {
 }
 
 /// Execute unstake
+/// SECURITY FIX: Now includes registry accounts for CPI integration
 #[derive(Accounts)]
 pub struct ExecuteUnstake<'info> {
     /// SECURITY FIX: Added for cooldown period
@@ -561,6 +674,28 @@ pub struct ExecuteUnstake<'info> {
 
     pub operator: Signer<'info>,
     pub token_program: Program<'info, Token>,
+
+    // SECURITY FIX: Registry CPI accounts
+    /// CHECK: Registry program validated against global_config.registry_program_id
+    #[account(
+        constraint = registry_program.key() == global_config.registry_program_id @ StakingError::InvalidRegistryProgram
+    )]
+    pub registry_program: AccountInfo<'info>,
+
+    /// CHECK: Registry config PDA
+    #[account(mut)]
+    pub registry_config: AccountInfo<'info>,
+
+    /// CHECK: Node account in registry
+    #[account(mut)]
+    pub node_account: AccountInfo<'info>,
+
+    /// SECURITY FIX: Staking program PDA that acts as authority for registry CPI
+    #[account(
+        seeds = [b"staking_authority"],
+        bump
+    )]
+    pub staking_authority: SystemAccount<'info>,
 }
 
 /// Cancel unstake
@@ -577,7 +712,7 @@ pub struct CancelUnstake<'info> {
     pub operator: Signer<'info>,
 }
 
-/// SECURITY FIX: Slash stake (now with admin verification)
+/// SECURITY FIX: Slash stake (now with admin verification and registry CPI)
 #[derive(Accounts)]
 pub struct SlashStake<'info> {
     /// CRITICAL: Global config stores authorized admin
@@ -610,6 +745,28 @@ pub struct SlashStake<'info> {
     pub authority: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
+
+    // SECURITY FIX: Registry CPI accounts
+    /// CHECK: Registry program validated against global_config.registry_program_id
+    #[account(
+        constraint = registry_program.key() == global_config.registry_program_id @ StakingError::InvalidRegistryProgram
+    )]
+    pub registry_program: AccountInfo<'info>,
+
+    /// CHECK: Registry config PDA
+    #[account(mut)]
+    pub registry_config: AccountInfo<'info>,
+
+    /// CHECK: Node account in registry
+    #[account(mut)]
+    pub node_account: AccountInfo<'info>,
+
+    /// SECURITY FIX: Staking program PDA that acts as authority for registry CPI
+    #[account(
+        seeds = [b"staking_authority"],
+        bump
+    )]
+    pub staking_authority: SystemAccount<'info>,
 }
 
 /// Events
@@ -704,4 +861,8 @@ pub enum StakingError {
 
     #[msg("Staking is currently paused by admin")]
     StakingPaused,
+
+    /// SECURITY FIX: New error for registry integration
+    #[msg("Invalid registry program ID")]
+    InvalidRegistryProgram,
 }
