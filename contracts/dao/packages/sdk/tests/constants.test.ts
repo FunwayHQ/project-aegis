@@ -47,21 +47,41 @@ describe("Constants", () => {
   });
 
   describe("DEFAULTS", () => {
-    it("has reasonable voting period in days", () => {
-      expect(DEFAULTS.VOTING_PERIOD_DAYS).toBe(3);
+    // Whitepaper-compliant governance periods
+    it("has 7-day discussion period (whitepaper)", () => {
+      expect(DEFAULTS.DISCUSSION_PERIOD_DAYS).toBe(7);
     });
 
-    it("has reasonable voting period in seconds", () => {
+    it("has 7-day discussion period in seconds", () => {
+      // 7 days in seconds
+      expect(DEFAULTS.DISCUSSION_PERIOD_SECONDS).toBe(604800);
+    });
+
+    it("has 7-day voting period (whitepaper)", () => {
+      expect(DEFAULTS.VOTING_PERIOD_DAYS).toBe(7);
+    });
+
+    it("has 7-day voting period in seconds", () => {
+      // 7 days in seconds
+      expect(DEFAULTS.VOTING_PERIOD_SECONDS).toBe(604800);
+    });
+
+    it("has minimum voting period of 3 days", () => {
       // 3 days in seconds
-      expect(DEFAULTS.VOTING_PERIOD_SECONDS).toBe(259200);
-    });
-
-    it("has minimum voting period of 1 day", () => {
-      expect(DEFAULTS.MIN_VOTING_PERIOD_SECONDS).toBe(86400);
+      expect(DEFAULTS.MIN_VOTING_PERIOD_SECONDS).toBe(259200);
     });
 
     it("has maximum voting period of 14 days", () => {
       expect(DEFAULTS.MAX_VOTING_PERIOD_SECONDS).toBe(1209600);
+    });
+
+    it("has 3-day execution timelock (whitepaper)", () => {
+      expect(DEFAULTS.EXECUTION_TIMELOCK_DAYS).toBe(3);
+    });
+
+    it("has 3-day execution timelock in seconds", () => {
+      // 3 days in seconds
+      expect(DEFAULTS.EXECUTION_TIMELOCK_SECONDS).toBe(259200);
     });
 
     it("has reasonable proposal bond", () => {

@@ -57,7 +57,7 @@ pub async fn execute() -> Result<()> {
         return Ok(());
     }
 
-    println!("  ✓ Cooldown period complete!".bright_green());
+    println!("{}", "  ✓ Cooldown period complete!".bright_green());
     println!("  Amount to withdraw: {} AEGIS", format!("{:.2}", unstake_amount).bright_green());
     println!();
 

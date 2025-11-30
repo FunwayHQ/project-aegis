@@ -3,14 +3,23 @@ use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz");
 
-/// Voting period duration (3 days in seconds)
-const DEFAULT_VOTING_PERIOD: i64 = 3 * 24 * 60 * 60;
+/// Voting period duration (7 days in seconds - per whitepaper)
+const DEFAULT_VOTING_PERIOD: i64 = 7 * 24 * 60 * 60;
 
-/// Minimum voting period (1 day)
-const MIN_VOTING_PERIOD: i64 = 24 * 60 * 60;
+/// Discussion period before voting starts (7 days - per whitepaper)
+const DEFAULT_DISCUSSION_PERIOD: i64 = 7 * 24 * 60 * 60;
+
+/// Minimum voting period (3 days)
+const MIN_VOTING_PERIOD: i64 = 3 * 24 * 60 * 60;
 
 /// Maximum voting period (14 days)
 const MAX_VOTING_PERIOD: i64 = 14 * 24 * 60 * 60;
+
+/// Minimum discussion period (1 day)
+const MIN_DISCUSSION_PERIOD: i64 = 24 * 60 * 60;
+
+/// Maximum discussion period (14 days)
+const MAX_DISCUSSION_PERIOD: i64 = 14 * 24 * 60 * 60;
 
 /// Proposal bond amount (100 AEGIS tokens - prevents spam)
 const DEFAULT_PROPOSAL_BOND: u64 = 100_000_000_000;
@@ -33,17 +42,23 @@ const MAX_DESCRIPTION_CID_LENGTH: usize = 64;
 /// Timelock delay for config changes (48 hours)
 const CONFIG_TIMELOCK_DELAY: i64 = 48 * 60 * 60;
 
-/// PDA seeds for vote vault
-const VOTE_VAULT_SEED: &[u8] = b"vote_vault";
+/// Execution timelock after proposal passes (3 days - per whitepaper)
+const EXECUTION_TIMELOCK: i64 = 3 * 24 * 60 * 60;
+
+/// PDA seeds for vote vault (reserved for future PDA-based vault)
+#[allow(dead_code)]
+const _VOTE_VAULT_SEED: &[u8] = b"vote_vault";
 
 #[program]
 pub mod dao {
     use super::*;
 
     /// Initialize the DAO configuration (one-time setup by deployer)
+    /// Per whitepaper: 7-day discussion period, 7-day voting period, 3-day execution timelock
     pub fn initialize_dao(
         ctx: Context<InitializeDao>,
         voting_period: i64,
+        discussion_period: i64,
         proposal_bond: u64,
         quorum_percentage: u8,
         approval_threshold: u8,
@@ -52,6 +67,10 @@ pub mod dao {
         require!(
             voting_period >= MIN_VOTING_PERIOD && voting_period <= MAX_VOTING_PERIOD,
             DaoError::InvalidVotingPeriod
+        );
+        require!(
+            discussion_period >= MIN_DISCUSSION_PERIOD && discussion_period <= MAX_DISCUSSION_PERIOD,
+            DaoError::InvalidDiscussionPeriod
         );
         require!(
             proposal_bond >= MIN_PROPOSAL_BOND,
@@ -74,6 +93,7 @@ pub mod dao {
         dao_config.bond_escrow = ctx.accounts.bond_escrow.key();
         dao_config.vote_vault = ctx.accounts.vote_vault.key();
         dao_config.voting_period = voting_period;
+        dao_config.discussion_period = discussion_period;
         dao_config.proposal_bond = proposal_bond;
         dao_config.quorum_percentage = quorum_percentage;
         dao_config.approval_threshold = approval_threshold;
@@ -84,7 +104,8 @@ pub mod dao {
         dao_config.bump = ctx.bumps.dao_config;
 
         msg!(
-            "DAO initialized: voting_period={}s, bond={}, quorum={}%, threshold={}%",
+            "DAO initialized: discussion={}s, voting={}s, bond={}, quorum={}%, threshold={}%",
+            discussion_period,
             voting_period,
             proposal_bond,
             quorum_percentage,
@@ -94,6 +115,7 @@ pub mod dao {
         emit!(DaoInitializedEvent {
             authority: dao_config.authority,
             treasury: dao_config.treasury,
+            discussion_period,
             voting_period,
             proposal_bond,
             timestamp: Clock::get()?.unix_timestamp,
@@ -329,7 +351,10 @@ pub mod dao {
         // Get current token supply for snapshot
         let snapshot_supply = ctx.accounts.governance_token_mint.supply;
 
-        // Initialize proposal
+        // Initialize proposal with whitepaper-compliant periods:
+        // - Discussion period: 7 days (before voting starts)
+        // - Voting period: 7 days
+        // - Execution timelock: 3 days (after voting ends)
         let proposal = &mut ctx.accounts.proposal;
         proposal.proposal_id = dao_config.proposal_count;
         proposal.proposer = ctx.accounts.proposer.key();
@@ -341,8 +366,11 @@ pub mod dao {
         proposal.for_votes = 0;
         proposal.against_votes = 0;
         proposal.abstain_votes = 0;
-        proposal.vote_start = clock.unix_timestamp;
-        proposal.vote_end = clock.unix_timestamp + dao_config.voting_period;
+        // Per whitepaper: voting starts after discussion period
+        proposal.vote_start = clock.unix_timestamp + dao_config.discussion_period;
+        proposal.vote_end = proposal.vote_start + dao_config.voting_period;
+        // Per whitepaper: 3-day execution timelock after voting ends
+        proposal.execution_eligible_at = proposal.vote_end + EXECUTION_TIMELOCK;
         proposal.created_at = clock.unix_timestamp;
         proposal.executed_at = None;
         proposal.bond_returned = false;
@@ -350,10 +378,13 @@ pub mod dao {
         proposal.bump = ctx.bumps.proposal;
 
         msg!(
-            "Proposal {} created: '{}' by {}",
+            "Proposal {} created: '{}' by {} | Discussion ends: {}, Voting ends: {}, Executable: {}",
             proposal.proposal_id,
             title,
-            proposal.proposer
+            proposal.proposer,
+            proposal.vote_start,
+            proposal.vote_end,
+            proposal.execution_eligible_at
         );
 
         emit!(ProposalCreatedEvent {
@@ -361,7 +392,9 @@ pub mod dao {
             proposer: proposal.proposer,
             title,
             description_cid,
+            vote_start: proposal.vote_start,
             vote_end: proposal.vote_end,
+            execution_eligible_at: proposal.execution_eligible_at,
             snapshot_supply,
             timestamp: clock.unix_timestamp,
         });
@@ -805,6 +838,7 @@ pub mod dao {
     }
 
     /// Execute a passed proposal (for treasury withdrawals)
+    /// Per whitepaper: 3-day execution timelock after voting ends
     pub fn execute_proposal(ctx: Context<ExecuteProposal>) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
         let clock = Clock::get()?;
@@ -819,6 +853,12 @@ pub mod dao {
         require!(
             proposal.executed_at.is_none(),
             DaoError::ProposalAlreadyExecuted
+        );
+
+        // Per whitepaper: Check 3-day execution timelock has elapsed
+        require!(
+            clock.unix_timestamp >= proposal.execution_eligible_at,
+            DaoError::ExecutionTimelockNotExpired
         );
 
         // Check proposal type allows execution
@@ -1014,7 +1054,9 @@ pub struct DaoConfig {
     pub bond_escrow: Pubkey,
     /// SECURITY FIX: Vote vault for escrowed voting tokens (PDA-owned)
     pub vote_vault: Pubkey,
-    /// Voting period in seconds
+    /// Discussion period in seconds (before voting starts - per whitepaper: 7 days)
+    pub discussion_period: i64,
+    /// Voting period in seconds (per whitepaper: 7 days)
     pub voting_period: i64,
     /// Bond required to create proposal (in tokens)
     pub proposal_bond: u64,
@@ -1041,6 +1083,7 @@ impl DaoConfig {
         32 +                         // governance_token_mint
         32 +                         // bond_escrow
         32 +                         // vote_vault (SECURITY FIX)
+        8 +                          // discussion_period (per whitepaper)
         8 +                          // voting_period
         8 +                          // proposal_bond
         1 +                          // quorum_percentage
@@ -1075,10 +1118,12 @@ pub struct Proposal {
     pub against_votes: u64,
     /// Total ABSTAIN votes (token-weighted)
     pub abstain_votes: u64,
-    /// Voting start timestamp
+    /// Discussion period end / Voting start timestamp (per whitepaper: created_at + 7 days)
     pub vote_start: i64,
-    /// Voting end timestamp
+    /// Voting end timestamp (per whitepaper: vote_start + 7 days)
     pub vote_end: i64,
+    /// When proposal can be executed (per whitepaper: vote_end + 3 days timelock)
+    pub execution_eligible_at: i64,
     /// Creation timestamp
     pub created_at: i64,
     /// Execution timestamp (if executed)
@@ -1105,6 +1150,7 @@ impl Proposal {
         8 +                          // abstain_votes
         8 +                          // vote_start
         8 +                          // vote_end
+        8 +                          // execution_eligible_at (per whitepaper)
         8 +                          // created_at
         1 + 8 +                      // executed_at (Option<i64>)
         1 +                          // bond_returned
@@ -1727,6 +1773,7 @@ pub struct DepositToTreasury<'info> {
 pub struct DaoInitializedEvent {
     pub authority: Pubkey,
     pub treasury: Pubkey,
+    pub discussion_period: i64,
     pub voting_period: i64,
     pub proposal_bond: u64,
     pub timestamp: i64,
@@ -1776,7 +1823,9 @@ pub struct ProposalCreatedEvent {
     pub proposer: Pubkey,
     pub title: String,
     pub description_cid: String,
+    pub vote_start: i64,
     pub vote_end: i64,
+    pub execution_eligible_at: i64,
     pub snapshot_supply: u64,
     pub timestamp: i64,
 }
@@ -1995,4 +2044,10 @@ pub enum DaoError {
 
     #[msg("User has not voted on this proposal")]
     NotVoted,
+
+    #[msg("Discussion period must be between 1 and 14 days")]
+    InvalidDiscussionPeriod,
+
+    #[msg("Execution timelock has not expired (3 days after voting ends)")]
+    ExecutionTimelockNotExpired,
 }

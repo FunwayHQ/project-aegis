@@ -55,10 +55,10 @@ export function shortAddress(pubkey: PublicKey | string): string {
 }
 
 /**
- * Display DAO config info
+ * Display DAO config info (Whitepaper Compliant)
  */
 export function displayDaoConfig(config: DaoConfig): void {
-  console.log(chalk.bold("\nDAO Configuration"));
+  console.log(chalk.bold("\nDAO Configuration (Whitepaper Compliant)"));
   console.log(chalk.gray("─".repeat(50)));
   console.log(`  Authority:          ${config.authority.toString()}`);
   console.log(`  Treasury:           ${config.treasury.toString()}`);
@@ -66,7 +66,11 @@ export function displayDaoConfig(config: DaoConfig): void {
   console.log(`  Vote Vault:         ${config.voteVault.toString()}`);
   console.log(`  Governance Token:   ${config.governanceTokenMint.toString()}`);
   console.log(chalk.gray("─".repeat(50)));
-  console.log(`  Voting Period:      ${formatDuration(config.votingPeriod.toNumber())}`);
+  console.log(chalk.cyan("  Governance Periods:"));
+  console.log(`    Discussion Period:   ${formatDuration(config.discussionPeriod?.toNumber() || 0)} ${chalk.gray("(before voting)")}`);
+  console.log(`    Voting Period:       ${formatDuration(config.votingPeriod.toNumber())}`);
+  console.log(`    Execution Timelock:  ${chalk.gray("3 days (after voting ends)")}`);
+  console.log(chalk.gray("─".repeat(50)));
   console.log(`  Proposal Bond:      ${formatTokenAmount(config.proposalBond)} AEGIS`);
   console.log(`  Quorum:             ${config.quorumPercentage}%`);
   console.log(`  Approval Threshold: ${config.approvalThreshold}%`);
@@ -96,7 +100,7 @@ export function displayDaoConfig(config: DaoConfig): void {
 }
 
 /**
- * Display proposal info
+ * Display proposal info (Whitepaper Compliant)
  */
 export function displayProposal(proposal: Proposal, verbose: boolean = false): void {
   const statusColors: Record<string, (s: string) => string> = {
@@ -118,9 +122,13 @@ export function displayProposal(proposal: Proposal, verbose: boolean = false): v
 
   if (verbose) {
     console.log(`  CID:        ${proposal.descriptionCid}`);
-    console.log(`  Created:    ${formatTimestamp(proposal.createdAt)}`);
-    console.log(`  Vote Start: ${formatTimestamp(proposal.voteStart)}`);
-    console.log(`  Vote End:   ${formatTimestamp(proposal.voteEnd)}`);
+    console.log(chalk.cyan("  Timeline:"));
+    console.log(`    Created:              ${formatTimestamp(proposal.createdAt)}`);
+    console.log(`    Voting Start:         ${formatTimestamp(proposal.voteStart)}`);
+    console.log(`    Voting End:           ${formatTimestamp(proposal.voteEnd)}`);
+    if (proposal.executionEligibleAt) {
+      console.log(`    Execution Eligible:   ${formatTimestamp(proposal.executionEligibleAt)} ${chalk.gray("(3-day timelock)")}`);
+    }
   }
 
   console.log(chalk.gray("─".repeat(50)));

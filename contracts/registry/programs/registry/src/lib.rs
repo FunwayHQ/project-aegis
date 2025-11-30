@@ -100,6 +100,11 @@ pub mod node_registry {
         node_account.stake_amount = initial_stake;
         node_account.registered_at = clock.unix_timestamp;
         node_account.updated_at = clock.unix_timestamp;
+        // Whitepaper compliance: Initialize reputation and heartbeat fields
+        node_account.reputation_score = NodeAccount::DEFAULT_REPUTATION;
+        node_account.last_heartbeat = clock.unix_timestamp; // First heartbeat at registration
+        node_account.total_heartbeats = 1;
+        node_account.missed_heartbeats = 0;
         node_account.bump = ctx.bumps.node_account;
 
         msg!("Node registered successfully");
@@ -234,6 +239,154 @@ pub mod node_registry {
 
         Ok(())
     }
+
+    /// Node heartbeat - called periodically by nodes to prove liveness
+    /// Per whitepaper: Nodes must submit heartbeats every 5 minutes
+    /// Missing heartbeats affects reputation and can trigger slashing
+    pub fn heartbeat(ctx: Context<Heartbeat>) -> Result<()> {
+        let node_account = &mut ctx.accounts.node_account;
+        let clock = Clock::get()?;
+
+        // Only active nodes can submit heartbeats
+        require!(
+            node_account.status == NodeStatus::Active,
+            RegistryError::NodeNotActive
+        );
+
+        let last_heartbeat = node_account.last_heartbeat;
+        let current_time = clock.unix_timestamp;
+        let time_since_last = current_time - last_heartbeat;
+
+        // Calculate missed heartbeat intervals (excluding current)
+        let expected_intervals = if time_since_last > NodeAccount::HEARTBEAT_INTERVAL {
+            (time_since_last / NodeAccount::HEARTBEAT_INTERVAL) - 1
+        } else {
+            0
+        };
+
+        // Track missed heartbeats for slashing detection
+        if expected_intervals > 0 {
+            node_account.missed_heartbeats = node_account
+                .missed_heartbeats
+                .checked_add(expected_intervals as u64)
+                .ok_or(RegistryError::Overflow)?;
+
+            // Reputation penalty for missed heartbeats (1% per missed interval)
+            let penalty = (expected_intervals as u64).saturating_mul(100);
+            node_account.reputation_score = node_account
+                .reputation_score
+                .saturating_sub(penalty);
+
+            msg!(
+                "Node {} missed {} heartbeat(s), reputation reduced to {}",
+                node_account.operator,
+                expected_intervals,
+                node_account.reputation_score
+            );
+        } else {
+            // Reputation boost for on-time heartbeat (0.1% per successful heartbeat)
+            let boost = 10; // 0.10%
+            node_account.reputation_score = core::cmp::min(
+                node_account.reputation_score.saturating_add(boost),
+                NodeAccount::MAX_REPUTATION,
+            );
+        }
+
+        // Update heartbeat tracking
+        node_account.last_heartbeat = current_time;
+        node_account.total_heartbeats = node_account
+            .total_heartbeats
+            .checked_add(1)
+            .ok_or(RegistryError::Overflow)?;
+        node_account.updated_at = current_time;
+
+        emit!(HeartbeatEvent {
+            operator: node_account.operator,
+            reputation_score: node_account.reputation_score,
+            total_heartbeats: node_account.total_heartbeats,
+            missed_heartbeats: node_account.missed_heartbeats,
+            timestamp: current_time,
+        });
+
+        Ok(())
+    }
+
+    /// Update reputation score (admin or rewards program only)
+    /// Used by rewards program to adjust reputation based on performance metrics
+    pub fn update_reputation(
+        ctx: Context<UpdateReputation>,
+        new_score: u64,
+    ) -> Result<()> {
+        let config = &ctx.accounts.registry_config;
+        let node_account = &mut ctx.accounts.node_account;
+        let clock = Clock::get()?;
+
+        // Verify caller is admin or rewards program
+        let caller = ctx.accounts.authority.key();
+        require!(
+            caller == config.admin_authority || caller == config.rewards_program_id,
+            RegistryError::UnauthorizedReputationUpdate
+        );
+
+        // Validate score range
+        require!(
+            new_score <= NodeAccount::MAX_REPUTATION,
+            RegistryError::InvalidReputationScore
+        );
+
+        let old_score = node_account.reputation_score;
+        node_account.reputation_score = new_score;
+        node_account.updated_at = clock.unix_timestamp;
+
+        msg!(
+            "Reputation updated for node {}: {} -> {}",
+            node_account.operator,
+            old_score,
+            new_score
+        );
+
+        emit!(ReputationUpdatedEvent {
+            operator: node_account.operator,
+            old_score,
+            new_score,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Check node liveness - returns whether node has missed too many heartbeats
+    /// Can be called by oracles to trigger automated slashing
+    pub fn check_liveness(ctx: Context<CheckLiveness>) -> Result<()> {
+        let node_account = &ctx.accounts.node_account;
+        let clock = Clock::get()?;
+
+        let time_since_heartbeat = clock.unix_timestamp - node_account.last_heartbeat;
+        let is_offline = time_since_heartbeat > NodeAccount::HEARTBEAT_GRACE_PERIOD;
+
+        // 48 hours = 172800 seconds (whitepaper slashing threshold)
+        let offline_48_hours = time_since_heartbeat > 172800;
+
+        msg!(
+            "Node {} liveness check: last_heartbeat={}, offline={}, offline_48h={}",
+            node_account.operator,
+            node_account.last_heartbeat,
+            is_offline,
+            offline_48_hours
+        );
+
+        emit!(LivenessCheckEvent {
+            operator: node_account.operator,
+            last_heartbeat: node_account.last_heartbeat,
+            time_since_heartbeat,
+            is_offline,
+            offline_48_hours,
+            reputation_score: node_account.reputation_score,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
 }
 
 /// SECURITY FIX: Registry configuration account
@@ -267,6 +420,11 @@ pub struct NodeAccount {
     pub stake_amount: u64,          // Total staked AEGIS (8 bytes)
     pub registered_at: i64,         // Registration timestamp (8 bytes)
     pub updated_at: i64,            // Last update timestamp (8 bytes)
+    // Whitepaper compliance: Reputation and heartbeat tracking
+    pub reputation_score: u64,      // Reputation score (0-10000 = 0.00-100.00%) (8 bytes)
+    pub last_heartbeat: i64,        // Last heartbeat timestamp (8 bytes)
+    pub total_heartbeats: u64,      // Total heartbeat count for uptime (8 bytes)
+    pub missed_heartbeats: u64,     // Missed heartbeats for slashing detection (8 bytes)
     pub bump: u8,                   // PDA bump seed (1 byte)
 }
 
@@ -278,7 +436,23 @@ impl NodeAccount {
         8 +                         // stake_amount
         8 +                         // registered_at
         8 +                         // updated_at
+        8 +                         // reputation_score
+        8 +                         // last_heartbeat
+        8 +                         // total_heartbeats
+        8 +                         // missed_heartbeats
         1;                          // bump
+
+    /// Default reputation score for new nodes (50.00%)
+    pub const DEFAULT_REPUTATION: u64 = 5000;
+
+    /// Maximum reputation score (100.00%)
+    pub const MAX_REPUTATION: u64 = 10000;
+
+    /// Heartbeat interval in seconds (5 minutes per whitepaper)
+    pub const HEARTBEAT_INTERVAL: i64 = 300;
+
+    /// Grace period for missed heartbeats (15 minutes = 3 intervals)
+    pub const HEARTBEAT_GRACE_PERIOD: i64 = 900;
 }
 
 /// Node status enum
@@ -403,6 +577,50 @@ pub struct UpdateStake<'info> {
     pub authority: Signer<'info>,
 }
 
+/// Node heartbeat - prove liveness
+#[derive(Accounts)]
+pub struct Heartbeat<'info> {
+    #[account(
+        mut,
+        seeds = [b"node", operator.key().as_ref()],
+        bump = node_account.bump,
+        has_one = operator @ RegistryError::UnauthorizedOperator
+    )]
+    pub node_account: Account<'info, NodeAccount>,
+
+    pub operator: Signer<'info>,
+}
+
+/// Update reputation score (admin/rewards program only)
+#[derive(Accounts)]
+pub struct UpdateReputation<'info> {
+    #[account(
+        seeds = [b"registry_config"],
+        bump = registry_config.bump
+    )]
+    pub registry_config: Account<'info, RegistryConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"node", node_account.operator.as_ref()],
+        bump = node_account.bump
+    )]
+    pub node_account: Account<'info, NodeAccount>,
+
+    /// Must be admin or rewards program (verified in instruction)
+    pub authority: Signer<'info>,
+}
+
+/// Check node liveness (read-only)
+#[derive(Accounts)]
+pub struct CheckLiveness<'info> {
+    #[account(
+        seeds = [b"node", node_account.operator.as_ref()],
+        bump = node_account.bump
+    )]
+    pub node_account: Account<'info, NodeAccount>,
+}
+
 /// Events
 #[event]
 pub struct NodeRegisteredEvent {
@@ -428,6 +646,37 @@ pub struct NodeDeactivatedEvent {
 #[event]
 pub struct NodeReactivatedEvent {
     pub operator: Pubkey,
+    pub timestamp: i64,
+}
+
+/// Event emitted when a node submits a heartbeat
+#[event]
+pub struct HeartbeatEvent {
+    pub operator: Pubkey,
+    pub reputation_score: u64,
+    pub total_heartbeats: u64,
+    pub missed_heartbeats: u64,
+    pub timestamp: i64,
+}
+
+/// Event emitted when reputation is updated
+#[event]
+pub struct ReputationUpdatedEvent {
+    pub operator: Pubkey,
+    pub old_score: u64,
+    pub new_score: u64,
+    pub timestamp: i64,
+}
+
+/// Event emitted when liveness is checked
+#[event]
+pub struct LivenessCheckEvent {
+    pub operator: Pubkey,
+    pub last_heartbeat: i64,
+    pub time_since_heartbeat: i64,
+    pub is_offline: bool,
+    pub offline_48_hours: bool,
+    pub reputation_score: u64,
     pub timestamp: i64,
 }
 
@@ -458,4 +707,17 @@ pub enum RegistryError {
 
     #[msg("Unauthorized: Only staking program can update stake amounts")]
     UnauthorizedStakeUpdate,
+
+    /// Heartbeat and reputation errors
+    #[msg("Node must be active to submit heartbeats")]
+    NodeNotActive,
+
+    #[msg("Unauthorized: Only admin or rewards program can update reputation")]
+    UnauthorizedReputationUpdate,
+
+    #[msg("Invalid reputation score (must be 0-10000)")]
+    InvalidReputationScore,
+
+    #[msg("Arithmetic overflow")]
+    Overflow,
 }

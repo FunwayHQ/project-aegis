@@ -18,18 +18,33 @@ export const SEEDS = {
 } as const;
 
 /**
- * Default configuration values
+ * Default configuration values (Whitepaper Compliant)
  */
 export const DEFAULTS = {
-  VOTING_PERIOD_DAYS: 3,
-  VOTING_PERIOD_SECONDS: 3 * 24 * 60 * 60,
-  MIN_VOTING_PERIOD_SECONDS: 24 * 60 * 60, // 1 day
-  MAX_VOTING_PERIOD_SECONDS: 14 * 24 * 60 * 60, // 14 days
+  // Voting periods per whitepaper
+  DISCUSSION_PERIOD_DAYS: 7,
+  DISCUSSION_PERIOD_SECONDS: 7 * 24 * 60 * 60, // 7 days before voting starts
+  VOTING_PERIOD_DAYS: 7,
+  VOTING_PERIOD_SECONDS: 7 * 24 * 60 * 60, // 7 days voting window
+  MIN_VOTING_PERIOD_SECONDS: 3 * 24 * 60 * 60, // 3 days minimum
+  MAX_VOTING_PERIOD_SECONDS: 14 * 24 * 60 * 60, // 14 days maximum
+
+  // Execution timelock per whitepaper
+  EXECUTION_TIMELOCK_DAYS: 3,
+  EXECUTION_TIMELOCK_SECONDS: 3 * 24 * 60 * 60, // 3 days after voting ends
+
+  // Proposal requirements
   PROPOSAL_BOND: 100_000_000_000n, // 100 AEGIS (9 decimals)
   MIN_PROPOSAL_BOND: 1_000_000_000n, // 1 AEGIS
+
+  // Voting thresholds
   QUORUM_PERCENTAGE: 10,
   APPROVAL_THRESHOLD: 51,
+
+  // Config change timelock
   CONFIG_TIMELOCK_SECONDS: 48 * 60 * 60, // 48 hours
+
+  // Limits
   MAX_TITLE_LENGTH: 128,
   MAX_DESCRIPTION_CID_LENGTH: 64,
 } as const;

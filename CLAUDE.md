@@ -555,15 +555,59 @@ aegis-cdn list
   - pnpm monorepo with Turborepo orchestration
   - Devnet verified: fetches config, lists proposals, displays voting data
 
-### Phase 4: Advanced Security & Mainnet (Sprints 20-30)
+### Phase 4: Advanced Security & Mainnet (Sprints 19-30)
 
-**Cloudflare Parity Features (Sprints 20-25):**
-- 🔲 **Sprint 20:** TLS Fingerprinting (JA3/JA4) - Advanced bot detection via ClientHello analysis
-- 🔲 **Sprint 21:** JavaScript Challenge System - Turnstile-like invisible/interactive challenges
-- 🔲 **Sprint 22:** Behavioral Analysis & Trust Scoring - Mouse/keyboard pattern detection, composite scoring
-- 🔲 **Sprint 23:** WAF Enhancement - OWASP CRS 4.0 import (400+ rules), ML anomaly detection
-- 🔲 **Sprint 24:** API Security Suite - Discovery, schema validation, JWT auth, abuse detection
-- 🔲 **Sprint 25:** Distributed Enforcement - Global blocklist sync, IPv6 threat intel, coordinated challenges
+**Cloudflare Parity Features (Sprints 19-24):**
+- ✅ **Sprint 19:** TLS Fingerprinting (JA3/JA4) - Advanced bot detection via ClientHello analysis - 31 tests
+  - JA3/JA4 fingerprint computation from ClientHello
+  - Fingerprint database with built-in browser/tool signatures
+  - Enhanced bot detection with composite scoring (UA + TLS)
+  - Mismatch detection (Browser UA with curl fingerprint)
+  - DragonflyDB cache integration for fingerprint storage
+- ✅ **Sprint 20:** JavaScript Challenge System - Turnstile-like invisible/interactive challenges - 14 tests
+  - ChallengeManager with PoW (SHA-256 leading zeros) + browser fingerprinting
+  - Three challenge types: Invisible, Managed, Interactive
+  - Ed25519 signed challenge tokens (JWT-like) with 15-minute TTL
+  - Browser fingerprint collection (canvas, WebGL, audio, screen, timezone)
+  - Bot pattern detection (Headless Chrome, PhantomJS, Selenium, Puppeteer)
+  - HTTP API for challenge issuance and verification
+  - Pingora proxy integration with BotAction::Challenge support
+- ✅ **Sprint 21:** Behavioral Analysis & Trust Scoring - 9 tests
+  - Mouse movement analysis (velocity, acceleration, entropy, direction changes)
+  - Keystroke dynamics (inter-key timing, hold duration, typing speed)
+  - Scroll behavior analysis (speed, reversals, depth)
+  - Touch event analysis for mobile (pressure, radius)
+  - BehavioralFeatures extraction with 25+ metrics
+  - BehavioralAnalyzer with human/bot classification
+  - TrustScoreCalculator: composite score (TLS 20pts + Challenge 30pts + Behavior 50pts)
+  - JavaScript collection library generation for client-side tracking
+  - Trust actions: Allow (60+), Challenge (30-60), Block (<30)
+- ✅ **Sprint 22:** Enhanced WAF with OWASP CRS & ML Anomaly Scoring - 17 tests
+  - ModSecurity SecRule parser (subset syntax: @rx, @eq, @contains, @detectSQLi, @detectXSS, etc.)
+  - OWASP CRS 4.0 base rules (15+ rules covering SQLi, XSS, path traversal, RCE, PHP, Java)
+  - Custom rule engine with YAML/JSON configuration
+  - Rule priority, chaining (chain action), and skip logic
+  - ML anomaly scoring: entropy, keyword density, z-score normalization, sigmoid scaling
+  - Request baseline tracking: body size, parameter count, header count
+  - Transform support: lowercase, urlDecode, htmlEntityDecode, compressWhitespace, etc.
+  - EnhancedWafResult with rule matches, anomaly score, and recommendations
+- ✅ **Sprint 23:** API Security Suite - 14 tests
+  - API endpoint discovery: automatic learning from traffic, path normalization, shadow API detection
+  - OpenAPI 3.0 schema validation: path/query params, headers, JSON body validation
+  - JWT/OAuth validation: HS256/384/512, EdDSA support, claims validation (exp, nbf, iss, aud)
+  - Sequence detection: credential stuffing, account enumeration, API scraping
+  - Per-endpoint rate limiting with adaptive thresholds based on traffic patterns
+  - Combined ApiSecurityEngine with configurable security checks
+- ✅ **Sprint 24:** Distributed Enforcement & Global Blocklist Sync - 17 tests
+  - IPv6 support for threat intelligence: ThreatIpAddress enum (V4/V6), parsing, byte conversion
+  - EnhancedThreatIntel: typed ThreatType enum, Ed25519 signatures, validation, expiration
+  - GlobalBlocklist: separate IPv4/IPv6 maps, automatic expiration, eBPF callback interface
+  - TrustToken: signed tokens with TTL, distributed trust score sharing
+  - TrustScoreCache: store/retrieve tokens, skip-challenge threshold logic
+  - CoordinatedChallengeManager: track in-progress challenges, prevent re-challenges
+  - EbpfBlocklistUpdater trait: interface for real-time eBPF map updates
+  - EnforcementMessage: P2P message types (ThreatIntel, TrustToken, ChallengeComplete, BlocklistSync)
+  - DistributedEnforcementEngine: unified API combining all components
 
 **Mainnet Preparation (Sprints 26-30):**
 - 🔲 **Sprint 26-27:** Performance Optimization & Stress Testing ("Game Day" exercises)

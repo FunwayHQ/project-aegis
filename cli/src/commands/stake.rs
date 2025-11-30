@@ -40,7 +40,7 @@ pub async fn execute(amount: u64) -> Result<()> {
             }
         }
     } else {
-        println!("  ✓ Stake account already exists".green());
+        println!("{}", "  ✓ Stake account already exists".green());
     }
 
     println!();

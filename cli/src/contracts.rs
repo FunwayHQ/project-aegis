@@ -1,11 +1,13 @@
 use anchor_client::anchor_lang::prelude::*;
-use anchor_client::anchor_lang::{AccountDeserialize, AnchorDeserialize, AnchorSerialize};
+use anchor_client::anchor_lang::{AnchorDeserialize, AnchorSerialize};
 use anchor_client::{Client, Cluster};
+use anchor_spl::token::ID as SPL_TOKEN_PROGRAM_ID;
 use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::commitment_config::CommitmentConfig;
 use solana_sdk::instruction::{AccountMeta, Instruction};
 use solana_sdk::signature::{Keypair, Signer};
+#[allow(deprecated)]
 use solana_sdk::system_program;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -194,7 +196,7 @@ pub async fn register_node(
     let program_id = Pubkey::from_str(REGISTRY_PROGRAM_ID)?;
 
     // Derive PDA for node account
-    let (node_account, bump) = Pubkey::find_program_address(
+    let (node_account, _bump) = Pubkey::find_program_address(
         &[b"node", operator.pubkey().as_ref()],
         &program_id,
     );
@@ -317,7 +319,7 @@ pub async fn stake_tokens(
         AccountMeta::new(operator_token_account, false),
         AccountMeta::new(stake_vault, false),
         AccountMeta::new_readonly(operator.pubkey(), true),
-        AccountMeta::new_readonly(spl_token::ID, false),
+        AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
     ];
 
     // Create instruction
@@ -424,7 +426,7 @@ pub async fn execute_unstake(
         AccountMeta::new(stake_vault, false),
         AccountMeta::new(operator_token_account, false),
         AccountMeta::new_readonly(operator.pubkey(), true),
-        AccountMeta::new_readonly(spl_token::ID, false),
+        AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
     ];
 
     // Create instruction
@@ -525,7 +527,7 @@ pub async fn claim_rewards(
         AccountMeta::new(reward_vault, false),
         AccountMeta::new(operator_token_account, false),
         AccountMeta::new_readonly(operator.pubkey(), true),
-        AccountMeta::new_readonly(spl_token::ID, false),
+        AccountMeta::new_readonly(SPL_TOKEN_PROGRAM_ID, false),
     ];
 
     // Create instruction

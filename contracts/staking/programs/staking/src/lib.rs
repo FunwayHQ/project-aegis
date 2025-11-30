@@ -5,8 +5,10 @@ declare_id!("85Pd1GRJ1qA3kVTn3ERHsyuUpkr2bbb9L9opwS9UnHEQ");
 
 // DEPRECATED: These constants are now stored in GlobalConfig for flexibility
 // Kept for backward compatibility during migration
-const UNSTAKE_COOLDOWN_PERIOD: i64 = 7 * 24 * 60 * 60; // 7 days in seconds
-const MIN_STAKE_AMOUNT: u64 = 100_000_000_000; // 100 AEGIS tokens
+#[allow(dead_code)]
+const _UNSTAKE_COOLDOWN_PERIOD: i64 = 7 * 24 * 60 * 60; // 7 days in seconds
+#[allow(dead_code)]
+const _MIN_STAKE_AMOUNT: u64 = 100_000_000_000; // 100 AEGIS tokens
 
 #[program]
 pub mod staking {
@@ -355,6 +357,120 @@ pub mod staking {
         emit!(UnstakeCancelledEvent {
             operator: stake_account.operator,
             amount,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Automated slashing based on whitepaper-defined violations
+    /// Can be called by oracles with evidence of violation
+    /// Slashing triggers per whitepaper:
+    /// 1. Offline48Hours - Node offline for 48+ hours (10% slash)
+    /// 2. LowUptime - Below 90% uptime (5% slash)
+    /// 3. ChallengeFailed - Failed security challenge (15% slash)
+    /// 4. DataIntegrityViolation - Corrupted/invalid data (25% slash)
+    /// 5. MaliciousBehavior - Attack detection (100% slash)
+    pub fn automated_slash(
+        ctx: Context<AutomatedSlash>,
+        violation_type: SlashingViolation,
+        evidence_cid: String, // IPFS CID of evidence
+    ) -> Result<()> {
+        let config = &ctx.accounts.global_config;
+        let stake_account = &mut ctx.accounts.stake_account;
+        let clock = Clock::get()?;
+
+        // Verify oracle is authorized
+        require!(
+            ctx.accounts.oracle.key() == config.admin_authority,
+            StakingError::UnauthorizedOracle
+        );
+
+        // Calculate slash amount based on violation type (per whitepaper)
+        let slash_percentage = match violation_type {
+            SlashingViolation::Offline48Hours => 10,         // 10% for extended offline
+            SlashingViolation::LowUptime => 5,               // 5% for <90% uptime
+            SlashingViolation::ChallengeFailed => 15,        // 15% for failed challenge
+            SlashingViolation::DataIntegrityViolation => 25, // 25% for data corruption
+            SlashingViolation::MaliciousBehavior => 100,     // 100% for attacks
+        };
+
+        let slash_amount = stake_account
+            .staked_amount
+            .checked_mul(slash_percentage)
+            .ok_or(StakingError::Overflow)?
+            .checked_div(100)
+            .ok_or(StakingError::Underflow)?;
+
+        require!(
+            slash_amount > 0,
+            StakingError::InvalidAmount
+        );
+
+        require!(
+            stake_account.staked_amount >= slash_amount,
+            StakingError::InsufficientStakedBalance
+        );
+
+        let operator = stake_account.operator;
+
+        // Transfer slashed tokens to treasury
+        let vault_seeds: &[&[u8]] = &[
+            b"stake_vault",
+            &[ctx.bumps.stake_vault],
+        ];
+        let signer = &[vault_seeds];
+
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.stake_vault.to_account_info(),
+            to: ctx.accounts.treasury.to_account_info(),
+            authority: ctx.accounts.stake_vault.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        token::transfer(cpi_ctx, slash_amount)?;
+
+        // Update stake account
+        stake_account.staked_amount = stake_account
+            .staked_amount
+            .checked_sub(slash_amount)
+            .ok_or(StakingError::Underflow)?;
+        stake_account.updated_at = clock.unix_timestamp;
+
+        // Call Registry to update stake via CPI
+        let new_total_stake = stake_account.staked_amount;
+
+        let registry_cpi_program = ctx.accounts.registry_program.to_account_info();
+        let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
+            registry_config: ctx.accounts.registry_config.to_account_info(),
+            node_account: ctx.accounts.node_account.to_account_info(),
+            authority: ctx.accounts.staking_authority.to_account_info(),
+        };
+
+        let staking_seeds = &[
+            b"staking_authority".as_ref(),
+            &[ctx.bumps.staking_authority],
+        ];
+        let staking_signer = &[&staking_seeds[..]];
+
+        let registry_cpi_ctx = CpiContext::new_with_signer(
+            registry_cpi_program,
+            registry_cpi_accounts,
+            staking_signer
+        );
+        registry::cpi::update_stake(registry_cpi_ctx, new_total_stake)?;
+
+        msg!(
+            "Automated slash: {} tokens ({}%) from {} for {:?} - Evidence: {}",
+            slash_amount, slash_percentage, operator, violation_type, evidence_cid
+        );
+
+        emit!(AutomatedSlashEvent {
+            operator,
+            amount: slash_amount,
+            violation_type,
+            evidence_cid,
+            remaining_staked: stake_account.staked_amount,
             timestamp: clock.unix_timestamp,
         });
 
@@ -769,6 +885,69 @@ pub struct SlashStake<'info> {
     pub staking_authority: SystemAccount<'info>,
 }
 
+/// Automated slashing - oracle-triggered based on violation evidence
+/// Per whitepaper slashing triggers:
+/// - Offline48Hours: 10%
+/// - LowUptime: 5%
+/// - ChallengeFailed: 15%
+/// - DataIntegrityViolation: 25%
+/// - MaliciousBehavior: 100%
+#[derive(Accounts)]
+pub struct AutomatedSlash<'info> {
+    /// Global config stores authorized oracle (admin_authority)
+    #[account(
+        seeds = [b"global_config"],
+        bump = global_config.bump,
+        has_one = treasury @ StakingError::InvalidTreasury
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"stake", stake_account.operator.as_ref()],
+        bump = stake_account.bump
+    )]
+    pub stake_account: Account<'info, StakeAccount>,
+
+    #[account(
+        mut,
+        seeds = [b"stake_vault"],
+        bump
+    )]
+    pub stake_vault: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub treasury: Account<'info, TokenAccount>,
+
+    /// Oracle authorized to trigger automated slashing
+    /// Must match global_config.admin_authority
+    pub oracle: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+
+    // Registry CPI accounts for stake synchronization
+    /// CHECK: Registry program validated against global_config.registry_program_id
+    #[account(
+        constraint = registry_program.key() == global_config.registry_program_id @ StakingError::InvalidRegistryProgram
+    )]
+    pub registry_program: AccountInfo<'info>,
+
+    /// CHECK: Registry config PDA
+    #[account(mut)]
+    pub registry_config: AccountInfo<'info>,
+
+    /// CHECK: Node account in registry
+    #[account(mut)]
+    pub node_account: AccountInfo<'info>,
+
+    /// Staking program PDA for registry CPI signing
+    #[account(
+        seeds = [b"staking_authority"],
+        bump
+    )]
+    pub staking_authority: SystemAccount<'info>,
+}
+
 /// Events
 #[event]
 pub struct StakeAccountCreatedEvent {
@@ -814,6 +993,33 @@ pub struct StakeSlashedEvent {
     pub reason: String,
     pub remaining_staked: u64,
     pub timestamp: i64,
+}
+
+/// Event emitted when automated slashing occurs based on oracle evidence
+#[event]
+pub struct AutomatedSlashEvent {
+    pub operator: Pubkey,
+    pub amount: u64,
+    pub violation_type: SlashingViolation,
+    pub evidence_cid: String,
+    pub remaining_staked: u64,
+    pub timestamp: i64,
+}
+
+/// Slashing violation types per whitepaper
+/// Used by automated_slash instruction to determine penalty percentage
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlashingViolation {
+    /// Node offline for 48+ consecutive hours - 10% slash
+    Offline48Hours,
+    /// Uptime below 90% threshold - 5% slash
+    LowUptime,
+    /// Failed security challenge verification - 15% slash
+    ChallengeFailed,
+    /// Data integrity violation (corrupted/invalid data) - 25% slash
+    DataIntegrityViolation,
+    /// Malicious behavior detected (attacks, exploits) - 100% slash
+    MaliciousBehavior,
 }
 
 /// Custom errors
@@ -865,4 +1071,8 @@ pub enum StakingError {
     /// SECURITY FIX: New error for registry integration
     #[msg("Invalid registry program ID")]
     InvalidRegistryProgram,
+
+    /// Automated slashing: Oracle not authorized
+    #[msg("Unauthorized oracle for automated slashing")]
+    UnauthorizedOracle,
 }

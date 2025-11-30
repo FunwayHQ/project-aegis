@@ -168,6 +168,7 @@ export class DaoClient {
 
   /**
    * Initialize the DAO (one-time setup)
+   * Whitepaper compliant: includes discussion period parameter
    */
   async initializeDao(params: InitializeDaoParams): Promise<TransactionSignature> {
     const [daoConfigPDA] = getDaoConfigPDA(this.programId);
@@ -175,6 +176,7 @@ export class DaoClient {
     return (this.program.methods as any)
       .initializeDao(
         new BN(params.votingPeriod),
+        new BN(params.discussionPeriod),
         this.toBN(params.proposalBond),
         params.quorumPercentage,
         params.approvalThreshold
@@ -549,6 +551,7 @@ export class DaoClient {
       bondEscrow: account.bondEscrow,
       voteVault: account.voteVault,
       votingPeriod: account.votingPeriod,
+      discussionPeriod: account.discussionPeriod, // Whitepaper: 7 days
       proposalBond: account.proposalBond,
       quorumPercentage: account.quorumPercentage,
       approvalThreshold: account.approvalThreshold,
@@ -574,6 +577,7 @@ export class DaoClient {
       abstainVotes: account.abstainVotes,
       voteStart: account.voteStart,
       voteEnd: account.voteEnd,
+      executionEligibleAt: account.executionEligibleAt, // Whitepaper: 3-day timelock
       createdAt: account.createdAt,
       executedAt: account.executedAt,
       bondReturned: account.bondReturned,

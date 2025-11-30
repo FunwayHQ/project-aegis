@@ -216,6 +216,43 @@ export const ProposalDetail: FC = () => {
           </div>
         </div>
 
+        {/* Governance Timeline (Whitepaper) */}
+        <div className="mt-4 p-4 bg-gray-700/30 rounded-lg">
+          <h3 className="text-sm font-medium text-gray-400 mb-3">
+            Proposal Timeline (Whitepaper Compliant)
+          </h3>
+          <div className="flex flex-wrap gap-2 text-sm">
+            <div className="flex items-center space-x-2">
+              <span className="w-3 h-3 rounded-full bg-aegis-500"></span>
+              <span className="text-gray-400">Created:</span>
+              <span className="text-white">{formatTimestamp(proposal.createdAt)}</span>
+            </div>
+            <span className="text-gray-600">→</span>
+            <div className="flex items-center space-x-2">
+              <span className="w-3 h-3 rounded-full bg-blue-500"></span>
+              <span className="text-gray-400">Vote Start:</span>
+              <span className="text-white">{formatTimestamp(proposal.voteStart)}</span>
+            </div>
+            <span className="text-gray-600">→</span>
+            <div className="flex items-center space-x-2">
+              <span className="w-3 h-3 rounded-full bg-purple-500"></span>
+              <span className="text-gray-400">Vote End:</span>
+              <span className="text-white">{formatTimestamp(proposal.voteEnd)}</span>
+            </div>
+            {proposal.executionEligibleAt && (
+              <>
+                <span className="text-gray-600">→</span>
+                <div className="flex items-center space-x-2">
+                  <span className="w-3 h-3 rounded-full bg-yellow-500"></span>
+                  <span className="text-gray-400">Executable After:</span>
+                  <span className="text-yellow-400">{formatTimestamp(proposal.executionEligibleAt)}</span>
+                  <span className="text-gray-500 text-xs">(3-day timelock)</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
         {/* Execution Data */}
         {proposal.executionData && (
           <div className="mt-4 p-4 bg-gray-700/50 rounded-lg">

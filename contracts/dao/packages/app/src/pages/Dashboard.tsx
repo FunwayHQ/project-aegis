@@ -88,6 +88,36 @@ export const Dashboard: FC = () => {
         />
       </div>
 
+      {/* Governance Periods (Whitepaper Compliant) */}
+      <div className="card">
+        <h2 className="text-xl font-semibold text-white mb-4">
+          Governance Timeline (Whitepaper)
+        </h2>
+        <div className="flex flex-wrap gap-4">
+          <div className="flex-1 min-w-[150px] p-4 bg-gray-700/50 rounded-lg text-center">
+            <p className="text-sm text-gray-500 mb-1">Discussion Period</p>
+            <p className="text-lg font-medium text-aegis-400">
+              {formatDuration(config.discussionPeriod?.toNumber() || 604800)}
+            </p>
+            <p className="text-xs text-gray-500">Before voting starts</p>
+          </div>
+          <div className="flex items-center text-gray-500">→</div>
+          <div className="flex-1 min-w-[150px] p-4 bg-gray-700/50 rounded-lg text-center">
+            <p className="text-sm text-gray-500 mb-1">Voting Period</p>
+            <p className="text-lg font-medium text-blue-400">
+              {formatDuration(config.votingPeriod.toNumber())}
+            </p>
+            <p className="text-xs text-gray-500">Cast your vote</p>
+          </div>
+          <div className="flex items-center text-gray-500">→</div>
+          <div className="flex-1 min-w-[150px] p-4 bg-gray-700/50 rounded-lg text-center">
+            <p className="text-sm text-gray-500 mb-1">Execution Timelock</p>
+            <p className="text-lg font-medium text-yellow-400">3 days</p>
+            <p className="text-xs text-gray-500">Security delay</p>
+          </div>
+        </div>
+      </div>
+
       {/* DAO Configuration */}
       <div className="card">
         <h2 className="text-xl font-semibold text-white mb-4">

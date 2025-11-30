@@ -28,6 +28,8 @@ export default defineConfig({
     commonjsOptions: {
       transformMixedEsModules: true,
     },
+    // Increase chunk size warning limit for Solana/crypto libraries
+    chunkSizeWarningLimit: 1000, // 1MB
     rollupOptions: {
       onwarn(warning, warn) {
         // Suppress specific warning about unresolved polyfill shims
@@ -35,6 +37,17 @@ export default defineConfig({
           return;
         }
         warn(warning);
+      },
+      output: {
+        // Manual chunk splitting for better caching
+        manualChunks: {
+          // Solana/crypto libraries (rarely change)
+          solana: ["@solana/web3.js", "@coral-xyz/anchor", "bn.js"],
+          // Wallet adapters
+          wallets: ["@solana/wallet-adapter-react", "@solana/wallet-adapter-base"],
+          // React core
+          react: ["react", "react-dom", "react-router-dom"],
+        },
       },
     },
   },

@@ -39,7 +39,7 @@ export enum VoteChoice {
 // ============================================================================
 
 /**
- * DAO configuration account
+ * DAO configuration account (Whitepaper Compliant)
  */
 export interface DaoConfig {
   authority: PublicKey;
@@ -48,6 +48,7 @@ export interface DaoConfig {
   bondEscrow: PublicKey;
   voteVault: PublicKey;
   votingPeriod: BN;
+  discussionPeriod: BN; // 7 days before voting starts (whitepaper)
   proposalBond: BN;
   quorumPercentage: number;
   approvalThreshold: number;
@@ -59,7 +60,7 @@ export interface DaoConfig {
 }
 
 /**
- * Proposal account
+ * Proposal account (Whitepaper Compliant)
  */
 export interface Proposal {
   proposalId: BN;
@@ -74,6 +75,7 @@ export interface Proposal {
   abstainVotes: BN;
   voteStart: BN;
   voteEnd: BN;
+  executionEligibleAt: BN; // 3-day timelock after voting ends (whitepaper)
   createdAt: BN;
   executedAt: BN | null;
   bondReturned: boolean;
@@ -132,10 +134,11 @@ export interface ExecutionData {
 // ============================================================================
 
 /**
- * Parameters for initializing the DAO
+ * Parameters for initializing the DAO (Whitepaper Compliant)
  */
 export interface InitializeDaoParams {
   votingPeriod: BN | number;
+  discussionPeriod: BN | number; // 7 days default per whitepaper
   proposalBond: BN | number | bigint;
   quorumPercentage: number;
   approvalThreshold: number;

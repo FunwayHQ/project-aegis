@@ -1,8 +1,15 @@
 use crate::bot_management::{BotAction, BotManager};
 use crate::cache::{generate_cache_key, CacheClient, CacheControl};
+use crate::challenge::{
+    ChallengeManager, ChallengeType,
+    CHALLENGE_TOKEN_COOKIE, CHALLENGE_TOKEN_HEADER,
+};
+use crate::enhanced_bot_detection::EnhancedBotDetector;
 use crate::ip_extraction::{extract_client_ip, IpExtractionConfig};
 use crate::module_dispatcher::ModuleDispatcher;
 use crate::route_config::RouteConfig;
+use crate::tls_fingerprint::TlsFingerprint;
+use crate::tls_intercept::FingerprintStore;
 use crate::wasm_runtime::{WasmRuntime, WasmExecutionContext};
 use async_trait::async_trait;
 use hyper::body::Bytes;
@@ -20,6 +27,9 @@ pub struct ProxyContext {
     pub waf_blocked: bool,       // Whether request was blocked by WAF
     pub bot_blocked: bool,       // Whether request was blocked by bot management
     pub request_body: Vec<u8>,   // Buffered request body for WAF inspection
+    pub tls_fingerprint: Option<TlsFingerprint>, // Sprint 19: TLS fingerprint from intercept layer
+    pub challenge_issued: bool,  // Sprint 20: Whether a JS challenge was issued
+    pub challenge_verified: bool, // Sprint 20: Whether client has valid challenge token
 }
 
 /// AEGIS Pingora-based reverse proxy
@@ -44,6 +54,12 @@ pub struct AegisProxy {
     pub route_config: Option<Arc<RouteConfig>>,
     /// Sprint 16: Module dispatcher for executing Wasm pipelines
     pub module_dispatcher: Option<Arc<ModuleDispatcher>>,
+    /// Sprint 19: Shared fingerprint store from TLS intercept layer
+    pub fingerprint_store: Option<Arc<FingerprintStore>>,
+    /// Sprint 19: Enhanced bot detector with TLS fingerprinting
+    pub enhanced_bot_detector: Option<Arc<EnhancedBotDetector>>,
+    /// Sprint 20: JavaScript Challenge Manager
+    pub challenge_manager: Option<Arc<ChallengeManager>>,
 }
 
 impl AegisProxy {
@@ -113,6 +129,9 @@ impl AegisProxy {
             ip_extraction_config: IpExtractionConfig::default(),
             route_config: None,
             module_dispatcher: None,
+            fingerprint_store: None,
+            enhanced_bot_detector: None,
+            challenge_manager: None,
         }
     }
 
@@ -167,7 +186,133 @@ impl AegisProxy {
             ip_extraction_config: IpExtractionConfig::default(),
             route_config,
             module_dispatcher,
+            fingerprint_store: None,
+            enhanced_bot_detector: None,
+            challenge_manager: None,
         }
+    }
+
+    /// Sprint 19: Set fingerprint store for TLS fingerprint extraction
+    pub fn with_fingerprint_store(mut self, store: Arc<FingerprintStore>) -> Self {
+        self.fingerprint_store = Some(store);
+        self
+    }
+
+    /// Sprint 19: Set enhanced bot detector for composite scoring
+    pub fn with_enhanced_bot_detector(mut self, detector: Arc<EnhancedBotDetector>) -> Self {
+        self.enhanced_bot_detector = Some(detector);
+        self
+    }
+
+    /// Sprint 20: Set challenge manager for JavaScript challenges
+    pub fn with_challenge_manager(mut self, manager: Arc<ChallengeManager>) -> Self {
+        self.challenge_manager = Some(manager);
+        self
+    }
+
+    /// Sprint 20: Handle challenge verification endpoint
+    async fn handle_challenge_verification(
+        &self,
+        session: &mut Session,
+        ctx: &mut ProxyContext,
+        challenge_manager: &Arc<ChallengeManager>,
+        client_ip: &str,
+    ) -> Result<bool> {
+        // Read request body (challenge solution)
+        // Note: In a production implementation, we'd buffer the body properly
+        // For now, we'll parse from available body data
+
+        // Create a simple JSON response
+        let response_json = match self.parse_and_verify_challenge(session, challenge_manager, client_ip).await {
+            Ok(result) => {
+                ctx.challenge_verified = result.success;
+                serde_json::to_string(&result).unwrap_or_else(|_| {
+                    r#"{"success":false,"error":"Internal error"}"#.to_string()
+                })
+            }
+            Err(e) => {
+                log::error!("Challenge verification error: {}", e);
+                format!(r#"{{"success":false,"error":"{}"}}"#, e)
+            }
+        };
+
+        // Send response
+        let mut header = pingora::http::ResponseHeader::build(200, Some(4))?;
+        header.insert_header("Content-Type", "application/json")?;
+        header.insert_header("Cache-Control", "no-store")?;
+        session.write_response_header(Box::new(header), false).await?;
+        session
+            .write_response_body(Some(Bytes::from(response_json)), true)
+            .await?;
+
+        Ok(true) // Request handled, skip upstream
+    }
+
+    /// Sprint 20: Parse challenge solution from request body and verify
+    async fn parse_and_verify_challenge(
+        &self,
+        _session: &mut Session,
+        _challenge_manager: &Arc<ChallengeManager>,
+        client_ip: &str,
+    ) -> anyhow::Result<crate::challenge::VerificationResult> {
+        // For now, return a placeholder - body parsing in Pingora requires careful handling
+        // In production, we'd use request_body_filter to buffer the body first
+        //
+        // The actual flow would be:
+        // 1. Client POSTs JSON with challenge_id, pow_nonce, and fingerprint
+        // 2. We parse the JSON into ChallengeSolution
+        // 3. We call challenge_manager.verify_solution()
+        // 4. Return the VerificationResult
+
+        // Placeholder implementation - in real usage, parse from buffered body
+        log::debug!("Challenge verification requested from {}", client_ip);
+
+        // For testing, create a mock failed result
+        // Real implementation would parse the POST body
+        Ok(crate::challenge::VerificationResult {
+            success: false,
+            token: None,
+            error: Some("Body parsing not implemented in proxy layer - use standalone endpoint".to_string()),
+            score: 0,
+            issues: vec!["proxy_body_parsing_todo".to_string()],
+        })
+    }
+
+    /// Sprint 20: Issue challenge page response
+    async fn issue_challenge_response(
+        &self,
+        session: &mut Session,
+        ctx: &mut ProxyContext,
+        challenge_manager: &Arc<ChallengeManager>,
+        client_ip: &str,
+    ) -> Result<bool> {
+        // Issue a new challenge
+        let challenge = challenge_manager.issue_challenge(client_ip, ChallengeType::Managed).await;
+
+        // Generate challenge page HTML
+        let challenge_page = challenge_manager.generate_challenge_page(&challenge);
+
+        ctx.challenge_issued = true;
+
+        log::info!(
+            "Challenge issued: id={}, difficulty={}, expires_at={}, ip={}",
+            challenge.id,
+            challenge.pow_difficulty,
+            challenge.expires_at,
+            client_ip
+        );
+
+        // Send challenge page
+        let mut header = pingora::http::ResponseHeader::build(403, Some(4))?;
+        header.insert_header("Content-Type", "text/html; charset=utf-8")?;
+        header.insert_header("Cache-Control", "no-store")?;
+        header.insert_header("X-Aegis-Challenge", &challenge.id)?;
+        session.write_response_header(Box::new(header), false).await?;
+        session
+            .write_response_body(Some(Bytes::from(challenge_page)), true)
+            .await?;
+
+        Ok(true) // Request handled, skip upstream
     }
 }
 
@@ -184,44 +329,194 @@ impl ProxyHttp for AegisProxy {
             waf_blocked: false,
             bot_blocked: false,
             request_body: Vec::new(),
+            tls_fingerprint: None,
+            challenge_issued: false,
+            challenge_verified: false,
         }
     }
 
     /// Request filter - check bot management, WAF, and cache before proxying
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
+        // Extract common request info
+        let method = session.req_header().method.as_str();
+        let uri = session.req_header().uri.path();
+
+        // Extract client IP using Sprint 12.5 IP extraction
+        let connection_ip = session
+            .downstream_session
+            .client_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        // Collect headers for IP extraction
+        let headers: Vec<(String, String)> = session
+            .req_header()
+            .headers
+            .iter()
+            .filter_map(|(name, value)| {
+                value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
+            })
+            .collect();
+
+        let ip_source = extract_client_ip(&self.ip_extraction_config, &connection_ip, &headers);
+        let ip = ip_source.ip();
+
         // ============================================
-        // PHASE 0: Bot Management (Sprint 9)
+        // PHASE -1: Sprint 20 Challenge Verification Endpoint
         // ============================================
-        if let Some(bot_manager) = &self.bot_manager {
-            // Extract User-Agent
-            let user_agent = session
+        if let Some(challenge_manager) = &self.challenge_manager {
+            // Handle challenge verification endpoint
+            if method == "POST" && uri == "/aegis/challenge/verify" {
+                return self.handle_challenge_verification(session, ctx, challenge_manager, &ip).await;
+            }
+
+            // Check for existing valid challenge token (cookie or header)
+            let token = session
                 .req_header()
                 .headers
-                .get("User-Agent")
+                .get(CHALLENGE_TOKEN_HEADER)
                 .and_then(|v| v.to_str().ok())
-                .unwrap_or("");
+                .map(|s| s.to_string())
+                .or_else(|| {
+                    // Check cookie
+                    session
+                        .req_header()
+                        .headers
+                        .get("Cookie")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|cookies| {
+                            for cookie in cookies.split(';') {
+                                let cookie = cookie.trim();
+                                if let Some(value) = cookie.strip_prefix(&format!("{}=", CHALLENGE_TOKEN_COOKIE)) {
+                                    return Some(value.to_string());
+                                }
+                            }
+                            None
+                        })
+                });
 
-            // Extract client IP using Sprint 12.5 IP extraction (X-Forwarded-For with trusted proxy validation)
-            let connection_ip = session
-                .downstream_session
-                .client_addr()
-                .map(|addr| addr.to_string())
-                .unwrap_or_else(|| "unknown".to_string());
+            if let Some(token_str) = token {
+                match challenge_manager.verify_token(&token_str, &ip) {
+                    Ok(token) => {
+                        ctx.challenge_verified = true;
+                        log::debug!(
+                            "Valid challenge token: score={}, type={:?}",
+                            token.score,
+                            token.ctype
+                        );
+                    }
+                    Err(e) => {
+                        log::debug!("Invalid challenge token: {}", e);
+                    }
+                }
+            }
+        }
 
-            // Collect headers for IP extraction
-            let headers: Vec<(String, String)> = session
-                .req_header()
-                .headers
-                .iter()
-                .filter_map(|(name, value)| {
-                    value.to_str().ok().map(|v| (name.to_string(), v.to_string()))
-                })
-                .collect();
+        // ============================================
+        // PHASE 0: Bot Management (Sprint 9 + Sprint 19 TLS Fingerprinting)
+        // ============================================
 
-            let ip_source = extract_client_ip(&self.ip_extraction_config, &connection_ip, &headers);
-            let ip = ip_source.ip();
+        // Extract User-Agent (needed for both legacy and enhanced bot detection)
+        let user_agent = session
+            .req_header()
+            .headers
+            .get("User-Agent")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
 
-            // Analyze request
+        // Sprint 19: Try to get TLS fingerprint from intercept layer
+        if let Some(store) = &self.fingerprint_store {
+            if let Some(client_addr) = session.downstream_session.client_addr() {
+                // Convert Pingora SocketAddr to std::net::SocketAddr
+                if let Some(std_addr) = client_addr.as_inet() {
+                    // Try to retrieve fingerprint captured by TLS intercept layer
+                    ctx.tls_fingerprint = store.take(std_addr).await;
+                    if ctx.tls_fingerprint.is_some() {
+                        log::debug!(
+                            "TLS fingerprint retrieved for {}: JA3={}",
+                            std_addr,
+                            ctx.tls_fingerprint.as_ref().unwrap().ja3
+                        );
+                    }
+                }
+            }
+        }
+
+        // Sprint 19: Use enhanced bot detector with TLS fingerprinting if available
+        if let Some(enhanced_detector) = &self.enhanced_bot_detector {
+            match enhanced_detector.analyze(user_agent, &ip, ctx.tls_fingerprint.as_ref()) {
+                Ok((trust_score, verdict, action)) => {
+                    log::debug!(
+                        "Enhanced bot detection: score={}, verdict={:?}, action={:?}, UA={}, IP={}, TLS={}",
+                        trust_score.score,
+                        verdict,
+                        action,
+                        user_agent,
+                        ip,
+                        ctx.tls_fingerprint.as_ref().map(|f| f.ja3.as_str()).unwrap_or("none")
+                    );
+
+                    match action {
+                        BotAction::Block => {
+                            ctx.bot_blocked = true;
+                            log::warn!(
+                                "BOT BLOCKED (score={}): {:?} - UA: {}, Reasons: {:?}",
+                                trust_score.score,
+                                verdict,
+                                user_agent,
+                                trust_score.reasons
+                            );
+
+                            let mut header = pingora::http::ResponseHeader::build(403, Some(3))?;
+                            header.insert_header("Content-Type", "text/plain")?;
+                            session.write_response_header(Box::new(header), true).await?;
+                            session
+                                .write_response_body(
+                                    Some("403 Forbidden - Bot detected".into()),
+                                    true,
+                                )
+                                .await?;
+
+                            return Ok(true);
+                        }
+                        BotAction::Challenge => {
+                            // Sprint 20: Issue JS challenge if client doesn't have valid token
+                            if !ctx.challenge_verified {
+                                if let Some(challenge_manager) = &self.challenge_manager {
+                                    log::info!(
+                                        "BOT CHALLENGE (score={}): {:?} - Issuing JS challenge for UA: {}",
+                                        trust_score.score,
+                                        verdict,
+                                        user_agent
+                                    );
+                                    return self.issue_challenge_response(session, ctx, challenge_manager, &ip).await;
+                                }
+                            }
+                            log::info!(
+                                "BOT CHALLENGE (score={}): {:?} - UA: {} (token verified, allowing)",
+                                trust_score.score,
+                                verdict,
+                                user_agent
+                            );
+                        }
+                        BotAction::Log => {
+                            log::info!(
+                                "BOT LOGGED (score={}): {:?} - UA: {} (allowed)",
+                                trust_score.score,
+                                verdict,
+                                user_agent
+                            );
+                        }
+                        BotAction::Allow => {}
+                    }
+                }
+                Err(e) => {
+                    log::error!("Enhanced bot detection error: {} - allowing request", e);
+                }
+            }
+        }
+        // Fallback to legacy bot manager if enhanced detector not available
+        else if let Some(bot_manager) = &self.bot_manager {
             match bot_manager.analyze_request(user_agent, &ip) {
                 Ok((verdict, action)) => {
                     log::debug!(
@@ -237,7 +532,6 @@ impl ProxyHttp for AegisProxy {
                             ctx.bot_blocked = true;
                             log::warn!("BOT BLOCKED: {:?} - User-Agent: {}", verdict, user_agent);
 
-                            // Send 403 Forbidden response
                             let mut header = pingora::http::ResponseHeader::build(403, Some(3))?;
                             header.insert_header("Content-Type", "text/plain")?;
                             session.write_response_header(Box::new(header), true).await?;
@@ -251,14 +545,22 @@ impl ProxyHttp for AegisProxy {
                             return Ok(true);
                         }
                         BotAction::Challenge => {
-                            // For PoC, just log the challenge
+                            // Sprint 20: Issue JS challenge if client doesn't have valid token
+                            if !ctx.challenge_verified {
+                                if let Some(challenge_manager) = &self.challenge_manager {
+                                    log::info!(
+                                        "BOT CHALLENGE: {:?} - Issuing JS challenge for UA: {}",
+                                        verdict,
+                                        user_agent
+                                    );
+                                    return self.issue_challenge_response(session, ctx, challenge_manager, &ip).await;
+                                }
+                            }
                             log::info!(
-                                "BOT CHALLENGE: {:?} - Would issue JS challenge for UA: {}",
+                                "BOT CHALLENGE: {:?} - UA: {} (token verified, allowing)",
                                 verdict,
                                 user_agent
                             );
-                            // In production, you would return a challenge page here
-                            // For now, allow the request to continue
                         }
                         BotAction::Log => {
                             log::info!(
@@ -267,13 +569,10 @@ impl ProxyHttp for AegisProxy {
                                 user_agent
                             );
                         }
-                        BotAction::Allow => {
-                            // Continue normally
-                        }
+                        BotAction::Allow => {}
                     }
                 }
                 Err(e) => {
-                    // Log error but don't block (fail open)
                     log::error!("Bot detection error: {} - allowing request", e);
                 }
             }

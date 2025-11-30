@@ -47,7 +47,7 @@ pub async fn import(keypair_path: &str) -> Result<()> {
     let bytes: Vec<u8> = serde_json::from_str(&contents)
         .context("Invalid keypair file format")?;
 
-    let keypair = Keypair::from_bytes(&bytes)
+    let keypair = Keypair::try_from(bytes.as_slice())
         .context("Failed to parse keypair")?;
 
     println!("{}", "✓ Wallet imported successfully!".green());
@@ -84,7 +84,7 @@ pub fn load_wallet() -> Result<Keypair> {
 
     let contents = std::fs::read_to_string(&wallet_path)?;
     let bytes: Vec<u8> = serde_json::from_str(&contents)?;
-    let keypair = Keypair::from_bytes(&bytes)?;
+    let keypair = Keypair::try_from(bytes.as_slice())?;
 
     Ok(keypair)
 }

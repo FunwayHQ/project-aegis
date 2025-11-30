@@ -481,7 +481,7 @@ Phase 4 focuses on achieving feature parity with enterprise CDN/security provide
     1. Chrome JA3 + curl User-Agent = HIGH suspicion (mismatch)
     2. Unknown JA3 + legitimate User-Agent = MEDIUM suspicion
     3. Known browser JA3 + matching User-Agent = LOW suspicion
-  * **Output:** Rust code for TLS extraction, fingerprint computation, database schema, and integration with bot management."
+  * **Output:** Rust code for TLS extraction, fingerprint computation, database schema, and integration with bot management. All with comprehensive tests."
 
 **Sprint 20: JavaScript Challenge System (Turnstile-like)**
 
@@ -514,7 +514,7 @@ Phase 4 focuses on achieving feature parity with enterprise CDN/security provide
     1. Suspicious TLS fingerprint → invisible challenge
     2. Failed invisible challenge → managed challenge
     3. Failed managed challenge → interactive or block
-  * **Output:** JavaScript challenge library, Rust verification endpoint, JWT token structure, and integration flow."
+  * **Output:** JavaScript challenge library, Rust verification endpoint, JWT token structure, and integration flow. All with comprehensive tests."
 
 **Sprint 21: Behavioral Analysis & Trust Scoring**
 
@@ -595,7 +595,7 @@ Phase 4 focuses on achieving feature parity with enterprise CDN/security provide
     2. Parameter count anomaly
     3. Character entropy (high entropy = potential encoded payload)
     4. SQL/XSS keyword density
-  * **Output:** Rule parser implementation, CRS import process, custom rule YAML schema, and anomaly scoring logic."
+  * **Output:** Rule parser implementation, CRS import process, custom rule YAML schema, and anomaly scoring logic. All with comprehensive tests."
 
 **Sprint 23: API Security Suite**
 
@@ -633,7 +633,7 @@ Phase 4 focuses on achieving feature parity with enterprise CDN/security provide
     1. /login: 5 req/min per IP
     2. /api/users: 100 req/min per token
     3. Adaptive thresholds based on traffic patterns
-  * **Output:** API discovery implementation, schema validator, JWT validation, sequence detection algorithms, and rate limiting configuration."
+  * **Output:** API discovery implementation, schema validator, JWT validation, sequence detection algorithms, and rate limiting configuration. All with comprehensive tests."
 
 **Sprint 24: Distributed Enforcement & Global Blocklist Sync**
 
@@ -667,7 +667,7 @@ Phase 4 focuses on achieving feature parity with enterprise CDN/security provide
     1. Challenge completion published to P2P
     2. Other nodes recognize completed challenges
     3. Reduces user friction across global network
-  * **Output:** Enhanced threat intel protocol, eBPF integration, trust score sharing, and IPv6 support."
+  * **Output:** Enhanced threat intel protocol, eBPF integration, trust score sharing, and IPv6 support.  All with comprehensive tests."
 
 ---
 
