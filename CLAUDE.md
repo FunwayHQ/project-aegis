@@ -524,14 +524,19 @@ aegis-cdn list
 - ✅ **Sprint 11:** CRDTs + NATS JetStream (G-Counter, distributed rate limiter) - 24 tests
 - ✅ **Sprint 12:** Verifiable Analytics (Ed25519 signatures, SQLite, HTTP API) - 17 tests
 
-### Phase 3: Edge Compute & Governance (Sprints 13-18) - 🚧 IN PROGRESS (83%)
+### Phase 3: Edge Compute & Governance (Sprints 13-18) - ✅ COMPLETE (100%)
 - ✅ **Sprint 13:** Wasm Edge Functions Runtime (custom logic at edge, host API for cache/HTTP)
 - ✅ **Sprint 14:** Extended Host API (DragonflyDB cache ops, controlled HTTP requests)
 - ✅ **Sprint 15:** WAF Migration to Wasm + Ed25519 Module Signatures
 - ✅ **Sprint 15.5:** Architectural Cleanup (PN-Counter migration, HTTPS-only enforcement)
 - ✅ **Sprint 16:** Route-based Dispatch (YAML/TOML config, module pipelines) - 156 tests
 - ✅ **Sprint 17:** IPFS/Filecoin Integration (CDN fallback, local caching) - 11 tests
-- 🚧 **Sprint 18:** DAO governance smart contracts (proposals, voting, treasury)
+- ✅ **Sprint 18:** DAO Governance Smart Contracts (Security Hardened) - 14 tests
+  - Snapshot-based voting (flash loan protection)
+  - 48-hour timelock for config changes
+  - Token account ownership/mint validation
+  - Recipient validation in treasury execution
+  - 13 instructions including `register_vote_snapshot`, `queue_config_update`, `cancel_proposal`
 
 ### Phase 4: Advanced Security & Mainnet (Sprints 19-30)
 

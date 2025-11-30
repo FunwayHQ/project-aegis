@@ -102,10 +102,10 @@ NATS JetStream (broadcast state updates via CRDTs)
 
 ## Development Status
 
-**Current**: 17 of 24 sprints complete (71%)
+**Current**: 18 of 24 sprints complete (75%)
 **Phase 1**: ✅ COMPLETE (100%)
 **Phase 2**: ✅ COMPLETE (100%)
-**Phase 3**: 🚧 IN PROGRESS (83%) - 5 of 6 sprints done!
+**Phase 3**: ✅ COMPLETE (100%) - All 6 sprints done!
 
 ### ✅ **Phase 1: Foundation & Core Node (Sprints 1-6)** - COMPLETE
 
@@ -210,17 +210,19 @@ NATS JetStream (broadcast state updates via CRDTs)
 | **Sprint 15** | WAF Wasm Migration + Ed25519 Signatures | ✅ COMPLETE | 30+ ✅ |
 | **Sprint 16** | Route-based Module Dispatch | ✅ COMPLETE | 156 ✅ |
 | **Sprint 17** | IPFS/Filecoin CDN + Content Publisher | ✅ COMPLETE | 11 ✅ |
-| **Sprint 18** | DAO Governance Contracts | ✅ COMPLETE | 14 ✅ |
+| **Sprint 18** | DAO Governance Contracts (Security Hardened) | ✅ COMPLETE | 14 ✅ |
 
 **Phase 3 Progress: 100% COMPLETE** ✅ (6 of 6 sprints done)
 
 **Recent Milestones:**
 - 🎉 **PHASE 3 COMPLETE** - All Edge Compute & Governance sprints done! (November 30, 2025)
-- 🎉 **Sprint 18 COMPLETE** - DAO Governance Smart Contracts (November 30, 2025)
+- 🔒 **Sprint 18 SECURITY HARDENED** - DAO Governance Smart Contracts (November 30, 2025)
   - Full-featured DAO with proposals, voting, and treasury management
-  - Token-weighted voting with quorum and approval thresholds
-  - Proposal types: General, Treasury Withdrawal, Parameter Change
-  - 9 instructions: initialize_dao, create_proposal, cast_vote, finalize_proposal, execute_proposal, etc.
+  - **Flash Loan Protection**: Snapshot-based voting locks vote weight before voting
+  - **48-Hour Timelock**: Config changes require queuing + waiting period
+  - **Recipient Validation**: Execute validates recipient matches proposal data
+  - **Token Account Verification**: Owner and mint constraints on all accounts
+  - 13 instructions including `register_vote_snapshot`, `queue_config_update`, `cancel_proposal`
   - 14 comprehensive tests (100% core functionality coverage)
   - Deployed to Devnet: `9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz`
 - 🎉 **Sprint 17 COMPLETE** - IPFS/Filecoin CDN Integration (November 2025)
@@ -383,14 +385,14 @@ aegis-cdn list
 - [x] CRDTs + NATS for global state sync
 - [x] Verifiable analytics framework
 
-### Phase 3: Compute & Governance (Q1-Q2 2026) - 83% Complete
+### Phase 3: Compute & Governance (Q1-Q2 2026) ✓ COMPLETE
 - [x] Wasm edge functions runtime
 - [x] Extended Host API (cache operations, HTTP requests)
 - [x] Ed25519 module signatures
 - [x] Route-based module dispatch (YAML/TOML config)
 - [x] IPFS/Filecoin CDN integration
 - [x] Content Publisher CLI (`aegis-cdn`)
-- [ ] DAO governance (proposals, voting, treasury)
+- [x] DAO governance (proposals, voting, treasury) - **Security Hardened**
 
 ### Phase 4: Advanced Security (Q2-Q3 2026) - Cloudflare Parity
 - [ ] TLS fingerprinting (JA3/JA4) for bot detection

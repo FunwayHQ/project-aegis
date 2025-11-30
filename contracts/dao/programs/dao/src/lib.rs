@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Token, TokenAccount, Transfer};
+use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 
 declare_id!("9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz");
 
@@ -15,6 +15,9 @@ const MAX_VOTING_PERIOD: i64 = 14 * 24 * 60 * 60;
 /// Proposal bond amount (100 AEGIS tokens - prevents spam)
 const DEFAULT_PROPOSAL_BOND: u64 = 100_000_000_000;
 
+/// Minimum proposal bond (1 AEGIS token)
+const MIN_PROPOSAL_BOND: u64 = 1_000_000_000;
+
 /// Quorum percentage (10% of total supply must vote)
 const DEFAULT_QUORUM_PERCENTAGE: u8 = 10;
 
@@ -26,6 +29,9 @@ const MAX_TITLE_LENGTH: usize = 128;
 
 /// Maximum description CID length (IPFS CID)
 const MAX_DESCRIPTION_CID_LENGTH: usize = 64;
+
+/// Timelock delay for config changes (48 hours)
+const CONFIG_TIMELOCK_DELAY: i64 = 48 * 60 * 60;
 
 #[program]
 pub mod dao {
@@ -45,6 +51,10 @@ pub mod dao {
             DaoError::InvalidVotingPeriod
         );
         require!(
+            proposal_bond >= MIN_PROPOSAL_BOND,
+            DaoError::InvalidProposalBond
+        );
+        require!(
             quorum_percentage > 0 && quorum_percentage <= 100,
             DaoError::InvalidQuorumPercentage
         );
@@ -58,6 +68,7 @@ pub mod dao {
         dao_config.authority = ctx.accounts.authority.key();
         dao_config.treasury = ctx.accounts.treasury.key();
         dao_config.governance_token_mint = ctx.accounts.governance_token_mint.key();
+        dao_config.bond_escrow = ctx.accounts.bond_escrow.key();
         dao_config.voting_period = voting_period;
         dao_config.proposal_bond = proposal_bond;
         dao_config.quorum_percentage = quorum_percentage;
@@ -65,6 +76,7 @@ pub mod dao {
         dao_config.proposal_count = 0;
         dao_config.total_treasury_deposits = 0;
         dao_config.paused = false;
+        dao_config.pending_config_change = None;
         dao_config.bump = ctx.bumps.dao_config;
 
         msg!(
@@ -86,47 +98,134 @@ pub mod dao {
         Ok(())
     }
 
-    /// Update DAO configuration (authority only)
-    pub fn update_dao_config(
-        ctx: Context<UpdateDaoConfig>,
+    /// Queue a DAO config update (subject to timelock)
+    pub fn queue_config_update(
+        ctx: Context<QueueConfigUpdate>,
         new_voting_period: Option<i64>,
         new_proposal_bond: Option<u64>,
         new_quorum_percentage: Option<u8>,
         new_approval_threshold: Option<u8>,
     ) -> Result<()> {
         let dao_config = &mut ctx.accounts.dao_config;
+        let clock = Clock::get()?;
 
+        // Validate new parameters if provided
         if let Some(period) = new_voting_period {
             require!(
                 period >= MIN_VOTING_PERIOD && period <= MAX_VOTING_PERIOD,
                 DaoError::InvalidVotingPeriod
             );
-            dao_config.voting_period = period;
-            msg!("Voting period updated to: {}s", period);
         }
-
         if let Some(bond) = new_proposal_bond {
-            dao_config.proposal_bond = bond;
-            msg!("Proposal bond updated to: {}", bond);
+            require!(bond >= MIN_PROPOSAL_BOND, DaoError::InvalidProposalBond);
         }
-
         if let Some(quorum) = new_quorum_percentage {
             require!(
                 quorum > 0 && quorum <= 100,
                 DaoError::InvalidQuorumPercentage
             );
-            dao_config.quorum_percentage = quorum;
-            msg!("Quorum percentage updated to: {}%", quorum);
         }
-
         if let Some(threshold) = new_approval_threshold {
             require!(
                 threshold > 0 && threshold <= 100,
                 DaoError::InvalidApprovalThreshold
             );
+        }
+
+        // Queue the config change with timelock
+        let execute_after = clock.unix_timestamp + CONFIG_TIMELOCK_DELAY;
+        dao_config.pending_config_change = Some(PendingConfigChange {
+            new_voting_period,
+            new_proposal_bond,
+            new_quorum_percentage,
+            new_approval_threshold,
+            queued_at: clock.unix_timestamp,
+            execute_after,
+        });
+
+        msg!(
+            "Config update queued, executable after: {}",
+            execute_after
+        );
+
+        emit!(ConfigUpdateQueuedEvent {
+            new_voting_period,
+            new_proposal_bond,
+            new_quorum_percentage,
+            new_approval_threshold,
+            execute_after,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Execute a queued config update (after timelock expires)
+    pub fn execute_config_update(ctx: Context<ExecuteConfigUpdate>) -> Result<()> {
+        let dao_config = &mut ctx.accounts.dao_config;
+        let clock = Clock::get()?;
+
+        // Check there's a pending change
+        let pending = dao_config
+            .pending_config_change
+            .clone()
+            .ok_or(DaoError::NoPendingConfigChange)?;
+
+        // Check timelock has expired
+        require!(
+            clock.unix_timestamp >= pending.execute_after,
+            DaoError::TimelockNotExpired
+        );
+
+        // Apply changes
+        if let Some(period) = pending.new_voting_period {
+            dao_config.voting_period = period;
+            msg!("Voting period updated to: {}s", period);
+        }
+        if let Some(bond) = pending.new_proposal_bond {
+            dao_config.proposal_bond = bond;
+            msg!("Proposal bond updated to: {}", bond);
+        }
+        if let Some(quorum) = pending.new_quorum_percentage {
+            dao_config.quorum_percentage = quorum;
+            msg!("Quorum percentage updated to: {}%", quorum);
+        }
+        if let Some(threshold) = pending.new_approval_threshold {
             dao_config.approval_threshold = threshold;
             msg!("Approval threshold updated to: {}%", threshold);
         }
+
+        // Clear pending change
+        dao_config.pending_config_change = None;
+
+        emit!(ConfigUpdateExecutedEvent {
+            voting_period: dao_config.voting_period,
+            proposal_bond: dao_config.proposal_bond,
+            quorum_percentage: dao_config.quorum_percentage,
+            approval_threshold: dao_config.approval_threshold,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Cancel a queued config update
+    pub fn cancel_config_update(ctx: Context<CancelConfigUpdate>) -> Result<()> {
+        let dao_config = &mut ctx.accounts.dao_config;
+
+        require!(
+            dao_config.pending_config_change.is_some(),
+            DaoError::NoPendingConfigChange
+        );
+
+        dao_config.pending_config_change = None;
+
+        msg!("Pending config update cancelled");
+
+        emit!(ConfigUpdateCancelledEvent {
+            authority: ctx.accounts.authority.key(),
+            timestamp: Clock::get()?.unix_timestamp,
+        });
 
         Ok(())
     }
@@ -163,15 +262,15 @@ pub mod dao {
 
         // Validate inputs
         require!(
-            title.len() > 0 && title.len() <= MAX_TITLE_LENGTH,
+            !title.is_empty() && title.len() <= MAX_TITLE_LENGTH,
             DaoError::InvalidTitleLength
         );
         require!(
-            description_cid.len() > 0 && description_cid.len() <= MAX_DESCRIPTION_CID_LENGTH,
+            !description_cid.is_empty() && description_cid.len() <= MAX_DESCRIPTION_CID_LENGTH,
             DaoError::InvalidDescriptionCidLength
         );
 
-        // Transfer proposal bond from proposer to bond escrow
+        // Transfer proposal bond from proposer to bond escrow (PDA)
         let cpi_accounts = Transfer {
             from: ctx.accounts.proposer_token_account.to_account_info(),
             to: ctx.accounts.bond_escrow.to_account_info(),
@@ -186,6 +285,9 @@ pub mod dao {
             .proposal_count
             .checked_add(1)
             .ok_or(DaoError::Overflow)?;
+
+        // Get current token supply for snapshot
+        let snapshot_supply = ctx.accounts.governance_token_mint.supply;
 
         // Initialize proposal
         let proposal = &mut ctx.accounts.proposal;
@@ -204,6 +306,7 @@ pub mod dao {
         proposal.created_at = clock.unix_timestamp;
         proposal.executed_at = None;
         proposal.bond_returned = false;
+        proposal.snapshot_supply = snapshot_supply;
         proposal.bump = ctx.bumps.proposal;
 
         msg!(
@@ -219,18 +322,110 @@ pub mod dao {
             title,
             description_cid,
             vote_end: proposal.vote_end,
+            snapshot_supply,
             timestamp: clock.unix_timestamp,
         });
 
         Ok(())
     }
 
-    /// Cast a vote on a proposal
-    pub fn cast_vote(
-        ctx: Context<CastVote>,
-        vote_choice: VoteChoice,
-    ) -> Result<()> {
+    /// Cancel a proposal (proposer only, before voting ends)
+    pub fn cancel_proposal(ctx: Context<CancelProposal>) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
+        let dao_config = &ctx.accounts.dao_config;
+        let clock = Clock::get()?;
+
+        // Check proposal is still active
+        require!(
+            proposal.status == ProposalStatus::Active,
+            DaoError::ProposalNotActive
+        );
+
+        // Check voting hasn't ended (allow cancellation during voting)
+        require!(
+            clock.unix_timestamp <= proposal.vote_end,
+            DaoError::VotingEnded
+        );
+
+        // Return bond to proposer
+        let dao_bump = dao_config.bump;
+        let seeds = &[b"dao_config".as_ref(), &[dao_bump]];
+        let signer = &[&seeds[..]];
+
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.bond_escrow.to_account_info(),
+            to: ctx.accounts.proposer_token_account.to_account_info(),
+            authority: ctx.accounts.dao_config.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
+        token::transfer(cpi_ctx, dao_config.proposal_bond)?;
+
+        // Mark as cancelled
+        proposal.status = ProposalStatus::Cancelled;
+        proposal.bond_returned = true;
+
+        msg!("Proposal {} cancelled by proposer", proposal.proposal_id);
+
+        emit!(ProposalCancelledEvent {
+            proposal_id: proposal.proposal_id,
+            proposer: proposal.proposer,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Register vote weight snapshot for a voter (must be done before voting)
+    pub fn register_vote_snapshot(ctx: Context<RegisterVoteSnapshot>) -> Result<()> {
+        let proposal = &ctx.accounts.proposal;
+        let clock = Clock::get()?;
+
+        // Check proposal is active
+        require!(
+            proposal.status == ProposalStatus::Active,
+            DaoError::ProposalNotActive
+        );
+
+        // Check within voting period
+        require!(
+            clock.unix_timestamp >= proposal.vote_start && clock.unix_timestamp <= proposal.vote_end,
+            DaoError::VotingNotActive
+        );
+
+        // Get voter's token balance at this point
+        let vote_weight = ctx.accounts.voter_token_account.amount;
+
+        // Initialize snapshot record
+        let snapshot = &mut ctx.accounts.vote_snapshot;
+        snapshot.proposal_id = proposal.proposal_id;
+        snapshot.voter = ctx.accounts.voter.key();
+        snapshot.vote_weight = vote_weight;
+        snapshot.registered_at = clock.unix_timestamp;
+        snapshot.has_voted = false;
+        snapshot.bump = ctx.bumps.vote_snapshot;
+
+        msg!(
+            "Vote snapshot registered for proposal {}: voter={}, weight={}",
+            proposal.proposal_id,
+            snapshot.voter,
+            vote_weight
+        );
+
+        emit!(VoteSnapshotRegisteredEvent {
+            proposal_id: proposal.proposal_id,
+            voter: snapshot.voter,
+            vote_weight,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Cast a vote on a proposal (requires prior snapshot registration)
+    pub fn cast_vote(ctx: Context<CastVote>, vote_choice: VoteChoice) -> Result<()> {
+        let proposal = &mut ctx.accounts.proposal;
+        let vote_snapshot = &mut ctx.accounts.vote_snapshot;
         let clock = Clock::get()?;
 
         // Check proposal is active
@@ -249,8 +444,11 @@ pub mod dao {
             DaoError::VotingEnded
         );
 
-        // Get voter's token balance as vote weight
-        let vote_weight = ctx.accounts.voter_token_account.amount;
+        // Check voter hasn't already voted (snapshot-based double-vote prevention)
+        require!(!vote_snapshot.has_voted, DaoError::AlreadyVoted);
+
+        // Get vote weight from snapshot (prevents flash loan attacks!)
+        let vote_weight = vote_snapshot.vote_weight;
         require!(vote_weight > 0, DaoError::NoVotingPower);
 
         // Initialize vote record
@@ -262,7 +460,10 @@ pub mod dao {
         vote_record.voted_at = clock.unix_timestamp;
         vote_record.bump = ctx.bumps.vote_record;
 
-        // Update proposal vote counts
+        // Mark snapshot as used
+        vote_snapshot.has_voted = true;
+
+        // Update proposal vote counts (using u128 internally to prevent overflow)
         match vote_choice {
             VoteChoice::For => {
                 proposal.for_votes = proposal
@@ -321,26 +522,27 @@ pub mod dao {
             DaoError::VotingNotEnded
         );
 
-        // Calculate total votes
-        let total_votes = proposal
+        // Calculate total votes (for + against only for quorum, abstain excluded)
+        let total_participation = proposal
             .for_votes
             .checked_add(proposal.against_votes)
             .ok_or(DaoError::Overflow)?
             .checked_add(proposal.abstain_votes)
             .ok_or(DaoError::Overflow)?;
 
-        // Get total token supply for quorum calculation
-        let total_supply = ctx.accounts.governance_token_mint.supply;
-        let quorum_required = total_supply
+        // Use snapshot supply for quorum calculation (prevents manipulation)
+        let quorum_required = proposal
+            .snapshot_supply
             .checked_mul(dao_config.quorum_percentage as u64)
             .ok_or(DaoError::Overflow)?
             .checked_div(100)
             .ok_or(DaoError::Overflow)?;
 
-        // Check quorum
-        let quorum_met = total_votes >= quorum_required;
+        // Check quorum (total participation must meet threshold)
+        let quorum_met = total_participation >= quorum_required;
 
         // Calculate approval percentage (for votes / (for + against))
+        // Abstain votes don't count towards approval calculation
         let votes_cast = proposal
             .for_votes
             .checked_add(proposal.against_votes)
@@ -368,12 +570,15 @@ pub mod dao {
             msg!(
                 "Proposal {} DEFEATED (quorum not met: {} < {})",
                 proposal.proposal_id,
-                total_votes,
+                total_participation,
                 quorum_required
             );
         } else {
             proposal.status = ProposalStatus::Defeated;
-            msg!("Proposal {} DEFEATED (insufficient approval)", proposal.proposal_id);
+            msg!(
+                "Proposal {} DEFEATED (insufficient approval)",
+                proposal.proposal_id
+            );
         }
 
         emit!(ProposalFinalizedEvent {
@@ -412,11 +617,23 @@ pub mod dao {
             DaoError::ProposalNotExecutable
         );
 
-        // Get execution data - clone to avoid borrow issues
+        // Get execution data
         let execution_data = proposal
             .execution_data
             .clone()
             .ok_or(DaoError::NoExecutionData)?;
+
+        // CRITICAL FIX: Validate recipient matches proposal's intended recipient
+        require!(
+            ctx.accounts.recipient.key() == execution_data.recipient,
+            DaoError::InvalidRecipient
+        );
+
+        // Check treasury has sufficient balance
+        require!(
+            ctx.accounts.treasury.amount >= execution_data.amount,
+            DaoError::InsufficientTreasuryBalance
+        );
 
         let proposal_id = proposal.proposal_id;
 
@@ -456,7 +673,7 @@ pub mod dao {
         Ok(())
     }
 
-    /// Return proposal bond to proposer (after finalization, if passed or for successful proposals)
+    /// Return proposal bond to proposer (after finalization, if passed)
     pub fn return_proposal_bond(ctx: Context<ReturnProposalBond>) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
         let dao_config = &ctx.accounts.dao_config;
@@ -473,7 +690,8 @@ pub mod dao {
         // Only return bond for passed/executed proposals
         // Defeated proposals forfeit bond to treasury
         require!(
-            proposal.status == ProposalStatus::Passed || proposal.status == ProposalStatus::Executed,
+            proposal.status == ProposalStatus::Passed
+                || proposal.status == ProposalStatus::Executed,
             DaoError::BondForfeited
         );
 
@@ -553,6 +771,26 @@ pub mod dao {
 // ACCOUNT STRUCTURES
 // ============================================================================
 
+/// Pending configuration change (for timelock)
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct PendingConfigChange {
+    pub new_voting_period: Option<i64>,
+    pub new_proposal_bond: Option<u64>,
+    pub new_quorum_percentage: Option<u8>,
+    pub new_approval_threshold: Option<u8>,
+    pub queued_at: i64,
+    pub execute_after: i64,
+}
+
+impl PendingConfigChange {
+    pub const MAX_SIZE: usize = 1 + 8 + // Option<i64>
+        1 + 8 +  // Option<u64>
+        1 + 1 +  // Option<u8>
+        1 + 1 +  // Option<u8>
+        8 +      // queued_at
+        8; // execute_after
+}
+
 /// DAO configuration account
 #[account]
 pub struct DaoConfig {
@@ -562,6 +800,8 @@ pub struct DaoConfig {
     pub treasury: Pubkey,
     /// Governance token mint
     pub governance_token_mint: Pubkey,
+    /// Bond escrow token account (PDA-owned)
+    pub bond_escrow: Pubkey,
     /// Voting period in seconds
     pub voting_period: i64,
     /// Bond required to create proposal (in tokens)
@@ -576,23 +816,27 @@ pub struct DaoConfig {
     pub total_treasury_deposits: u64,
     /// Emergency pause flag
     pub paused: bool,
+    /// Pending configuration change (with timelock)
+    pub pending_config_change: Option<PendingConfigChange>,
     /// PDA bump
     pub bump: u8,
 }
 
 impl DaoConfig {
-    pub const MAX_SIZE: usize = 8 +  // discriminator
-        32 +                          // authority
-        32 +                          // treasury
-        32 +                          // governance_token_mint
-        8 +                           // voting_period
-        8 +                           // proposal_bond
-        1 +                           // quorum_percentage
-        1 +                           // approval_threshold
-        8 +                           // proposal_count
-        8 +                           // total_treasury_deposits
-        1 +                           // paused
-        1;                            // bump
+    pub const MAX_SIZE: usize = 8 + // discriminator
+        32 +                         // authority
+        32 +                         // treasury
+        32 +                         // governance_token_mint
+        32 +                         // bond_escrow
+        8 +                          // voting_period
+        8 +                          // proposal_bond
+        1 +                          // quorum_percentage
+        1 +                          // approval_threshold
+        8 +                          // proposal_count
+        8 +                          // total_treasury_deposits
+        1 +                          // paused
+        1 + PendingConfigChange::MAX_SIZE + // pending_config_change (Option)
+        1; // bump
 }
 
 /// Proposal account
@@ -628,28 +872,58 @@ pub struct Proposal {
     pub executed_at: Option<i64>,
     /// Whether bond has been returned
     pub bond_returned: bool,
+    /// Token supply snapshot at proposal creation (for quorum calculation)
+    pub snapshot_supply: u64,
     /// PDA bump
     pub bump: u8,
 }
 
 impl Proposal {
-    pub const MAX_SIZE: usize = 8 +   // discriminator
-        8 +                            // proposal_id
-        32 +                           // proposer
-        4 + MAX_TITLE_LENGTH +         // title (string prefix + data)
+    pub const MAX_SIZE: usize = 8 + // discriminator
+        8 +                          // proposal_id
+        32 +                         // proposer
+        4 + MAX_TITLE_LENGTH +       // title (string prefix + data)
         4 + MAX_DESCRIPTION_CID_LENGTH + // description_cid
-        1 +                            // proposal_type
-        1 + ExecutionData::MAX_SIZE +  // execution_data (Option)
-        1 +                            // status
-        8 +                            // for_votes
-        8 +                            // against_votes
-        8 +                            // abstain_votes
-        8 +                            // vote_start
-        8 +                            // vote_end
-        8 +                            // created_at
-        1 + 8 +                        // executed_at (Option<i64>)
-        1 +                            // bond_returned
-        1;                             // bump
+        1 +                          // proposal_type
+        1 + ExecutionData::MAX_SIZE + // execution_data (Option)
+        1 +                          // status
+        8 +                          // for_votes
+        8 +                          // against_votes
+        8 +                          // abstain_votes
+        8 +                          // vote_start
+        8 +                          // vote_end
+        8 +                          // created_at
+        1 + 8 +                      // executed_at (Option<i64>)
+        1 +                          // bond_returned
+        8 +                          // snapshot_supply
+        1; // bump
+}
+
+/// Vote snapshot for a voter (registered before voting)
+#[account]
+pub struct VoteSnapshot {
+    /// Proposal ID
+    pub proposal_id: u64,
+    /// Voter's public key
+    pub voter: Pubkey,
+    /// Vote weight (token balance at snapshot time)
+    pub vote_weight: u64,
+    /// When snapshot was registered
+    pub registered_at: i64,
+    /// Whether the voter has already voted
+    pub has_voted: bool,
+    /// PDA bump
+    pub bump: u8,
+}
+
+impl VoteSnapshot {
+    pub const MAX_SIZE: usize = 8 + // discriminator
+        8 +                          // proposal_id
+        32 +                         // voter
+        8 +                          // vote_weight
+        8 +                          // registered_at
+        1 +                          // has_voted
+        1; // bump
 }
 
 /// Vote record for a single voter on a proposal
@@ -661,7 +935,7 @@ pub struct VoteRecord {
     pub voter: Pubkey,
     /// Vote choice
     pub vote_choice: VoteChoice,
-    /// Vote weight (token balance at time of vote)
+    /// Vote weight (from snapshot)
     pub vote_weight: u64,
     /// When the vote was cast
     pub voted_at: i64,
@@ -670,13 +944,13 @@ pub struct VoteRecord {
 }
 
 impl VoteRecord {
-    pub const MAX_SIZE: usize = 8 +  // discriminator
-        8 +                           // proposal_id
-        32 +                          // voter
-        1 +                           // vote_choice
-        8 +                           // vote_weight
-        8 +                           // voted_at
-        1;                            // bump
+    pub const MAX_SIZE: usize = 8 + // discriminator
+        8 +                          // proposal_id
+        32 +                         // voter
+        1 +                          // vote_choice
+        8 +                          // vote_weight
+        8 +                          // voted_at
+        1; // bump
 }
 
 /// Execution data for treasury withdrawal proposals
@@ -742,12 +1016,24 @@ pub struct InitializeDao<'info> {
     )]
     pub dao_config: Account<'info, DaoConfig>,
 
-    /// Treasury token account (owned by DAO PDA)
-    #[account(mut)]
+    /// Treasury token account (must be owned by DAO PDA)
+    #[account(
+        mut,
+        constraint = treasury.mint == governance_token_mint.key() @ DaoError::InvalidMint,
+        constraint = treasury.owner == dao_config.key() @ DaoError::InvalidTreasuryOwner
+    )]
     pub treasury: Account<'info, TokenAccount>,
 
+    /// Bond escrow token account (must be owned by DAO PDA)
+    #[account(
+        mut,
+        constraint = bond_escrow.mint == governance_token_mint.key() @ DaoError::InvalidMint,
+        constraint = bond_escrow.owner == dao_config.key() @ DaoError::InvalidBondEscrowOwner
+    )]
+    pub bond_escrow: Account<'info, TokenAccount>,
+
     /// Governance token mint ($AEGIS)
-    pub governance_token_mint: Account<'info, anchor_spl::token::Mint>,
+    pub governance_token_mint: Account<'info, Mint>,
 
     #[account(mut)]
     pub authority: Signer<'info>,
@@ -755,9 +1041,37 @@ pub struct InitializeDao<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Update DAO configuration
+/// Queue DAO configuration update (with timelock)
 #[derive(Accounts)]
-pub struct UpdateDaoConfig<'info> {
+pub struct QueueConfigUpdate<'info> {
+    #[account(
+        mut,
+        seeds = [b"dao_config"],
+        bump = dao_config.bump,
+        has_one = authority @ DaoError::UnauthorizedAuthority
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    pub authority: Signer<'info>,
+}
+
+/// Execute queued configuration update
+#[derive(Accounts)]
+pub struct ExecuteConfigUpdate<'info> {
+    #[account(
+        mut,
+        seeds = [b"dao_config"],
+        bump = dao_config.bump,
+        has_one = authority @ DaoError::UnauthorizedAuthority
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    pub authority: Signer<'info>,
+}
+
+/// Cancel queued configuration update
+#[derive(Accounts)]
+pub struct CancelConfigUpdate<'info> {
     #[account(
         mut,
         seeds = [b"dao_config"],
@@ -790,7 +1104,9 @@ pub struct CreateProposal<'info> {
     #[account(
         mut,
         seeds = [b"dao_config"],
-        bump = dao_config.bump
+        bump = dao_config.bump,
+        has_one = bond_escrow @ DaoError::InvalidBondEscrow,
+        has_one = governance_token_mint @ DaoError::InvalidMint
     )]
     pub dao_config: Account<'info, DaoConfig>,
 
@@ -803,12 +1119,22 @@ pub struct CreateProposal<'info> {
     )]
     pub proposal: Account<'info, Proposal>,
 
-    /// Bond escrow account
-    #[account(mut)]
+    /// Bond escrow account (PDA-owned)
+    #[account(
+        mut,
+        constraint = bond_escrow.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub bond_escrow: Account<'info, TokenAccount>,
 
+    /// Governance token mint
+    pub governance_token_mint: Account<'info, Mint>,
+
     /// Proposer's token account
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = proposer_token_account.owner == proposer.key() @ DaoError::InvalidTokenOwner,
+        constraint = proposer_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub proposer_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
@@ -818,7 +1144,79 @@ pub struct CreateProposal<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// Cast a vote
+/// Cancel a proposal
+#[derive(Accounts)]
+pub struct CancelProposal<'info> {
+    #[account(
+        seeds = [b"dao_config"],
+        bump = dao_config.bump,
+        has_one = bond_escrow @ DaoError::InvalidBondEscrow
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    #[account(
+        mut,
+        seeds = [b"proposal", proposal.proposal_id.to_le_bytes().as_ref()],
+        bump = proposal.bump,
+        has_one = proposer @ DaoError::NotProposer
+    )]
+    pub proposal: Account<'info, Proposal>,
+
+    /// Bond escrow account
+    #[account(mut)]
+    pub bond_escrow: Account<'info, TokenAccount>,
+
+    /// Proposer's token account
+    #[account(
+        mut,
+        constraint = proposer_token_account.owner == proposer.key() @ DaoError::InvalidTokenOwner,
+        constraint = proposer_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub proposer_token_account: Account<'info, TokenAccount>,
+
+    pub proposer: Signer<'info>,
+
+    pub token_program: Program<'info, Token>,
+}
+
+/// Register vote snapshot
+#[derive(Accounts)]
+pub struct RegisterVoteSnapshot<'info> {
+    #[account(
+        seeds = [b"dao_config"],
+        bump = dao_config.bump
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    #[account(
+        seeds = [b"proposal", proposal.proposal_id.to_le_bytes().as_ref()],
+        bump = proposal.bump
+    )]
+    pub proposal: Account<'info, Proposal>,
+
+    #[account(
+        init,
+        payer = voter,
+        space = VoteSnapshot::MAX_SIZE,
+        seeds = [b"vote_snapshot", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump
+    )]
+    pub vote_snapshot: Account<'info, VoteSnapshot>,
+
+    /// Voter's token account (balance = vote weight at snapshot)
+    #[account(
+        constraint = voter_token_account.owner == voter.key() @ DaoError::InvalidTokenOwner,
+        constraint = voter_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub voter_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub voter: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// Cast a vote (requires prior snapshot registration)
 #[derive(Accounts)]
 pub struct CastVote<'info> {
     #[account(
@@ -835,6 +1233,15 @@ pub struct CastVote<'info> {
     pub proposal: Account<'info, Proposal>,
 
     #[account(
+        mut,
+        seeds = [b"vote_snapshot", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
+        bump = vote_snapshot.bump,
+        constraint = vote_snapshot.voter == voter.key() @ DaoError::InvalidVoter,
+        constraint = vote_snapshot.proposal_id == proposal.proposal_id @ DaoError::InvalidProposal
+    )]
+    pub vote_snapshot: Account<'info, VoteSnapshot>,
+
+    #[account(
         init,
         payer = voter,
         space = VoteRecord::MAX_SIZE,
@@ -842,9 +1249,6 @@ pub struct CastVote<'info> {
         bump
     )]
     pub vote_record: Account<'info, VoteRecord>,
-
-    /// Voter's token account (balance = vote weight)
-    pub voter_token_account: Account<'info, TokenAccount>,
 
     #[account(mut)]
     pub voter: Signer<'info>,
@@ -868,9 +1272,6 @@ pub struct FinalizeProposal<'info> {
     )]
     pub proposal: Account<'info, Proposal>,
 
-    /// Governance token mint (for supply calculation)
-    pub governance_token_mint: Account<'info, anchor_spl::token::Mint>,
-
     /// Anyone can finalize after voting ends
     pub finalizer: Signer<'info>,
 }
@@ -893,11 +1294,17 @@ pub struct ExecuteProposal<'info> {
     pub proposal: Account<'info, Proposal>,
 
     /// DAO treasury
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = treasury.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub treasury: Account<'info, TokenAccount>,
 
-    /// Recipient of treasury withdrawal
-    #[account(mut)]
+    /// Recipient of treasury withdrawal (validated against proposal.execution_data.recipient)
+    #[account(
+        mut,
+        constraint = recipient.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub recipient: Account<'info, TokenAccount>,
 
     /// Anyone can execute a passed proposal
@@ -911,7 +1318,8 @@ pub struct ExecuteProposal<'info> {
 pub struct ReturnProposalBond<'info> {
     #[account(
         seeds = [b"dao_config"],
-        bump = dao_config.bump
+        bump = dao_config.bump,
+        has_one = bond_escrow @ DaoError::InvalidBondEscrow
     )]
     pub dao_config: Account<'info, DaoConfig>,
 
@@ -928,7 +1336,11 @@ pub struct ReturnProposalBond<'info> {
     pub bond_escrow: Account<'info, TokenAccount>,
 
     /// Proposer's token account
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = proposer_token_account.owner == proposer.key() @ DaoError::InvalidTokenOwner,
+        constraint = proposer_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub proposer_token_account: Account<'info, TokenAccount>,
 
     /// CHECK: Verified via proposal.proposer
@@ -948,10 +1360,17 @@ pub struct DepositToTreasury<'info> {
     )]
     pub dao_config: Account<'info, DaoConfig>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = treasury.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub treasury: Account<'info, TokenAccount>,
 
-    #[account(mut)]
+    #[account(
+        mut,
+        constraint = depositor_token_account.owner == depositor.key() @ DaoError::InvalidTokenOwner,
+        constraint = depositor_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
     pub depositor_token_account: Account<'info, TokenAccount>,
 
     pub depositor: Signer<'info>,
@@ -973,6 +1392,31 @@ pub struct DaoInitializedEvent {
 }
 
 #[event]
+pub struct ConfigUpdateQueuedEvent {
+    pub new_voting_period: Option<i64>,
+    pub new_proposal_bond: Option<u64>,
+    pub new_quorum_percentage: Option<u8>,
+    pub new_approval_threshold: Option<u8>,
+    pub execute_after: i64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ConfigUpdateExecutedEvent {
+    pub voting_period: i64,
+    pub proposal_bond: u64,
+    pub quorum_percentage: u8,
+    pub approval_threshold: u8,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ConfigUpdateCancelledEvent {
+    pub authority: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
 pub struct DaoPausedEvent {
     pub paused: bool,
     pub authority: Pubkey,
@@ -986,6 +1430,22 @@ pub struct ProposalCreatedEvent {
     pub title: String,
     pub description_cid: String,
     pub vote_end: i64,
+    pub snapshot_supply: u64,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct ProposalCancelledEvent {
+    pub proposal_id: u64,
+    pub proposer: Pubkey,
+    pub timestamp: i64,
+}
+
+#[event]
+pub struct VoteSnapshotRegisteredEvent {
+    pub proposal_id: u64,
+    pub voter: Pubkey,
+    pub vote_weight: u64,
     pub timestamp: i64,
 }
 
@@ -1043,6 +1503,9 @@ pub enum DaoError {
     #[msg("Voting period must be between 1 and 14 days")]
     InvalidVotingPeriod,
 
+    #[msg("Proposal bond must be at least 1 token")]
+    InvalidProposalBond,
+
     #[msg("Quorum percentage must be between 1 and 100")]
     InvalidQuorumPercentage,
 
@@ -1067,11 +1530,17 @@ pub enum DaoError {
     #[msg("Voting period has ended")]
     VotingEnded,
 
+    #[msg("Voting is not currently active")]
+    VotingNotActive,
+
     #[msg("Voting period has not ended yet")]
     VotingNotEnded,
 
-    #[msg("No voting power (zero token balance)")]
+    #[msg("No voting power (zero token balance at snapshot)")]
     NoVotingPower,
+
+    #[msg("Already voted on this proposal")]
+    AlreadyVoted,
 
     #[msg("Proposal has not passed")]
     ProposalNotPassed,
@@ -1108,4 +1577,37 @@ pub enum DaoError {
 
     #[msg("Arithmetic overflow")]
     Overflow,
+
+    #[msg("Invalid token mint")]
+    InvalidMint,
+
+    #[msg("Invalid token account owner")]
+    InvalidTokenOwner,
+
+    #[msg("Invalid bond escrow account")]
+    InvalidBondEscrow,
+
+    #[msg("Treasury must be owned by DAO PDA")]
+    InvalidTreasuryOwner,
+
+    #[msg("Bond escrow must be owned by DAO PDA")]
+    InvalidBondEscrowOwner,
+
+    #[msg("Recipient does not match proposal execution data")]
+    InvalidRecipient,
+
+    #[msg("Insufficient treasury balance")]
+    InsufficientTreasuryBalance,
+
+    #[msg("No pending configuration change")]
+    NoPendingConfigChange,
+
+    #[msg("Timelock has not expired yet")]
+    TimelockNotExpired,
+
+    #[msg("Invalid voter")]
+    InvalidVoter,
+
+    #[msg("Invalid proposal")]
+    InvalidProposal,
 }
