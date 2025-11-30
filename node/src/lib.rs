@@ -41,3 +41,25 @@ pub mod module_dispatcher;
 
 // Sprint 17: IPFS/Filecoin Integration for Wasm Module Distribution
 pub mod ipfs_client;
+
+// Sprint 19: TLS Fingerprinting (JA3/JA4) for Advanced Bot Detection
+pub mod tls_fingerprint;
+pub mod fingerprint_cache;
+pub mod enhanced_bot_detection;
+pub mod tls_intercept;
+
+// Sprint 20: JavaScript Challenge System (Turnstile-like)
+pub mod challenge;
+pub mod challenge_api;
+
+// Sprint 21: Behavioral Analysis & Trust Scoring
+pub mod behavioral_analysis;
+
+// Sprint 22: Enhanced WAF with OWASP CRS & ML Anomaly Scoring
+pub mod waf_enhanced;
+
+// Sprint 23: API Security Suite
+pub mod api_security;
+
+// Sprint 24: Distributed Enforcement & Global Blocklist Sync
+pub mod distributed_enforcement;

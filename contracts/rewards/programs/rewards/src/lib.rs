@@ -328,8 +328,13 @@ pub struct RecordPerformance<'info> {
 }
 
 /// Calculate rewards
+/// SECURITY FIX: Added has_one constraint to verify authority matches reward_pool.authority
+/// This prevents unauthorized users from triggering reward calculations with arbitrary parameters
 #[derive(Accounts)]
 pub struct CalculateRewards<'info> {
+    #[account(
+        has_one = authority @ RewardsError::UnauthorizedAuthority
+    )]
     pub reward_pool: Account<'info, RewardPool>,
 
     #[account(
@@ -339,6 +344,7 @@ pub struct CalculateRewards<'info> {
     )]
     pub operator_rewards: Account<'info, OperatorRewards>,
 
+    /// SECURITY FIX: Must match reward_pool.authority - enforced by has_one constraint above
     pub authority: Signer<'info>,
 }
 

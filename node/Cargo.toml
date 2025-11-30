@@ -41,6 +41,8 @@ clap = { version = "4.5", features = ["derive"] }  # CLI argument parsing
 colored = "2.1"  # Terminal color output
 
 # Cache - Redis/DragonflyDB client
+# Note: Staying on 0.24 due to API changes in newer versions requiring refactoring
+# The future-incompatibility warning is tracked but not a breaking issue yet
 redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 
 # System metrics
@@ -68,6 +70,12 @@ rand = "0.8"  # Random number generation for key generation
 # IPFS/Filecoin Integration (Sprint 17)
 ipfs-api-backend-hyper = { version = "0.6", features = ["with-hyper-rustls"] }  # IPFS HTTP API client
 sha2 = "0.10"  # SHA-256 hashing for CID verification
+
+# TLS Fingerprinting (Sprint 19)
+md5 = "0.7"  # MD5 hashing for JA3 fingerprint computation
+urlencoding = "2.1.3"
+ring = "0.17.14"
+subtle = "2.6.1"
 
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]

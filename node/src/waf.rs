@@ -34,7 +34,7 @@ pub struct WafRule {
 }
 
 /// WAF Rule Match Result
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RuleMatch {
     pub rule_id: u32,
     pub rule_description: String,
