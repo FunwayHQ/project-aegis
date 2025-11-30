@@ -77,7 +77,6 @@ if command -v anchor &> /dev/null; then
     run_test_section "Token - NPM Dependencies" "npm install --quiet"
     run_test_section "Token - Anchor Build" "anchor build"
     run_test_section "Token - Program Tests" "anchor test --skip-local-validator"
-    run_test_section "Token - Advanced Scenarios" "anchor test --skip-local-validator -- --grep 'advanced'"
     cd ../..
 
     # 3.2 Registry Contract
@@ -87,7 +86,6 @@ if command -v anchor &> /dev/null; then
     run_test_section "Registry - NPM Dependencies" "npm install --quiet"
     run_test_section "Registry - Anchor Build" "anchor build"
     run_test_section "Registry - Program Tests" "anchor test --skip-local-validator"
-    run_test_section "Registry - Security Tests" "anchor test --skip-local-validator -- --grep 'Security'"
     cd ../..
 
     # 3.3 Staking Contract
@@ -97,7 +95,6 @@ if command -v anchor &> /dev/null; then
     run_test_section "Staking - NPM Dependencies" "npm install --quiet"
     run_test_section "Staking - Anchor Build" "anchor build"
     run_test_section "Staking - Program Tests" "anchor test --skip-local-validator"
-    run_test_section "Staking - Security Tests" "anchor test --skip-local-validator -- --grep 'Security'"
     cd ../..
 
     # 3.4 Rewards Contract
@@ -107,6 +104,15 @@ if command -v anchor &> /dev/null; then
     run_test_section "Rewards - NPM Dependencies" "npm install --quiet"
     run_test_section "Rewards - Anchor Build" "anchor build"
     run_test_section "Rewards - Program Tests" "anchor test --skip-local-validator"
+    cd ../..
+
+    # 3.5 DAO Contract
+    echo ""
+    echo "─── DAO Contract ───"
+    cd contracts/dao
+    run_test_section "DAO - NPM Dependencies" "npm install --quiet"
+    run_test_section "DAO - Anchor Build" "anchor build"
+    run_test_section "DAO - Program Tests" "anchor test --skip-local-validator"
     cd ../..
 
 else
@@ -132,10 +138,11 @@ echo ""
 echo "Test Coverage:"
 echo "  ✓ HTTP Server (lib + integration)"
 echo "  ✓ Token Contract (40 tests)"
-echo "  ✓ Registry Contract (with security tests)"
-echo "  ✓ Staking Contract (with security tests)"
+echo "  ✓ Registry Contract"
+echo "  ✓ Staking Contract"
 echo "  ✓ Rewards Contract"
-echo "  ✓ Total: 392+ tests"
+echo "  ✓ DAO Contract (Vote Escrow + Governance)"
+echo "  ✓ Total: 400+ tests"
 echo ""
 echo "Next steps:"
 echo "  - Deploy to Devnet: cd contracts/<contract> && anchor deploy"

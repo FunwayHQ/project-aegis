@@ -75,6 +75,23 @@ REWARDS_ID=$(solana-keygen pubkey target/deploy/rewards-keypair.json)
 echo "✅ Rewards deployed: $REWARDS_ID"
 echo ""
 
+# DAO
+echo "─── DAO Contract ───"
+cd ../dao
+if [ ! -f "target/deploy/dao-keypair.json" ]; then
+    echo "Generating new keypair..."
+    solana-keygen new --no-bip39-passphrase -o target/deploy/dao-keypair.json --force
+fi
+echo "Syncing program IDs..."
+anchor keys sync
+echo "Building..."
+anchor build
+echo "Deploying..."
+anchor deploy --provider.cluster devnet
+DAO_ID=$(solana-keygen pubkey target/deploy/dao-keypair.json)
+echo "✅ DAO deployed: $DAO_ID"
+echo ""
+
 # Summary
 echo "╔════════════════════════════════════════════╗"
 echo "║         Deployment Summary                 ║"
@@ -84,6 +101,7 @@ echo "✅ Token:    9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq"
 echo "✅ Registry: $REGISTRY_ID"
 echo "✅ Staking:  $STAKING_ID"
 echo "✅ Rewards:  $REWARDS_ID"
+echo "✅ DAO:      $DAO_ID"
 echo ""
 echo "All contracts deployed successfully to Solana Devnet!"
 echo ""
