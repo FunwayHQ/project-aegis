@@ -426,25 +426,283 @@ Each sprint is a 2-week cycle.
   * **Testing Simulation:** Design a simulation with multiple Rust nodes running, where some nodes are artificially made 'slower' or 'busier' to demonstrate that the routing logic correctly shifts traffic.  
   * **Output:** Rust code snippets for P2P metrics exchange, dynamic routing algorithms, configuration options, and simulation setup."
 
-**Sprint 18: Decentralized Storage Integration (IPFS/Filecoin Gateway)**
+**Sprint 18: Decentralized Governance (DAO) - Proposals & Voting**
 
-* **Objective:** Fully integrate IPFS/Filecoin for content addressing and persistent storage, with PAD nodes acting as gateways.  
-* **Deliverables:**  
-  * Rust proxy (River) acting as an IPFS gateway (serving content directly via CIDs).  
-  * Mechanism for PAD nodes to "pin" important content (e.g., Wasm functions, DAO proposals) to Filecoin via a third-party service or by becoming Filecoin storage clients.  
-  * API for service consumers to upload content to IPFS/Filecoin via PAD.  
-  * Proof-of-concept: Serve a webpage entirely from IPFS via a PAD node, ensuring persistence.  
-* **LLM Prompt: "Rust IPFS/Filecoin Gateway & Persistent Content Management"**  
-  * "You are a Rust developer with experience in decentralized storage (IPFS/Filecoin).  
-  * **IPFS Gateway Integration:** Modify the River proxy to function as an IPFS gateway. When a request comes for an IPFS CID (e.g., `https://example.com/ipfs/<cid>`), the proxy should:  
-    1. Attempt to fetch the content locally from its IPFS daemon.  
-    2. If not found locally, fetch from the broader IPFS network.  
-    3. Cache the content (as per Sprint 4\) and serve it to the client.  
-  * **Content Pinning/Persistence:** Design a mechanism for PAD nodes or a dedicated service to "pin" critical content (e.g., Wasm function CIDs, DAO proposal details) to Filecoin. This could involve:  
-    1. Direct integration with a Filecoin client library (if suitable for Rust).  
-    2. Using a Filecoin storage provider API (e.g., Textile, web3.storage) via an intermediary service.  
-  * **API for Content Upload:** Design an API endpoint (e.g., `/api/v1/ipfs/upload`) that allows authorized users to upload files to IPFS via a PAD node, receiving back the generated CID.  
-  * **Output:** Rust code snippets for IPFS gateway logic, outlining Filecoin pinning strategy, and API design for content upload. Testing instructions for serving and pinning content."
+* **Objective:** Implement DAO governance smart contracts for on-chain proposal submission, voting, and treasury management.
+* **Deliverables:**
+  * Solana program for DAO proposal creation (title, description, IPFS CID for details).
+  * Solana program for token-weighted voting (for/against/abstain).
+  * DAO-controlled treasury ($AEGIS program-controlled account).
+  * Mechanism for successful proposals to trigger on-chain actions.
+  * CLI/DApp for submitting proposals and casting votes.
+  * Proof-of-concept: Create proposal, cast votes, execute treasury withdrawal.
+* **LLM Prompt: "Solana DAO Program for Proposals, Voting & Treasury"**
+  * "You are a Solana smart contract developer specializing in DAO structures.
+  * **Proposal Program:** Design an Anchor program for creating and managing proposals.
+    1. `ProposalAccount` struct: `creator_pubkey`, `title`, `description_cid` (IPFS CID), `status` ('pending', 'active', 'passed', 'failed'), `vote_start_timestamp`, `vote_end_timestamp`, `for_votes`, `against_votes`, `abstain_votes`.
+    2. Instruction: `create_proposal` (requires small $AEGIS stake as bond).
+    3. Instruction: `execute_proposal` (for successful proposals after voting ends).
+  * **Voting Program:** Design an Anchor program for casting votes.
+    1. `VoteAccount` struct: `voter_pubkey`, `proposal_id`, `vote_choice`, `vote_weight` (based on staked $AEGIS).
+    2. Instruction: `cast_vote` (requires staked $AEGIS, prevents duplicate votes).
+  * **Treasury Program:** Design DAO-owned $AEGIS treasury.
+    1. Instruction: `deposit_to_treasury`.
+    2. Instruction: `withdraw_from_treasury` (only via successful proposal execution).
+  * **Output:** Anchor IDL structure, example Rust code, and CLI flow examples."
+
+---
+
+#### **Phase 4: Advanced Security & Mainnet Preparation (Sprints 19-24)**
+
+Phase 4 focuses on achieving feature parity with enterprise CDN/security providers like Cloudflare, followed by performance optimization and mainnet launch.
+
+**Sprint 19: Advanced Bot Detection - TLS Fingerprinting**
+
+* **Objective:** Implement TLS fingerprinting (JA3/JA4) for bot detection, significantly improving accuracy beyond User-Agent analysis.
+* **Deliverables:**
+  * TLS ClientHello extraction in Pingora proxy (via BoringSSL hooks).
+  * JA3/JA4 fingerprint computation and storage.
+  * Fingerprint database in DragonflyDB (known bots, browsers, automation tools).
+  * Integration with bot management Wasm module for composite scoring.
+  * Proof-of-concept: Distinguish between Chrome, curl, and Python requests by TLS fingerprint.
+* **LLM Prompt: "TLS Fingerprinting (JA3/JA4) for Bot Detection"**
+  * "You are a Rust developer with expertise in TLS internals and bot detection.
+  * **TLS ClientHello Extraction:** Modify the River proxy's TLS termination layer to extract ClientHello parameters before handshake completion:
+    1. Cipher suites offered
+    2. TLS extensions (SNI, ALPN, supported groups, signature algorithms)
+    3. Elliptic curves and point formats
+  * **JA3/JA4 Computation:** Implement fingerprint algorithms:
+    1. JA3: MD5 hash of comma-separated values (SSLVersion, Ciphers, Extensions, EllipticCurves, EllipticCurvePointFormats)
+    2. JA4: Enhanced fingerprint with more granular extension parsing
+  * **Fingerprint Database:** Design DragonflyDB schema for fingerprint storage:
+    1. Key: JA3/JA4 hash
+    2. Value: JSON with `client_type` (browser/bot/automation), `client_name`, `confidence`, `first_seen`, `last_seen`, `request_count`
+  * **Bot Scoring Integration:** Extend bot management module to incorporate TLS fingerprint:
+    1. Chrome JA3 + curl User-Agent = HIGH suspicion (mismatch)
+    2. Unknown JA3 + legitimate User-Agent = MEDIUM suspicion
+    3. Known browser JA3 + matching User-Agent = LOW suspicion
+  * **Output:** Rust code for TLS extraction, fingerprint computation, database schema, and integration with bot management."
+
+**Sprint 20: JavaScript Challenge System (Turnstile-like)**
+
+* **Objective:** Implement invisible and interactive JavaScript challenges to verify human visitors without CAPTCHAs.
+* **Deliverables:**
+  * Client-side JavaScript challenge library (canvas, WebGL, audio fingerprinting).
+  * Server-side challenge verification endpoint.
+  * Proof-of-work computation for CPU verification.
+  * Challenge token issuance (signed JWT, edge-verifiable).
+  * Integration with bot management pipeline.
+  * Proof-of-concept: Block headless Chrome while allowing regular browsers.
+* **LLM Prompt: "JavaScript Challenge System for Bot Verification"**
+  * "You are a security engineer specializing in bot detection and client-side fingerprinting.
+  * **Challenge Types:** Design three challenge modes:
+    1. **Non-Interactive (invisible):** Canvas fingerprint, WebGL renderer, audio context, proof-of-work
+    2. **Managed:** Brief loading indicator while challenges run
+    3. **Interactive:** Simple click verification or slider puzzle (fallback)
+  * **Client-Side Library:** Create JavaScript bundle that:
+    1. Collects browser fingerprints (canvas hash, WebGL vendor/renderer, installed fonts, timezone, screen resolution)
+    2. Solves proof-of-work challenge (hashcash-style, find nonce where SHA256(challenge + nonce) has N leading zeros)
+    3. Submits results to verification endpoint
+  * **Server-Side Verification:** Design verification endpoint:
+    1. Validate proof-of-work solution
+    2. Compare fingerprints against known bot patterns
+    3. Issue signed JWT challenge token (15-minute TTL)
+  * **Edge Verification:** Challenge tokens must be verifiable at edge without origin round-trip:
+    1. Use Ed25519 signatures (already implemented in Sprint 15)
+    2. Include fingerprint hash in token for binding
+  * **Integration:** Modify bot management to trigger challenges:
+    1. Suspicious TLS fingerprint → invisible challenge
+    2. Failed invisible challenge → managed challenge
+    3. Failed managed challenge → interactive or block
+  * **Output:** JavaScript challenge library, Rust verification endpoint, JWT token structure, and integration flow."
+
+**Sprint 21: Behavioral Analysis & Trust Scoring**
+
+* **Objective:** Implement behavioral analysis to detect bots based on interaction patterns (mouse, keyboard, request timing).
+* **Deliverables:**
+  * Client-side behavioral data collection (mouse movements, keystrokes, scroll patterns).
+  * Server-side behavioral model for human vs. bot classification.
+  * Composite trust score combining TLS fingerprint, challenge results, and behavior.
+  * Trust score persistence per session/IP.
+  * Proof-of-concept: Detect automated form submission vs. human interaction.
+* **LLM Prompt: "Behavioral Analysis for Bot Detection"**
+  * "You are a machine learning engineer specializing in user behavior analysis.
+  * **Behavioral Data Collection:** Design client-side JavaScript to collect:
+    1. Mouse movement patterns (velocity, acceleration, curvature, pauses)
+    2. Keystroke dynamics (inter-key timing, hold duration, rhythm)
+    3. Scroll behavior (speed, direction changes, smooth vs. stepped)
+    4. Touch events (for mobile: pressure, contact area, gesture patterns)
+    5. Timing: Time between page load and first interaction
+  * **Behavioral Features:** Extract features for ML model:
+    1. Mouse: entropy of movement, average velocity, number of direction changes
+    2. Keyboard: typing speed variance, common bigram timing
+    3. Scroll: scroll depth, time to scroll, scroll reversals
+  * **Human vs. Bot Classification:** Design lightweight model (can run at edge):
+    1. Feature vector normalization
+    2. Decision tree or logistic regression for initial classification
+    3. Anomaly score based on deviation from 'normal' human behavior
+  * **Trust Score System:** Combine all signals into composite score (0-100):
+    1. TLS fingerprint match: +20 points
+    2. Challenge passed: +30 points
+    3. Behavioral score: +50 points (scaled from model output)
+    4. Score thresholds: <30 = block, 30-60 = challenge, >60 = allow
+  * **Session Persistence:** Store trust scores in DragonflyDB:
+    1. Per-IP scores with decay over time
+    2. Per-session scores (cookie-based for returning visitors)
+  * **Output:** JavaScript collection library, behavioral feature extraction, trust score calculation, and persistence strategy."
+
+**Sprint 22: WAF Enhancement - OWASP CRS & Custom Rules**
+
+* **Objective:** Expand WAF from 13 rules to 400+ rules by importing OWASP Core Rule Set and adding custom rule engine.
+* **Deliverables:**
+  * ModSecurity rule parser (SecRule syntax to internal representation).
+  * Import of OWASP CRS 4.0 (400+ rules).
+  * Custom rule engine with YAML/JSON configuration.
+  * Rule priority, chaining, and skip logic.
+  * ML anomaly scoring for requests (size, entropy, parameter count).
+  * Proof-of-concept: Block advanced SQL injection variants not caught by current rules.
+* **LLM Prompt: "OWASP CRS Import & Custom WAF Rule Engine"**
+  * "You are a web security expert specializing in WAF rule development.
+  * **ModSecurity Rule Parser:** Implement parser for SecRule syntax:
+    1. Parse: `SecRule ARGS \"@rx <pattern>\" \"id:123,phase:2,deny,status:403\"`
+    2. Support operators: @rx (regex), @eq, @gt, @contains, @beginsWith, @within
+    3. Support variables: ARGS, REQUEST_HEADERS, REQUEST_BODY, REQUEST_URI, REMOTE_ADDR
+    4. Support actions: deny, pass, log, redirect, setvar, chain
+  * **OWASP CRS Import:** Import CRS 4.0 rules:
+    1. REQUEST-901-INITIALIZATION.conf (setup)
+    2. REQUEST-920-PROTOCOL-ENFORCEMENT.conf
+    3. REQUEST-930-APPLICATION-ATTACK-LFI.conf
+    4. REQUEST-931-APPLICATION-ATTACK-RFI.conf
+    5. REQUEST-932-APPLICATION-ATTACK-RCE.conf
+    6. REQUEST-933-APPLICATION-ATTACK-PHP.conf
+    7. REQUEST-941-APPLICATION-ATTACK-XSS.conf
+    8. REQUEST-942-APPLICATION-ATTACK-SQLI.conf
+    9. REQUEST-943-APPLICATION-ATTACK-SESSION-FIXATION.conf
+    10. REQUEST-944-APPLICATION-ATTACK-JAVA.conf
+  * **Custom Rule Configuration:** Design YAML format for custom rules:
+    ```yaml
+    rules:
+      - id: custom-001
+        description: Block API key in URL
+        target: REQUEST_URI
+        operator: contains
+        pattern: \"api_key=\"
+        action: deny
+        severity: critical
+    ```
+  * **ML Anomaly Scoring:** Add statistical anomaly detection:
+    1. Request size anomaly (compare to baseline)
+    2. Parameter count anomaly
+    3. Character entropy (high entropy = potential encoded payload)
+    4. SQL/XSS keyword density
+  * **Output:** Rule parser implementation, CRS import process, custom rule YAML schema, and anomaly scoring logic."
+
+**Sprint 23: API Security Suite**
+
+* **Objective:** Implement API-specific security features: discovery, schema validation, JWT authentication, and abuse detection.
+* **Deliverables:**
+  * API endpoint discovery (learn endpoints from traffic).
+  * OpenAPI/JSON Schema validation at edge.
+  * JWT/OAuth token validation (signature, expiry, claims).
+  * Sequence detection (detect credential stuffing, enumeration).
+  * Per-endpoint rate limiting with dynamic thresholds.
+  * Proof-of-concept: Block invalid API requests and detect account enumeration.
+* **LLM Prompt: "API Security Suite Implementation"**
+  * "You are an API security specialist with expertise in schema validation and abuse detection.
+  * **API Discovery:** Implement automatic endpoint learning:
+    1. Track unique request paths, methods, and parameter names
+    2. Build endpoint inventory over time
+    3. Detect new/unknown endpoints (potential shadow APIs)
+    4. Store inventory in DragonflyDB with usage statistics
+  * **Schema Validation:** Design edge-based schema validation:
+    1. Load OpenAPI 3.0 specs from configuration
+    2. Validate request path, method, headers against spec
+    3. Validate request body against JSON Schema
+    4. Return 400 Bad Request for schema violations
+  * **JWT/OAuth Validation:** Implement token validation at edge:
+    1. Extract token from Authorization header or cookie
+    2. Validate JWT signature (HS256, RS256, Ed25519)
+    3. Check expiry (exp claim)
+    4. Validate issuer (iss) and audience (aud)
+    5. Cache public keys from JWKS endpoints
+  * **Sequence Detection:** Detect abuse patterns:
+    1. Credential stuffing: Many failed logins from same IP
+    2. Account enumeration: Sequential user ID/email probing
+    3. API scraping: Systematic pagination through resources
+  * **Dynamic Rate Limiting:** Per-endpoint limits based on sensitivity:
+    1. /login: 5 req/min per IP
+    2. /api/users: 100 req/min per token
+    3. Adaptive thresholds based on traffic patterns
+  * **Output:** API discovery implementation, schema validator, JWT validation, sequence detection algorithms, and rate limiting configuration."
+
+**Sprint 24: Distributed Enforcement & Global Blocklist Sync**
+
+* **Objective:** Synchronize security decisions across all edge nodes for coordinated defense.
+* **Deliverables:**
+  * Global blocklist synchronization via P2P threat intel (extend Sprint 10).
+  * Real-time eBPF blocklist updates from threat intel.
+  * Distributed trust score sharing across nodes.
+  * Coordinated challenge issuance (don't re-challenge verified users).
+  * IPv6 support for threat intelligence.
+  * Proof-of-concept: Block attacker on all nodes within 200ms of detection.
+* **LLM Prompt: "Distributed Security Enforcement Across Edge Network"**
+  * "You are a distributed systems engineer specializing in security coordination.
+  * **Global Blocklist Sync:** Enhance P2P threat intel (Sprint 10) for real-time blocklist:
+    1. When node detects attack, publish to P2P immediately
+    2. All nodes subscribe and update eBPF blocklists
+    3. Target: <200ms from detection to network-wide block
+  * **eBPF Integration:** Wire threat intel directly to eBPF loader:
+    1. On threat intel receipt, validate and add to eBPF blocklist map
+    2. Remove expired entries automatically
+    3. Handle IPv6 addresses (extend current IPv4-only)
+  * **Trust Score Sharing:** Distribute verified user trust scores:
+    1. When user passes challenge on Node A, share token with network
+    2. Node B can verify token without re-challenging
+    3. Use signed tokens for authenticity
+  * **IPv6 Threat Intel:** Extend ThreatIntelligence struct:
+    1. Support both IPv4 and IPv6 addresses
+    2. Update validation logic
+    3. Update eBPF maps (already have IPv6 support)
+  * **Coordinated Challenges:** Prevent duplicate challenges:
+    1. Challenge completion published to P2P
+    2. Other nodes recognize completed challenges
+    3. Reduces user friction across global network
+  * **Output:** Enhanced threat intel protocol, eBPF integration, trust score sharing, and IPv6 support."
+
+---
+
+#### **Phase 4 Continued: Mainnet Preparation (Sprints 25-30)**
+
+**Sprint 25-26: Performance Optimization & Stress Testing**
+
+* **Objective:** Optimize all components for production performance and conduct comprehensive stress testing.
+* **Deliverables:**
+  * Performance profiling of all critical paths (proxy, WAF, bot detection).
+  * Latency optimization (<60ms TTFB for cached, <200ms for proxied).
+  * Throughput optimization (>20 Gbps, >2M req/sec per node).
+  * "Game Day" exercises: Simulated DDoS, bad config rollout, control plane failure.
+  * Load testing framework with realistic traffic patterns.
+
+**Sprint 27-28: Security Audits & Bug Bounty**
+
+* **Objective:** Complete professional security audits and launch bug bounty program.
+* **Deliverables:**
+  * Smart contract audit by reputable Solana auditor (Neodyme, OtterSec, etc.).
+  * Core infrastructure audit (Rust proxy, eBPF, Wasm runtime).
+  * Penetration testing of full stack.
+  * Bug bounty program launch with tiered rewards.
+  * All critical/high findings remediated.
+
+**Sprint 29-30: Mainnet Launch Preparation**
+
+* **Objective:** Prepare for mainnet launch including token generation, node onboarding, and geographic expansion.
+* **Deliverables:**
+  * Mainnet smart contract deployment.
+  * Token Generation Event (TGE) preparation.
+  * Initial node operator onboarding (target: 100+ nodes, 50+ locations).
+  * Monitoring and alerting infrastructure.
+  * Documentation and support resources.
+  * Launch marketing and community coordination.
 
 ---
 

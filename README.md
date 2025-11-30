@@ -102,9 +102,10 @@ NATS JetStream (broadcast state updates via CRDTs)
 
 ## Development Status
 
-**Current**: 12 of 24 sprints complete (50%)
+**Current**: 17 of 24 sprints complete (71%)
 **Phase 1**: ✅ COMPLETE (100%)
-**Phase 2**: ✅ COMPLETE (100%) - All 6 sprints done!
+**Phase 2**: ✅ COMPLETE (100%)
+**Phase 3**: 🚧 IN PROGRESS (83%) - 5 of 6 sprints done!
 
 ### ✅ **Phase 1: Foundation & Core Node (Sprints 1-6)** - COMPLETE
 
@@ -119,12 +120,12 @@ NATS JetStream (broadcast state updates via CRDTs)
 
 **Phase 1 Summary:**
 - ✅ **344 tests passing** (100% pass rate)
-- ✅ **4 smart contracts deployed** to Solana Devnet
+- ✅ **5 smart contracts deployed** to Solana Devnet
 - ✅ **10 CLI commands** fully functional
 - ✅ **Production-ready** edge node with caching
 - ✅ **Zero gaps** - all requirements exceeded
 
-### 🔄 **Phase 2: Security & Decentralized State (Sprints 7-12)** - IN PROGRESS
+### ✅ **Phase 2: Security & Decentralized State (Sprints 7-12)** - COMPLETE
 
 | Sprint | Component | Status | Tests |
 |--------|-----------|--------|-------|
@@ -188,8 +189,9 @@ NATS JetStream (broadcast state updates via CRDTs)
   - Registry: `4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6` ✅
   - Staking: `85Pd1GRJ1qA3kVTn3ERHsyuUpkr2bbb9L9opwS9UnHEQ` ✅
   - Rewards: `8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK` ✅
+  - DAO Governance: `9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz` ✅
 
-  **Status**: All 4 contracts successfully deployed and confirmed on-chain (November 21, 2025)
+  **Status**: All 5 contracts successfully deployed and confirmed on-chain (November 30, 2025)
 - 🎉 **Decentralized Threat Intelligence** - P2P network shares threats in real-time via libp2p
 - 🎉 **Kernel-Level DDoS Protection** - eBPF/XDP SYN flood mitigation (<1μs latency)
 - 🎉 **Bot Management System** - Wasm-based bot detection and mitigation
@@ -199,7 +201,45 @@ NATS JetStream (broadcast state updates via CRDTs)
 - 🎉 **10 CLI Commands** - Complete node operator toolkit
 - 📊 **Professional Website** - Mobile-responsive design
 
-**Current Focus:** Phase 3 - Sprint 13 - Wasm Edge Functions Runtime
+### 🚧 **Phase 3: Edge Compute & Governance (Sprints 13-18)** - IN PROGRESS
+
+| Sprint | Component | Status | Tests |
+|--------|-----------|--------|-------|
+| **Sprint 13** | Wasm Edge Functions Runtime | ✅ COMPLETE | 45+ ✅ |
+| **Sprint 14** | Extended Host API (Cache/HTTP) | ✅ COMPLETE | 20+ ✅ |
+| **Sprint 15** | WAF Wasm Migration + Ed25519 Signatures | ✅ COMPLETE | 30+ ✅ |
+| **Sprint 16** | Route-based Module Dispatch | ✅ COMPLETE | 156 ✅ |
+| **Sprint 17** | IPFS/Filecoin CDN + Content Publisher | ✅ COMPLETE | 11 ✅ |
+| **Sprint 18** | DAO Governance Contracts | ✅ COMPLETE | 14 ✅ |
+
+**Phase 3 Progress: 100% COMPLETE** ✅ (6 of 6 sprints done)
+
+**Recent Milestones:**
+- 🎉 **PHASE 3 COMPLETE** - All Edge Compute & Governance sprints done! (November 30, 2025)
+- 🎉 **Sprint 18 COMPLETE** - DAO Governance Smart Contracts (November 30, 2025)
+  - Full-featured DAO with proposals, voting, and treasury management
+  - Token-weighted voting with quorum and approval thresholds
+  - Proposal types: General, Treasury Withdrawal, Parameter Change
+  - 9 instructions: initialize_dao, create_proposal, cast_vote, finalize_proposal, execute_proposal, etc.
+  - 14 comprehensive tests (100% core functionality coverage)
+  - Deployed to Devnet: `9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz`
+- 🎉 **Sprint 17 COMPLETE** - IPFS/Filecoin CDN Integration (November 2025)
+  - Content Publisher CLI (`aegis-cdn`) for static site deployment
+  - IPFS upload with multi-tier CDN fallback (local cache → IPFS node → public gateways)
+  - Zero token cost for static content hosting
+  - GitOps-ready route configuration generation
+  - Commands: `init`, `upload`, `deploy`, `status`, `config`, `list`, `remove`
+- 🎉 **Sprint 16 COMPLETE** - Route-based Dispatch (November 2025)
+  - YAML/TOML configuration for request routing
+  - Sequential Wasm module pipeline execution
+  - Priority-based route matching (exact, prefix, regex)
+  - 156 comprehensive tests
+- 🎉 **Sprint 15 COMPLETE** - Ed25519 Module Signatures (November 2025)
+  - Cryptographic verification of Wasm modules
+  - WAF migrated to Wasm sandbox
+  - PN-Counter CRDT for distributed state
+
+**Current Focus:** Sprint 18 - DAO Governance Contracts
 
 **🔒 Security Update** (November 20, 2025):
 - 3 critical vulnerabilities identified via security review
@@ -290,6 +330,43 @@ const functionCid = await client.deployEdgeFunction({
 });
 ```
 
+### Deploying Static Sites (Decentralized CDN)
+
+Deploy websites to the decentralized AEGIS CDN using the `aegis-cdn` CLI:
+
+```bash
+# Initialize a new project
+aegis-cdn init my-website
+cd my-website
+
+# Edit your content
+vim public/index.html
+
+# Deploy to IPFS + global edge network
+aegis-cdn deploy public/
+
+# Output:
+# 📦 IPFS CID: QmXyz...abc123
+# 🌐 Gateway URLs:
+#    • https://ipfs.io/ipfs/QmXyz...
+#    • https://cloudflare-ipfs.com/ipfs/QmXyz...
+# 📝 Route config saved to: routes-production.yaml
+# ✅ Deployment complete!
+
+# Check deployment status
+aegis-cdn status my-website
+
+# List all deployments
+aegis-cdn list
+```
+
+**CDN Features:**
+- **Zero Token Cost** - Deploy HTML, CSS, JS, images for free (no $AEGIS required)
+- **IPFS Storage** - Content-addressed, censorship-resistant hosting
+- **Multi-tier CDN** - Automatic fallback: local cache → IPFS node → public gateways
+- **Security by Default** - WAF and bot management included with every deployment
+- **GitOps Ready** - Route configs version-controlled in Git, auto-synced via FluxCD
+
 ## Development Roadmap
 
 ### Phase 1: Foundation (Q3 2025) ✓
@@ -298,28 +375,40 @@ const functionCid = await client.deployEdgeFunction({
 - [x] Basic node operator CLI
 - [x] Devnet deployment
 
-### Phase 2: Security & State (Q4 2025)
+### Phase 2: Security & State (Q4 2025) ✓
 - [x] eBPF/XDP DDoS protection
-- [x] WAF integration (Rust-native, Wasm migration planned)
+- [x] WAF integration (Rust-native, Wasm migration complete)
 - [x] Bot management modules (Wasm-based)
 - [x] P2P Threat Intelligence sharing (libp2p)
-- [ ] CRDTs + NATS for global state sync
-- [ ] Verifiable analytics framework
+- [x] CRDTs + NATS for global state sync
+- [x] Verifiable analytics framework
 
-### Phase 3: Compute & Governance (Q3 2026)
-- [ ] Wasm edge functions runtime
+### Phase 3: Compute & Governance (Q1-Q2 2026) - 83% Complete
+- [x] Wasm edge functions runtime
+- [x] Extended Host API (cache operations, HTTP requests)
+- [x] Ed25519 module signatures
+- [x] Route-based module dispatch (YAML/TOML config)
+- [x] IPFS/Filecoin CDN integration
+- [x] Content Publisher CLI (`aegis-cdn`)
 - [ ] DAO governance (proposals, voting, treasury)
-- [ ] Advanced P2P routing
-- [ ] IPFS/Filecoin integration
 
-### Phase 4: Mainnet Launch (Q4 2026)
+### Phase 4: Advanced Security (Q2-Q3 2026) - Cloudflare Parity
+- [ ] TLS fingerprinting (JA3/JA4) for bot detection
+- [ ] JavaScript challenge system (Turnstile-like)
+- [ ] Behavioral analysis & trust scoring
+- [ ] WAF enhancement (OWASP CRS 4.0, 400+ rules)
+- [ ] API security suite (discovery, schema validation, JWT)
+- [ ] Distributed enforcement & global blocklist sync
+
+### Phase 5: Mainnet Launch (Q4 2026)
 - [ ] Performance optimization and stress testing
 - [ ] Multi-firm smart contract audits
 - [ ] Geographic expansion (100+ edge locations)
 - [ ] Mainnet token generation event
 
 ### Future Vision
-- Serverless edge functions platform
+- Zero Trust Network Access (ZTNA) - VPN replacement
+- Secure Web Gateway (SWG) - DNS filtering, malware scanning
 - Object storage layer (R2-like)
 - Distributed SQL database (D1-like)
 - Cross-chain interoperability
