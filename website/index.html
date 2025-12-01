@@ -497,6 +497,188 @@
         </div>
     </section>
 
+    <!-- Performance Benchmarks Section -->
+    <section id="performance" class="py-20 px-4 bg-darkGrey/30">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Performance Benchmarks</h2>
+            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
+                Sub-microsecond response times. Benchmarked with Criterion.
+            </p>
+
+            <!-- Performance Stats Grid -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+                <!-- WAF Analysis -->
+                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-teal/30 hover:border-aegis-teal/60 transition-all text-center">
+                    <div class="w-12 h-12 bg-aegis-teal/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                        </svg>
+                    </div>
+                    <div class="text-3xl md:text-4xl font-bold text-aegis-teal mb-2">1.5μs</div>
+                    <div class="text-white font-semibold mb-1">WAF Analysis</div>
+                    <div class="text-sm text-gray-400">66x faster than 100μs target</div>
+                </div>
+
+                <!-- Route Matching -->
+                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-cyan/30 hover:border-aegis-cyan/60 transition-all text-center">
+                    <div class="w-12 h-12 bg-aegis-cyan/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                        </svg>
+                    </div>
+                    <div class="text-3xl md:text-4xl font-bold text-aegis-cyan mb-2">65ns</div>
+                    <div class="text-white font-semibold mb-1">Route Matching</div>
+                    <div class="text-sm text-gray-400">Pre-compiled regex patterns</div>
+                </div>
+
+                <!-- CRDT Operations -->
+                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-lightblue/30 hover:border-aegis-lightblue/60 transition-all text-center">
+                    <div class="w-12 h-12 bg-aegis-lightblue/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                        </svg>
+                    </div>
+                    <div class="text-3xl md:text-4xl font-bold text-aegis-lightblue mb-2">23ns</div>
+                    <div class="text-white font-semibold mb-1">CRDT Increment</div>
+                    <div class="text-sm text-gray-400">Distributed state sync</div>
+                </div>
+
+                <!-- Cache Operations -->
+                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-purple/30 hover:border-aegis-purple/60 transition-all text-center">
+                    <div class="w-12 h-12 bg-aegis-purple/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
+                        <svg class="w-6 h-6 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                        </svg>
+                    </div>
+                    <div class="text-3xl md:text-4xl font-bold text-aegis-purple mb-2">103ns</div>
+                    <div class="text-white font-semibold mb-1">Cache Key Gen</div>
+                    <div class="text-sm text-gray-400">DragonflyDB operations</div>
+                </div>
+            </div>
+
+            <!-- Benchmark Details Table -->
+            <div class="max-w-4xl mx-auto bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 overflow-hidden">
+                <div class="px-6 py-4 bg-darkGrey/80 border-b border-aegis-teal/20">
+                    <h3 class="text-xl font-bold text-white">Sprint 25 Benchmark Results</h3>
+                    <p class="text-sm text-gray-400 mt-1">Criterion benchmarks on Apple M-series, compiled with --release</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-darkGrey/30">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-300">Operation</th>
+                                <th class="px-6 py-3 text-right text-sm font-semibold text-gray-300">Time</th>
+                                <th class="px-6 py-3 text-right text-sm font-semibold text-gray-300">Target</th>
+                                <th class="px-6 py-3 text-center text-sm font-semibold text-gray-300">Status</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-aegis-teal/10">
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">WAF Clean Request</td>
+                                <td class="px-6 py-4 text-right text-aegis-teal font-mono">1.51 μs</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;100 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">66x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">WAF SQLi Detection</td>
+                                <td class="px-6 py-4 text-right text-aegis-teal font-mono">2.44 μs</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;100 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">41x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">Compiled Route Match (Regex)</td>
+                                <td class="px-6 py-4 text-right text-aegis-cyan font-mono">65 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">15x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">Compiled Route Match (Exact)</td>
+                                <td class="px-6 py-4 text-right text-aegis-cyan font-mono">18 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">55x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">CRDT Increment</td>
+                                <td class="px-6 py-4 text-right text-aegis-lightblue font-mono">23 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">43x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">CRDT Merge</td>
+                                <td class="px-6 py-4 text-right text-aegis-lightblue font-mono">46 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">21x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">Cache Key Generation</td>
+                                <td class="px-6 py-4 text-right text-aegis-purple font-mono">103 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">9x FASTER</span></td>
+                            </tr>
+                            <tr class="hover:bg-aegis-teal/5 transition-colors">
+                                <td class="px-6 py-4 text-white">Cache-Control Parse</td>
+                                <td class="px-6 py-4 text-right text-aegis-purple font-mono">269 ns</td>
+                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
+                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">3x FASTER</span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="px-6 py-4 bg-darkGrey/30 border-t border-aegis-teal/20">
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div class="text-sm text-gray-400">
+                            <span class="text-aegis-teal font-semibold">All targets exceeded.</span> Benchmarks run on every PR via GitHub Actions CI.
+                        </div>
+                        <a href="https://github.com/FunwayHQ/project-aegis/blob/main/node/benches/performance.rs" target="_blank" class="text-sm text-aegis-cyan hover:text-white transition-colors font-medium">
+                            View Benchmark Code →
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Key Optimizations -->
+            <div class="mt-12 grid md:grid-cols-3 gap-6">
+                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-teal/20">
+                    <div class="flex items-center mb-3">
+                        <div class="w-8 h-8 bg-aegis-teal/20 rounded-lg flex items-center justify-center mr-3">
+                            <svg class="w-4 h-4 text-aegis-teal" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                        <h4 class="font-bold text-white">Pre-compiled Regex</h4>
+                    </div>
+                    <p class="text-sm text-gray-400">Route patterns compiled once at load, cached with Arc&lt;Regex&gt;. 1,770x faster than runtime compilation.</p>
+                </div>
+
+                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-cyan/20">
+                    <div class="flex items-center mb-3">
+                        <div class="w-8 h-8 bg-aegis-cyan/20 rounded-lg flex items-center justify-center mr-3">
+                            <svg class="w-4 h-4 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20">
+                                <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
+                                <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
+                                <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
+                            </svg>
+                        </div>
+                        <h4 class="font-bold text-white">Lock-Free CRDTs</h4>
+                    </div>
+                    <p class="text-sm text-gray-400">Conflict-free replicated data types enable sub-microsecond distributed state operations.</p>
+                </div>
+
+                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-purple/20">
+                    <div class="flex items-center mb-3">
+                        <div class="w-8 h-8 bg-aegis-purple/20 rounded-lg flex items-center justify-center mr-3">
+                            <svg class="w-4 h-4 text-aegis-purple" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
+                            </svg>
+                        </div>
+                        <h4 class="font-bold text-white">Rust + Wasm</h4>
+                    </div>
+                    <p class="text-sm text-gray-400">Memory-safe code with zero-cost abstractions. WAF runs in isolated Wasm sandbox with fuel limits.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- AEGIS Economy Section -->
     <section id="tokenomics" class="py-20 px-4">
         <div class="max-w-7xl mx-auto">
