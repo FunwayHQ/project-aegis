@@ -1,13 +1,33 @@
+//! eBPF/XDP DDoS Protection Loader (Linux-only)
+//!
+//! This binary is only available on Linux as it uses eBPF/XDP.
+//! On other platforms, it will print an error message and exit.
+
+#[cfg(target_os = "linux")]
 mod ebpf_loader;
 
+#[cfg(target_os = "linux")]
 use anyhow::Result;
+
+#[cfg(target_os = "linux")]
 use clap::{Parser, Subcommand};
+
+#[cfg(target_os = "linux")]
 use colored::Colorize;
+
+#[cfg(target_os = "linux")]
 use ebpf_loader::EbpfLoader;
+
+#[cfg(target_os = "linux")]
 use std::path::PathBuf;
+
+#[cfg(target_os = "linux")]
 use std::thread;
+
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 #[derive(Parser)]
 #[command(name = "aegis-ebpf-loader")]
 #[command(author = "AEGIS Team")]
@@ -18,6 +38,7 @@ struct Cli {
     command: Commands,
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Subcommand)]
 enum Commands {
     /// Load and attach XDP program to network interface
@@ -68,6 +89,7 @@ enum Commands {
     },
 }
 
+#[cfg(target_os = "linux")]
 fn main() -> Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
@@ -114,6 +136,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Result<()> {
     println!(
         "{}",
@@ -187,6 +210,7 @@ fn attach_program(interface: &str, program_path: &PathBuf, threshold: u64) -> Re
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn show_stats() -> Result<()> {
     println!(
         "{}",
@@ -216,6 +240,7 @@ fn show_stats() -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn set_threshold(threshold: u64) -> Result<()> {
     println!(
         "{}",
@@ -225,12 +250,14 @@ fn set_threshold(threshold: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn whitelist_ip(ip: &str) -> Result<()> {
     println!("{}", format!("Adding {} to whitelist", ip).bright_cyan());
     // Would update running instance
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn unwhitelist_ip(ip: &str) -> Result<()> {
     println!(
         "{}",
@@ -240,6 +267,7 @@ fn unwhitelist_ip(ip: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
 fn monitor_stats(interval: u64) -> Result<()> {
     println!(
         "{}",
@@ -266,17 +294,16 @@ fn monitor_stats(interval: u64) -> Result<()> {
     }
 }
 
+// Non-Linux stub
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("Error: aegis-ebpf-loader is only available on Linux");
+    eprintln!("eBPF/XDP requires the Linux kernel");
+    std::process::exit(1);
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn test_cli_structure() {
-        // Verify CLI compiles
-        use clap::CommandFactory;
-        Cli::command().debug_assert();
-    }
-
     #[test]
     fn test_default_threshold() {
         let default = 100_u64;

@@ -1,10 +1,24 @@
-use aegis_node::threat_intel_p2p::ThreatIntelligence;
-use aegis_node::threat_intel_service::{ThreatIntelConfig, ThreatIntelService};
-use anyhow::{Context, Result};
-use std::io::{self, Write};
-use tracing::{error, info};
-use tracing_subscriber;
+//! Threat Intelligence Service (Linux-only)
+//!
+//! This binary combines P2P threat intelligence sharing with eBPF integration.
+//! It requires the Linux kernel for eBPF functionality.
 
+#[cfg(target_os = "linux")]
+use aegis_node::threat_intel_p2p::ThreatIntelligence;
+
+#[cfg(target_os = "linux")]
+use aegis_node::threat_intel_service::{ThreatIntelConfig, ThreatIntelService};
+
+#[cfg(target_os = "linux")]
+use anyhow::Result;
+
+#[cfg(target_os = "linux")]
+use std::io::{self, Write};
+
+#[cfg(target_os = "linux")]
+use tracing::{error, info};
+
+#[cfg(target_os = "linux")]
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
@@ -244,4 +258,12 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+// Non-Linux stub
+#[cfg(not(target_os = "linux"))]
+fn main() {
+    eprintln!("Error: aegis-threat-intel is only available on Linux");
+    eprintln!("This service requires eBPF/XDP which is Linux kernel-specific");
+    std::process::exit(1);
 }

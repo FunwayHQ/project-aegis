@@ -3,9 +3,12 @@
 /// This module provides configuration-driven routing for Wasm modules.
 /// Routes map HTTP request patterns to sequences of Wasm modules (WAF, edge functions, etc.)
 /// enabling flexible, GitOps-managed edge logic without code changes.
+///
+/// Sprint 25: Performance optimization - Added CompiledRouteConfig with pre-compiled regex patterns
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Route matching pattern types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +24,8 @@ pub enum RoutePattern {
 
 impl RoutePattern {
     /// Check if a given path matches this pattern
+    /// Note: For regex patterns, this recompiles on each call.
+    /// Use CompiledRouteConfig for high-performance matching.
     pub fn matches(&self, path: &str) -> bool {
         match self {
             RoutePattern::Exact(pattern) => path == pattern,
@@ -38,6 +43,166 @@ impl RoutePattern {
                 }
             }
         }
+    }
+}
+
+// =============================================================================
+// COMPILED ROUTE CONFIG (Sprint 25 Performance Optimization)
+// =============================================================================
+
+/// Pre-compiled route pattern for high-performance matching
+#[derive(Debug, Clone)]
+pub enum CompiledRoutePattern {
+    /// Exact path match
+    Exact(String),
+    /// Prefix match (normalized without trailing * or /)
+    Prefix(String),
+    /// Pre-compiled regex pattern
+    Regex(Arc<regex::Regex>),
+    /// Invalid regex pattern (will never match)
+    Invalid,
+}
+
+impl CompiledRoutePattern {
+    /// Compile a RoutePattern into a CompiledRoutePattern
+    pub fn compile(pattern: &RoutePattern) -> Self {
+        match pattern {
+            RoutePattern::Exact(s) => CompiledRoutePattern::Exact(s.clone()),
+            RoutePattern::Prefix(prefix) => {
+                let normalized = prefix.trim_end_matches('*').trim_end_matches('/').to_string();
+                CompiledRoutePattern::Prefix(normalized)
+            }
+            RoutePattern::Regex(pattern) => {
+                match regex::Regex::new(pattern) {
+                    Ok(re) => CompiledRoutePattern::Regex(Arc::new(re)),
+                    Err(_) => CompiledRoutePattern::Invalid,
+                }
+            }
+        }
+    }
+
+    /// Check if a given path matches this compiled pattern (fast path)
+    #[inline]
+    pub fn matches(&self, path: &str) -> bool {
+        match self {
+            CompiledRoutePattern::Exact(pattern) => path == pattern,
+            CompiledRoutePattern::Prefix(normalized_prefix) => {
+                path == normalized_prefix || path.starts_with(&format!("{}/", normalized_prefix))
+            }
+            CompiledRoutePattern::Regex(re) => re.is_match(path),
+            CompiledRoutePattern::Invalid => false,
+        }
+    }
+}
+
+/// Pre-compiled route with cached regex patterns
+#[derive(Debug, Clone)]
+pub struct CompiledRoute {
+    /// Route identifier (for logging/debugging)
+    pub name: Option<String>,
+    /// Compiled path pattern
+    pub path: CompiledRoutePattern,
+    /// HTTP methods to match
+    pub methods: MethodMatcher,
+    /// Optional: Header matchers
+    pub headers: Option<HashMap<String, String>>,
+    /// Wasm modules to execute
+    pub wasm_modules: Vec<WasmModuleRef>,
+    /// Priority for route matching
+    pub priority: i32,
+    /// Whether this route is enabled
+    pub enabled: bool,
+}
+
+impl CompiledRoute {
+    /// Compile a Route into a CompiledRoute
+    pub fn compile(route: &Route) -> Self {
+        Self {
+            name: route.name.clone(),
+            path: CompiledRoutePattern::compile(&route.path),
+            methods: route.methods.clone(),
+            headers: route.headers.clone(),
+            wasm_modules: route.wasm_modules.clone(),
+            priority: route.priority,
+            enabled: route.enabled,
+        }
+    }
+
+    /// Check if this route matches the given request (fast path)
+    #[inline]
+    pub fn matches_request(&self, method: &str, path: &str, headers: &[(String, String)]) -> bool {
+        // Check if route is enabled
+        if !self.enabled {
+            return false;
+        }
+
+        // Check method match
+        if !self.methods.matches(method) {
+            return false;
+        }
+
+        // Check path match (using compiled pattern)
+        if !self.path.matches(path) {
+            return false;
+        }
+
+        // Check header matches (if specified)
+        if let Some(required_headers) = &self.headers {
+            for (key, value) in required_headers {
+                let header_match = headers.iter().any(|(h_key, h_val)| {
+                    h_key.eq_ignore_ascii_case(key) && h_val == value
+                });
+
+                if !header_match {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
+}
+
+/// Pre-compiled route configuration for high-performance matching
+/// Routes are sorted by priority at compile time for O(n) matching
+#[derive(Debug, Clone)]
+pub struct CompiledRouteConfig {
+    /// Compiled routes (pre-sorted by priority, highest first)
+    routes: Vec<CompiledRoute>,
+    /// Default Wasm modules
+    pub default_modules: Option<Vec<WasmModuleRef>>,
+    /// Global settings
+    pub settings: Option<RouteSettings>,
+}
+
+impl CompiledRouteConfig {
+    /// Compile a RouteConfig into a CompiledRouteConfig
+    pub fn compile(config: &RouteConfig) -> Self {
+        let mut routes: Vec<CompiledRoute> = config.routes.iter()
+            .map(CompiledRoute::compile)
+            .collect();
+
+        // Pre-sort by priority (highest first) at compile time
+        routes.sort_by(|a, b| b.priority.cmp(&a.priority));
+
+        Self {
+            routes,
+            default_modules: config.default_modules.clone(),
+            settings: config.settings.clone(),
+        }
+    }
+
+    /// Find the best matching route for a request (fast path)
+    /// Routes are pre-sorted, so we just find the first match
+    #[inline]
+    pub fn find_matching_route(&self, method: &str, path: &str, headers: &[(String, String)]) -> Option<&CompiledRoute> {
+        self.routes.iter()
+            .find(|route| route.matches_request(method, path, headers))
+    }
+
+    /// Get the number of compiled routes
+    pub fn route_count(&self) -> usize {
+        self.routes.len()
     }
 }
 
@@ -228,6 +393,8 @@ impl RouteConfig {
 
     /// Find the best matching route for a request
     /// Returns the first route that matches, prioritized by priority field
+    /// Note: This sorts routes on each call. For high-performance matching,
+    /// use `compile()` to get a CompiledRouteConfig.
     pub fn find_matching_route(&self, method: &str, path: &str, headers: &[(String, String)]) -> Option<&Route> {
         // Sort by priority (highest first) and find first match
         let mut sorted_routes: Vec<&Route> = self.routes.iter().collect();
@@ -235,6 +402,12 @@ impl RouteConfig {
 
         sorted_routes.into_iter()
             .find(|route| route.matches_request(method, path, headers))
+    }
+
+    /// Compile this configuration for high-performance matching
+    /// Pre-compiles all regex patterns and pre-sorts routes by priority
+    pub fn compile(&self) -> CompiledRouteConfig {
+        CompiledRouteConfig::compile(self)
     }
 }
 
