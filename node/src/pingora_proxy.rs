@@ -1056,7 +1056,8 @@ impl Default for ProxyConfig {
 
 /// Initialize and run the Pingora proxy server
 pub fn run_proxy(config: ProxyConfig) -> Result<()> {
-    env_logger::init();
+    // Try to init logger, ignore if already initialized (e.g., by tracing_subscriber)
+    let _ = env_logger::try_init();
 
     // Create server with optional config
     let mut server = Server::new(None).unwrap();

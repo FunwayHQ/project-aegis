@@ -1,0 +1,14 @@
+# AEGIS Pingora Proxy - Load Test Configuration
+# Sprint 26: Performance Stress Testing
+
+# HTTP listener
+http_addr = "0.0.0.0:8080"
+
+# Origin server (local mock for testing)
+origin = "http://127.0.0.1:3000"
+
+# Disable caching for baseline profiling
+enable_caching = false
+
+# Number of worker threads (match CPU cores)
+threads = 8
