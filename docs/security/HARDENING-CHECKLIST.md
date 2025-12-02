@@ -14,13 +14,29 @@
 
 | Vulnerability | Severity | Status | Notes |
 |---------------|----------|--------|-------|
-| protobuf (RUSTSEC-2024-0437) | High | Transitive | Via prometheus → pingora-core. Waiting for Pingora update |
-| atty (RUSTSEC-2021-0145) | Warning | Transitive | Unmaintained, low risk |
+| protobuf (RUSTSEC-2024-0437) | High | Mitigated | Via prometheus → pingora-core. PR #708 pending merge |
+| ring (RUSTSEC-2025-0009) | Medium | Transitive | Via rustls → ipfs-api. Panic on AES with overflow checks |
+| rustls (RUSTSEC-2024-0336) | Medium | Transitive | Via ipfs-api. Infinite loop on malformed input |
+
+### Risk Assessment
+
+**protobuf (RUSTSEC-2024-0437):**
+- Attack vector: Uncontrolled recursion parsing untrusted protobuf messages
+- Our exposure: **LOW** - protobuf is only used by prometheus for push gateway text format
+- We don't expose prometheus push gateway to untrusted input
+- Upstream fix: [Pingora PR #708](https://github.com/cloudflare/pingora/pull/708)
+
+**ring/rustls vulnerabilities:**
+- Only affects ipfs-api-backend-hyper (IPFS client)
+- IPFS connections are to trusted nodes/gateways
+- Risk is low but should update when compatible versions available
 
 ### Action Items
 
-- [ ] Monitor Pingora releases for protobuf update
-- [ ] Consider replacing prometheus with OpenTelemetry metrics
+- [x] Analyze protobuf vulnerability exposure (low risk confirmed)
+- [ ] Monitor [Pingora PR #708](https://github.com/cloudflare/pingora/pull/708) for merge
+- [ ] Update Pingora when patch version released
+- [ ] Consider upgrading ipfs-api when rustls 0.21+ compatible version available
 - [ ] Run `cargo audit` in CI pipeline
 
 ### Verification Commands
