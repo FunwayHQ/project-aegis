@@ -20,7 +20,7 @@ export const Layout: FC<LayoutProps> = ({ children }) => {
   return (
     <div className="min-h-screen bg-gray-900">
       {/* Header */}
-      <header className="border-b border-gray-800">
+      <header className="bg-white border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
@@ -40,8 +40,8 @@ export const Layout: FC<LayoutProps> = ({ children }) => {
                   to={item.path}
                   className={`text-sm font-medium transition-colors ${
                     location.pathname === item.path
-                      ? "text-aegis-400"
-                      : "text-gray-400 hover:text-white"
+                      ? "text-aegis-600"
+                      : "text-gray-600 hover:text-gray-900"
                   }`}
                 >
                   {item.label}
