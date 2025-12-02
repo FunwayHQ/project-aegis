@@ -10,6 +10,10 @@ const _UNSTAKE_COOLDOWN_PERIOD: i64 = 7 * 24 * 60 * 60; // 7 days in seconds
 #[allow(dead_code)]
 const _MIN_STAKE_AMOUNT: u64 = 100_000_000_000; // 100 AEGIS tokens
 
+/// SECURITY FIX: Timelock period for slash requests (24 hours in seconds)
+/// This allows node operators to dispute false positives before execution
+pub const SLASH_TIMELOCK_PERIOD: i64 = 24 * 60 * 60; // 24 hours
+
 #[program]
 pub mod staking {
     use super::*;
@@ -363,21 +367,24 @@ pub mod staking {
         Ok(())
     }
 
-    /// Automated slashing based on whitepaper-defined violations
-    /// Can be called by oracles with evidence of violation
+    /// SECURITY FIX: Request slash (timelock pattern - Phase 1)
+    /// Creates a pending slash request that can be executed after 24 hours.
+    /// This prevents instant 100% slashing and allows for dispute resolution.
+    ///
     /// Slashing triggers per whitepaper:
     /// 1. Offline48Hours - Node offline for 48+ hours (10% slash)
     /// 2. LowUptime - Below 90% uptime (5% slash)
     /// 3. ChallengeFailed - Failed security challenge (15% slash)
     /// 4. DataIntegrityViolation - Corrupted/invalid data (25% slash)
     /// 5. MaliciousBehavior - Attack detection (100% slash)
-    pub fn automated_slash(
-        ctx: Context<AutomatedSlash>,
+    pub fn request_slash(
+        ctx: Context<RequestSlash>,
         violation_type: SlashingViolation,
         evidence_cid: String, // IPFS CID of evidence
     ) -> Result<()> {
         let config = &ctx.accounts.global_config;
-        let stake_account = &mut ctx.accounts.stake_account;
+        let stake_account = &ctx.accounts.stake_account;
+        let slash_request = &mut ctx.accounts.slash_request;
         let clock = Clock::get()?;
 
         // Verify oracle is authorized
@@ -385,6 +392,9 @@ pub mod staking {
             ctx.accounts.oracle.key() == config.admin_authority,
             StakingError::UnauthorizedOracle
         );
+
+        // Validate evidence CID length
+        require!(evidence_cid.len() <= 128, StakingError::EvidenceCidTooLong);
 
         // Calculate slash amount based on violation type (per whitepaper)
         let slash_percentage = match violation_type {
@@ -414,6 +424,71 @@ pub mod staking {
 
         let operator = stake_account.operator;
 
+        // Initialize the slash request PDA
+        slash_request.operator = operator;
+        slash_request.amount = slash_amount;
+        slash_request.violation_type = violation_type;
+        slash_request.evidence_cid = evidence_cid.clone();
+        slash_request.request_time = clock.unix_timestamp;
+        slash_request.authority = ctx.accounts.oracle.key();
+        slash_request.executed = false;
+        slash_request.cancelled = false;
+        slash_request.bump = ctx.bumps.slash_request;
+
+        let execute_after = clock.unix_timestamp + SLASH_TIMELOCK_PERIOD;
+
+        msg!(
+            "Slash requested: {} tokens ({}%) from {} for {:?} - Evidence: {} - Executable after: {}",
+            slash_amount, slash_percentage, operator, violation_type, evidence_cid, execute_after
+        );
+
+        emit!(SlashRequestedEvent {
+            operator,
+            amount: slash_amount,
+            violation_type,
+            evidence_cid,
+            request_time: clock.unix_timestamp,
+            execute_after,
+        });
+
+        Ok(())
+    }
+
+    /// SECURITY FIX: Execute slash (timelock pattern - Phase 2)
+    /// Can only be called 24 hours after request_slash was called.
+    /// This gives node operators time to dispute false positives.
+    pub fn execute_slash(ctx: Context<ExecuteSlash>) -> Result<()> {
+        let config = &ctx.accounts.global_config;
+        let stake_account = &mut ctx.accounts.stake_account;
+        let slash_request = &mut ctx.accounts.slash_request;
+        let clock = Clock::get()?;
+
+        // Verify slash request is not already executed or cancelled
+        require!(
+            !slash_request.executed,
+            StakingError::SlashAlreadyExecuted
+        );
+        require!(
+            !slash_request.cancelled,
+            StakingError::SlashCancelled
+        );
+
+        // CRITICAL: Enforce 24-hour timelock
+        let execute_after = slash_request.request_time + SLASH_TIMELOCK_PERIOD;
+        require!(
+            clock.unix_timestamp >= execute_after,
+            StakingError::SlashTimelockNotExpired
+        );
+
+        // Verify there's still enough stake to slash
+        require!(
+            stake_account.staked_amount >= slash_request.amount,
+            StakingError::InsufficientStakedBalance
+        );
+
+        let operator = slash_request.operator;
+        let slash_amount = slash_request.amount;
+
         // Transfer slashed tokens to treasury
         let vault_seeds: &[&[u8]] = &[
             b"stake_vault",
@@ -436,6 +511,9 @@ pub mod staking {
             .checked_sub(slash_amount)
             .ok_or(StakingError::Underflow)?;
         stake_account.updated_at = clock.unix_timestamp;
+
+        // Mark slash as executed
+        slash_request.executed = true;
 
         // Call Registry to update stake via CPI
         let new_total_stake = stake_account.staked_amount;
@@ -461,16 +539,59 @@ pub mod staking {
         registry::cpi::update_stake(registry_cpi_ctx, new_total_stake)?;
 
         msg!(
-            "Automated slash: {} tokens ({}%) from {} for {:?} - Evidence: {}",
-            slash_amount, slash_percentage, operator, violation_type, evidence_cid
+            "Slash executed: {} tokens from {} for {:?} - Evidence: {}",
+            slash_amount, operator, slash_request.violation_type, slash_request.evidence_cid
         );
 
-        emit!(AutomatedSlashEvent {
+        emit!(SlashExecutedEvent {
             operator,
             amount: slash_amount,
-            violation_type,
-            evidence_cid,
+            violation_type: slash_request.violation_type,
+            evidence_cid: slash_request.evidence_cid.clone(),
             remaining_staked: stake_account.staked_amount,
+            timestamp: clock.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// SECURITY FIX: Cancel slash request (admin only)
+    /// Allows admin to cancel a pending slash in case of false positives
+    /// or successful dispute resolution. Can only cancel before execution.
+    pub fn cancel_slash(ctx: Context<CancelSlash>) -> Result<()> {
+        let config = &ctx.accounts.global_config;
+        let slash_request = &mut ctx.accounts.slash_request;
+        let clock = Clock::get()?;
+
+        // Verify caller is admin
+        require!(
+            ctx.accounts.admin.key() == config.admin_authority,
+            StakingError::UnauthorizedAdmin
+        );
+
+        // Verify slash request is not already executed or cancelled
+        require!(
+            !slash_request.executed,
+            StakingError::SlashAlreadyExecuted
+        );
+        require!(
+            !slash_request.cancelled,
+            StakingError::SlashAlreadyCancelled
+        );
+
+        // Mark as cancelled
+        slash_request.cancelled = true;
+
+        msg!(
+            "Slash cancelled: {} tokens for operator {} - Violation: {:?}",
+            slash_request.amount, slash_request.operator, slash_request.violation_type
+        );
+
+        emit!(SlashCancelledEvent {
+            operator: slash_request.operator,
+            amount: slash_request.amount,
+            violation_type: slash_request.violation_type,
+            cancelled_by: ctx.accounts.admin.key(),
             timestamp: clock.unix_timestamp,
         });
 
@@ -621,6 +742,38 @@ impl StakeAccount {
         8 +                         // created_at
         8 +                         // updated_at
         1;                          // bump
+}
+
+/// SECURITY FIX: Slash request account - implements timelock pattern
+/// Stores pending slash requests that can be executed after 24 hours
+/// This prevents instant slashing and allows for dispute resolution
+#[account]
+pub struct SlashRequest {
+    pub operator: Pubkey,             // Target operator to slash (32 bytes)
+    pub amount: u64,                  // Amount to slash (8 bytes)
+    pub violation_type: SlashingViolation, // Type of violation (1 byte)
+    pub evidence_cid: String,         // IPFS CID of evidence (4 + 128 bytes max)
+    pub request_time: i64,            // When request was created (8 bytes)
+    pub authority: Pubkey,            // Oracle/admin who requested (32 bytes)
+    pub executed: bool,               // Whether slash has been executed (1 byte)
+    pub cancelled: bool,              // Whether slash was cancelled (1 byte)
+    pub bump: u8,                     // PDA bump (1 byte)
+}
+
+impl SlashRequest {
+    /// Maximum evidence CID length (IPFS CIDv1)
+    pub const MAX_EVIDENCE_CID_LEN: usize = 128;
+
+    pub const MAX_SIZE: usize = 8 +   // discriminator
+        32 +                          // operator
+        8 +                           // amount
+        1 +                           // violation_type (enum)
+        4 + Self::MAX_EVIDENCE_CID_LEN + // evidence_cid (string)
+        8 +                           // request_time
+        32 +                          // authority
+        1 +                           // executed
+        1 +                           // cancelled
+        1;                            // bump
 }
 
 /// SECURITY FIX: Initialize global config (one-time setup)
@@ -885,16 +1038,49 @@ pub struct SlashStake<'info> {
     pub staking_authority: SystemAccount<'info>,
 }
 
-/// Automated slashing - oracle-triggered based on violation evidence
-/// Per whitepaper slashing triggers:
-/// - Offline48Hours: 10%
-/// - LowUptime: 5%
-/// - ChallengeFailed: 15%
-/// - DataIntegrityViolation: 25%
-/// - MaliciousBehavior: 100%
+/// SECURITY FIX: Request slash context (Phase 1 of timelock pattern)
+/// Creates a pending slash request PDA with 24-hour execution delay
 #[derive(Accounts)]
-pub struct AutomatedSlash<'info> {
+#[instruction(violation_type: SlashingViolation, evidence_cid: String)]
+pub struct RequestSlash<'info> {
     /// Global config stores authorized oracle (admin_authority)
+    #[account(
+        seeds = [b"global_config"],
+        bump = global_config.bump
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+
+    /// Stake account to slash (read-only to calculate slash amount)
+    #[account(
+        seeds = [b"stake", stake_account.operator.as_ref()],
+        bump = stake_account.bump
+    )]
+    pub stake_account: Account<'info, StakeAccount>,
+
+    /// SECURITY FIX: Slash request PDA (initialized here)
+    /// Seeds include operator and timestamp to allow multiple requests
+    #[account(
+        init,
+        payer = oracle,
+        space = SlashRequest::MAX_SIZE,
+        seeds = [b"slash_request", stake_account.operator.as_ref(), &Clock::get()?.unix_timestamp.to_le_bytes()],
+        bump
+    )]
+    pub slash_request: Account<'info, SlashRequest>,
+
+    /// Oracle authorized to request slashing
+    /// Must match global_config.admin_authority
+    #[account(mut)]
+    pub oracle: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+}
+
+/// SECURITY FIX: Execute slash context (Phase 2 of timelock pattern)
+/// Can only be called 24 hours after request_slash
+#[derive(Accounts)]
+pub struct ExecuteSlash<'info> {
+    /// Global config stores treasury for slashed tokens
     #[account(
         seeds = [b"global_config"],
         bump = global_config.bump,
@@ -902,12 +1088,21 @@ pub struct AutomatedSlash<'info> {
     )]
     pub global_config: Account<'info, GlobalConfig>,
 
+    /// Stake account to slash
     #[account(
         mut,
-        seeds = [b"stake", stake_account.operator.as_ref()],
+        seeds = [b"stake", slash_request.operator.as_ref()],
         bump = stake_account.bump
     )]
     pub stake_account: Account<'info, StakeAccount>,
+
+    /// Slash request PDA (verified for timelock)
+    #[account(
+        mut,
+        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.request_time.to_le_bytes()],
+        bump = slash_request.bump
+    )]
+    pub slash_request: Account<'info, SlashRequest>,
 
     #[account(
         mut,
@@ -919,9 +1114,8 @@ pub struct AutomatedSlash<'info> {
     #[account(mut)]
     pub treasury: Account<'info, TokenAccount>,
 
-    /// Oracle authorized to trigger automated slashing
-    /// Must match global_config.admin_authority
-    pub oracle: Signer<'info>,
+    /// Anyone can execute after timelock expires
+    pub executor: Signer<'info>,
 
     pub token_program: Program<'info, Token>,
 
@@ -946,6 +1140,29 @@ pub struct AutomatedSlash<'info> {
         bump
     )]
     pub staking_authority: SystemAccount<'info>,
+}
+
+/// SECURITY FIX: Cancel slash context (admin only)
+/// Allows admin to cancel pending slash requests (false positive handling)
+#[derive(Accounts)]
+pub struct CancelSlash<'info> {
+    /// Global config stores admin authority
+    #[account(
+        seeds = [b"global_config"],
+        bump = global_config.bump
+    )]
+    pub global_config: Account<'info, GlobalConfig>,
+
+    /// Slash request to cancel
+    #[account(
+        mut,
+        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.request_time.to_le_bytes()],
+        bump = slash_request.bump
+    )]
+    pub slash_request: Account<'info, SlashRequest>,
+
+    /// Admin authority (must match global_config.admin_authority)
+    pub admin: Signer<'info>,
 }
 
 /// Events
@@ -995,14 +1212,35 @@ pub struct StakeSlashedEvent {
     pub timestamp: i64,
 }
 
-/// Event emitted when automated slashing occurs based on oracle evidence
+/// SECURITY FIX: Event emitted when slash is requested (Phase 1 of timelock)
 #[event]
-pub struct AutomatedSlashEvent {
+pub struct SlashRequestedEvent {
+    pub operator: Pubkey,
+    pub amount: u64,
+    pub violation_type: SlashingViolation,
+    pub evidence_cid: String,
+    pub request_time: i64,
+    pub execute_after: i64,  // Timestamp when slash can be executed
+}
+
+/// SECURITY FIX: Event emitted when slash is executed (Phase 2 of timelock)
+#[event]
+pub struct SlashExecutedEvent {
     pub operator: Pubkey,
     pub amount: u64,
     pub violation_type: SlashingViolation,
     pub evidence_cid: String,
     pub remaining_staked: u64,
+    pub timestamp: i64,
+}
+
+/// SECURITY FIX: Event emitted when slash request is cancelled
+#[event]
+pub struct SlashCancelledEvent {
+    pub operator: Pubkey,
+    pub amount: u64,
+    pub violation_type: SlashingViolation,
+    pub cancelled_by: Pubkey,
     pub timestamp: i64,
 }
 
@@ -1075,4 +1313,20 @@ pub enum StakingError {
     /// Automated slashing: Oracle not authorized
     #[msg("Unauthorized oracle for automated slashing")]
     UnauthorizedOracle,
+
+    /// SECURITY FIX: New error codes for timelock pattern
+    #[msg("Slash request already executed")]
+    SlashAlreadyExecuted,
+
+    #[msg("Slash request was cancelled")]
+    SlashCancelled,
+
+    #[msg("Slash request already cancelled")]
+    SlashAlreadyCancelled,
+
+    #[msg("Slash timelock period has not expired (24 hours required)")]
+    SlashTimelockNotExpired,
+
+    #[msg("Evidence CID exceeds maximum length (128 characters)")]
+    EvidenceCidTooLong,
 }

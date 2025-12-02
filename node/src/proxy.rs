@@ -1,3 +1,4 @@
+use hyper::server::conn::AddrStream;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Client, Request, Response, Server, StatusCode, Uri};
 use std::convert::Infallible;
@@ -26,10 +27,15 @@ impl Default for ProxyConfig {
 }
 
 /// Handle incoming requests and proxy to origin
+///
+/// SECURITY: Uses the TCP connection's SocketAddr for client IP, NOT headers.
+/// This prevents IP spoofing attacks where malicious actors set X-Real-IP/X-Forwarded-For
+/// headers to bypass rate limits, reputation checks, and access controls.
 async fn handle_request(
     req: Request<Body>,
     client: Client<hyper::client::HttpConnector>,
     origin: String,
+    remote_addr: SocketAddr,
 ) -> Result<Response<Body>, Infallible> {
     let start_time = Instant::now();
     let method = req.method().clone();
@@ -49,14 +55,23 @@ async fn handle_request(
             let (mut parts, body) = req.into_parts();
             parts.uri = uri;
 
-            // Add forwarding headers
+            // SECURITY FIX: Use the actual TCP connection IP, NOT any client-provided headers
+            // This prevents IP spoofing attacks where attackers set fake X-Real-IP or
+            // X-Forwarded-For headers to bypass rate limiting, WAF rules, and reputation systems.
+            let client_ip = remote_addr.ip().to_string();
+
+            // Remove any client-provided forwarding headers to prevent spoofing
+            parts.headers.remove("X-Real-IP");
+            parts.headers.remove("X-Forwarded-For");
+
+            // Set forwarding headers from the trusted TCP connection address
             parts.headers.insert(
                 "X-Forwarded-For",
-                parts
-                    .headers
-                    .get("X-Real-IP")
-                    .cloned()
-                    .unwrap_or_else(|| "127.0.0.1".parse().unwrap()),
+                client_ip.parse().unwrap(),
+            );
+            parts.headers.insert(
+                "X-Real-IP",
+                client_ip.parse().unwrap(),
             );
             parts
                 .headers
@@ -118,6 +133,9 @@ async fn handle_request(
 }
 
 /// Start HTTP proxy server
+///
+/// SECURITY: Extracts the remote address from the TCP connection (AddrStream)
+/// and passes it to handle_request for trusted IP identification.
 pub async fn run_http_proxy(config: ProxyConfig) -> anyhow::Result<()> {
     let addr: SocketAddr = config.http_addr.parse()?;
     let origin = config.origin.clone();
@@ -127,13 +145,17 @@ pub async fn run_http_proxy(config: ProxyConfig) -> anyhow::Result<()> {
 
     let client = Client::new();
 
-    let make_svc = make_service_fn(move |_conn| {
+    // SECURITY FIX: Extract remote_addr from the TCP connection (AddrStream)
+    // This ensures we use the actual TCP peer address, not spoofable headers
+    let make_svc = make_service_fn(move |conn: &AddrStream| {
         let client = client.clone();
         let origin = origin.clone();
+        // Extract the remote address from the TCP connection
+        let remote_addr = conn.remote_addr();
 
         async move {
             Ok::<_, Infallible>(service_fn(move |req| {
-                handle_request(req, client.clone(), origin.clone())
+                handle_request(req, client.clone(), origin.clone(), remote_addr)
             }))
         }
     });
