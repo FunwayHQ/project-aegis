@@ -308,6 +308,7 @@ mod blocklist_sync {
             listen_port: 9001,
             enable_mdns: true,
             bootstrap_peers: Vec::new(),
+            trusted_public_keys: Vec::new(),
         };
 
         let threat_config = ThreatIntelConfig {

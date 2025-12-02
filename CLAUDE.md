@@ -609,9 +609,24 @@ aegis-cdn list
   - EnforcementMessage: P2P message types (ThreatIntel, TrustToken, ChallengeComplete, BlocklistSync)
   - DistributedEnforcementEngine: unified API combining all components
 
-**Mainnet Preparation (Sprints 26-30):**
-- 🔲 **Sprint 26-27:** Performance Optimization & Stress Testing ("Game Day" exercises)
-- 🔲 **Sprint 28-29:** Security Audits & Bug Bounty (Solana + Infrastructure audits)
+**Mainnet Preparation (Sprints 25-30):**
+- ✅ **Sprint 25:** Performance Benchmarking & Optimization
+- ✅ **Sprint 26:** Performance Stress Testing & Profiling
+- ✅ **Sprint 27:** Game Day Distributed Stress Testing
+- ✅ **Sprint 28:** Infrastructure Security Audit - 284 tests
+  - Static analysis (cargo audit, clippy) - zero vulnerabilities
+  - Unsafe code audit - minimal, justified eBPF usage only
+  - Input validation review across all components
+  - Wasm sandbox, eBPF, P2P networking security review
+  - Authentication/authorization (JWT, Challenge) review
+  - Penetration testing plan created
+  - OWASP Top 10 compliance checklist
+- ✅ **Sprint 29:** Security Hardening (High-Priority Fixes) - 31 new tests
+  - **P2P Threat Signatures:** Ed25519 signatures on `SignedThreatIntelligence`
+  - **TrustedNodeRegistry:** Manage trusted node public keys for P2P
+  - **Verified Blocklist:** `add_verified()` requires signature verification
+  - **IPv6 Blocklist (eBPF):** `BLOCKLIST_V6` map with auto-blacklisting
+  - **External Audit Prep:** Created `SOLANA-AUDIT-REQUEST.md` for auditors
 - 🔲 **Sprint 30:** Mainnet Launch (TGE, 100+ nodes, geographic expansion)
 
 ## Key Architectural Principles

@@ -56,6 +56,11 @@ static WHITELIST: HashMap<u32, u8> = HashMap::with_max_entries(1000, 0);
 #[map]
 static BLOCKLIST: HashMap<u32, BlockInfo> = HashMap::with_max_entries(5000, 0);
 
+// Sprint 29: IPv6 blocklist for severe offenders
+// Mirrors the IPv4 blocklist functionality for IPv6 addresses
+#[map]
+static BLOCKLIST_V6: HashMap<Ipv6Addr, BlockInfo> = HashMap::with_max_entries(5000, 0);
+
 /// IPv6 address representation (128 bits as 4x u32) - Sprint 13.5
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -445,6 +450,7 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Result<*const T, ()> {
 }
 
 /// Sprint 13.5: IPv6 packet filtering (mirrors IPv4 logic)
+/// Sprint 29: Added BLOCKLIST_V6 early drop for severe offenders
 fn try_ipv6_filter(ctx: &XdpContext, now: u64) -> Result<u32, ()> {
     unsafe {
         if let Some(counter) = STATS.get_ptr_mut(STAT_IPV6_PACKETS) {
@@ -459,6 +465,32 @@ fn try_ipv6_filter(ctx: &XdpContext, now: u64) -> Result<u32, ()> {
     let ipv6hdr = ptr_at::<Ipv6Hdr>(&ctx, EthHdr::LEN)?;
     let src_ipv6 = unsafe { (*ipv6hdr).saddr };
     let next_header = unsafe { (*ipv6hdr).nexthdr };
+
+    // Sprint 29: Early drop for blocked IPv6 addresses (before parsing TCP/UDP)
+    // This saves CPU cycles by dropping known attackers immediately
+    if let Some(block_info) = unsafe { BLOCKLIST_V6.get(&src_ipv6) } {
+        let block_info = *block_info;
+
+        if block_info.blocked_until > now {
+            // Still blocked, drop immediately without further processing
+            unsafe {
+                if let Some(counter) = STATS.get_ptr_mut(STAT_DROPPED_PACKETS) {
+                    *counter += 1;
+                }
+                if let Some(counter) = STATS.get_ptr_mut(STAT_EARLY_DROPS) {
+                    *counter += 1;
+                }
+                if let Some(counter) = STATS.get_ptr_mut(STAT_IPV6_DROPPED) {
+                    *counter += 1;
+                }
+            }
+            return Ok(xdp_action::XDP_DROP);
+        }
+        // Block expired, remove from blocklist
+        unsafe {
+            BLOCKLIST_V6.remove(&src_ipv6).ok();
+        }
+    }
 
     // Handle TCP (SYN flood)
     if next_header == IPPROTO_TCP {
@@ -485,6 +517,7 @@ fn try_ipv6_filter(ctx: &XdpContext, now: u64) -> Result<u32, ()> {
 }
 
 /// Handle IPv6 SYN flood detection
+/// Sprint 29: Added auto-blacklisting for severe offenders (2x threshold)
 #[inline(always)]
 fn handle_ipv6_syn(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
     unsafe {
@@ -499,7 +532,7 @@ fn handle_ipv6_syn(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
             .unwrap_or(100)
     };
 
-    let should_drop = unsafe {
+    let (should_drop, should_blocklist) = unsafe {
         match SYN_TRACKER_V6.get(&src_ipv6) {
             Some(info) => {
                 let mut info = *info;
@@ -511,27 +544,42 @@ fn handle_ipv6_syn(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
 
                     if info.count > threshold {
                         SYN_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
-                        true
+                        // Sprint 29: Auto-blacklist if 2x threshold (severe offender)
+                        let severe = info.count > threshold * 2;
+                        (true, severe)
                     } else {
                         SYN_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
-                        false
+                        (false, false)
                     }
                 } else {
                     let decayed_count = if info.count > 10 { info.count / 2 } else { 1 };
                     let new_info = SynInfo { count: decayed_count, last_seen: now };
                     SYN_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
-                    false
+                    (false, false)
                 }
             }
             None => {
                 let new_info = SynInfo { count: 1, last_seen: now };
                 SYN_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
-                false
+                (false, false)
             }
         }
     };
 
     if should_drop {
+        // Sprint 29: Auto-blacklist severe IPv6 offenders
+        if should_blocklist {
+            unsafe {
+                let block_info = BlockInfo {
+                    blocked_until: now + BLOCK_DURATION_US,
+                    total_violations: 1,
+                };
+                BLOCKLIST_V6.insert(&src_ipv6, &block_info, 0).ok();
+                if let Some(counter) = STATS.get_ptr_mut(STAT_BLOCKED_IPS) {
+                    *counter += 1;
+                }
+            }
+        }
         unsafe {
             if let Some(counter) = STATS.get_ptr_mut(STAT_DROPPED_PACKETS) {
                 *counter += 1;
@@ -552,6 +600,7 @@ fn handle_ipv6_syn(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
 }
 
 /// Handle IPv6 UDP flood detection
+/// Sprint 29: Added auto-blacklisting for severe offenders (2x threshold)
 #[inline(always)]
 fn handle_ipv6_udp(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
     unsafe {
@@ -566,7 +615,7 @@ fn handle_ipv6_udp(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
             .unwrap_or(1000)
     };
 
-    let should_drop = unsafe {
+    let (should_drop, should_blocklist) = unsafe {
         match UDP_TRACKER_V6.get(&src_ipv6) {
             Some(info) => {
                 let mut info = *info;
@@ -578,27 +627,42 @@ fn handle_ipv6_udp(src_ipv6: Ipv6Addr, now: u64) -> Result<u32, ()> {
 
                     if info.count > threshold {
                         UDP_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
-                        true
+                        // Sprint 29: Auto-blacklist if 2x threshold (severe offender)
+                        let severe = info.count > threshold * 2;
+                        (true, severe)
                     } else {
                         UDP_TRACKER_V6.insert(&src_ipv6, &info, 0).ok();
-                        false
+                        (false, false)
                     }
                 } else {
                     let decayed_count = if info.count > 10 { info.count / 2 } else { 1 };
                     let new_info = UdpInfo { count: decayed_count, last_seen: now };
                     UDP_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
-                    false
+                    (false, false)
                 }
             }
             None => {
                 let new_info = UdpInfo { count: 1, last_seen: now };
                 UDP_TRACKER_V6.insert(&src_ipv6, &new_info, 0).ok();
-                false
+                (false, false)
             }
         }
     };
 
     if should_drop {
+        // Sprint 29: Auto-blacklist severe IPv6 offenders
+        if should_blocklist {
+            unsafe {
+                let block_info = BlockInfo {
+                    blocked_until: now + BLOCK_DURATION_US,
+                    total_violations: 1,
+                };
+                BLOCKLIST_V6.insert(&src_ipv6, &block_info, 0).ok();
+                if let Some(counter) = STATS.get_ptr_mut(STAT_BLOCKED_IPS) {
+                    *counter += 1;
+                }
+            }
+        }
         unsafe {
             if let Some(counter) = STATS.get_ptr_mut(STAT_UDP_DROPPED) {
                 *counter += 1;

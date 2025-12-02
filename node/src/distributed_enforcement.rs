@@ -342,7 +342,10 @@ impl GlobalBlocklist {
         self.ebpf_callback = Some(Box::new(callback));
     }
 
-    /// Add an IP to the blocklist
+    /// Add an IP to the blocklist (requires pre-validation)
+    ///
+    /// **Security Note:** This method does NOT verify signatures.
+    /// Use `add_verified()` for P2P threat intel that requires signature validation.
     pub async fn add(&self, threat: &EnhancedThreatIntel) {
         let now = Instant::now();
         let expires_at = now + Duration::from_secs(threat.block_duration_secs);
@@ -378,6 +381,84 @@ impl GlobalBlocklist {
         if let Some(callback) = &self.ebpf_callback {
             callback(&threat.ip, true);
         }
+    }
+
+    /// Add an IP to the blocklist with signature verification (Sprint 29 Security Fix)
+    ///
+    /// This method MUST be used for all P2P-received threat intelligence to prevent
+    /// spoofing attacks where malicious nodes inject fake threats.
+    ///
+    /// # Arguments
+    /// * `threat` - The threat intelligence to add
+    /// * `public_key` - The public key of the expected signer (source node)
+    ///
+    /// # Returns
+    /// * `Ok(())` if the threat was verified and added
+    /// * `Err(String)` if verification failed
+    pub async fn add_verified(
+        &self,
+        threat: &EnhancedThreatIntel,
+        public_key: &VerifyingKey,
+    ) -> Result<(), String> {
+        // Step 1: Validate the threat data
+        threat.validate()?;
+
+        // Step 2: Check if signature exists
+        if threat.signature.is_none() {
+            return Err("Missing signature on threat intelligence".to_string());
+        }
+
+        // Step 3: Verify signature
+        if !threat.verify_signature(public_key) {
+            return Err("Invalid signature on threat intelligence".to_string());
+        }
+
+        // Step 4: Verify source_node matches the public key
+        let expected_source = hex::encode(public_key.as_bytes());
+        if threat.source_node != expected_source {
+            return Err(format!(
+                "Source node mismatch: expected {}, got {}",
+                &expected_source[..16],
+                &threat.source_node[..threat.source_node.len().min(16)]
+            ));
+        }
+
+        // Step 5: Check if already expired (don't add stale threats)
+        if threat.is_expired() {
+            return Err("Threat intelligence has already expired".to_string());
+        }
+
+        // All checks passed, add to blocklist
+        self.add(threat).await;
+
+        Ok(())
+    }
+
+    /// Add an IP with signature verification using hex-encoded public key
+    pub async fn add_verified_hex(
+        &self,
+        threat: &EnhancedThreatIntel,
+        public_key_hex: &str,
+    ) -> Result<(), String> {
+        // Decode the public key
+        let public_key_bytes = hex::decode(public_key_hex)
+            .map_err(|e| format!("Invalid public key hex: {}", e))?;
+
+        if public_key_bytes.len() != 32 {
+            return Err(format!(
+                "Invalid public key length: expected 32 bytes, got {}",
+                public_key_bytes.len()
+            ));
+        }
+
+        let public_key_array: [u8; 32] = public_key_bytes
+            .try_into()
+            .map_err(|_| "Failed to convert public key bytes")?;
+
+        let public_key = VerifyingKey::from_bytes(&public_key_array)
+            .map_err(|e| format!("Invalid public key: {}", e))?;
+
+        self.add_verified(threat, &public_key).await
     }
 
     /// Remove an IP from the blocklist
@@ -1764,5 +1845,171 @@ mod tests {
         assert_eq!(ts, 1234567890);
         assert_eq!(bytes[8], 5);
         assert_eq!(bytes[9], 8);
+    }
+
+    // ============================================
+    // Sprint 29: Verified Blocklist Tests
+    // ============================================
+
+    #[tokio::test]
+    async fn test_add_verified_success() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create a properly signed threat
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            public_key_hex.clone(), // source_node matches public key
+        );
+        threat.sign(&signing_key);
+
+        // Should succeed
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_ok(), "Expected success, got: {:?}", result);
+        assert!(blocklist.is_blocked(&threat.ip).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_missing_signature() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create a threat WITHOUT signing
+        let threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            public_key_hex.clone(),
+        );
+
+        // Should fail - no signature
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Missing signature"));
+        assert!(!blocklist.is_blocked(&threat.ip).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_invalid_signature() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let other_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create and sign with a DIFFERENT key
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            public_key_hex.clone(),
+        );
+        threat.sign(&other_key); // Signed with wrong key!
+
+        // Should fail - signature doesn't match
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid signature"));
+        assert!(!blocklist.is_blocked(&threat.ip).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_source_node_mismatch() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create threat with wrong source_node
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            "wrong-source-node".to_string(), // Doesn't match public key
+        );
+        threat.sign(&signing_key);
+
+        // Should fail - source_node doesn't match signing key
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Source node mismatch"));
+        assert!(!blocklist.is_blocked(&threat.ip).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_tampered_data() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create and sign a valid threat
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            public_key_hex.clone(),
+        );
+        threat.sign(&signing_key);
+
+        // Tamper with the data AFTER signing
+        threat.ip = ThreatIpAddress::parse("10.0.0.1").unwrap();
+
+        // Should fail - signature invalid after tampering
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid signature"));
+        assert!(!blocklist.is_blocked(&ThreatIpAddress::parse("10.0.0.1").unwrap()).await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_ipv6() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create a properly signed IPv6 threat
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("2001:db8::1").unwrap(),
+            ThreatType::HttpFlood,
+            7,
+            3600,
+            public_key_hex.clone(),
+        );
+        threat.sign(&signing_key);
+
+        // Should succeed with IPv6
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_ok());
+        assert!(blocklist.is_blocked_str("2001:db8::1").await);
+    }
+
+    #[tokio::test]
+    async fn test_add_verified_validation_failure() {
+        let blocklist = GlobalBlocklist::new();
+        let signing_key = generate_test_signing_key();
+        let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
+        // Create threat with invalid data
+        let mut threat = EnhancedThreatIntel::new(
+            ThreatIpAddress::parse("192.168.1.100").unwrap(),
+            ThreatType::SynFlood,
+            8,
+            3600,
+            public_key_hex.clone(),
+        );
+        threat.severity = 0; // Invalid severity!
+        threat.sign(&signing_key);
+
+        // Should fail validation before signature check
+        let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Severity"));
     }
 }
