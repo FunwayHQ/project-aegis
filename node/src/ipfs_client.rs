@@ -23,8 +23,11 @@ use multihash::Multihash;
 use sha2::{Sha256, Digest};
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
+use tokio::sync::RwLock;
 
 /// Maximum size for Wasm modules (10MB)
 const MAX_MODULE_SIZE: usize = 10 * 1024 * 1024;
@@ -42,6 +45,136 @@ const PUBLIC_IPFS_GATEWAYS: &[&str] = &[
     "https://dweb.link",
 ];
 
+// ============================================================================
+// SECURITY FIX (X4.12): Bandwidth limiting constants
+// ============================================================================
+
+/// Default bandwidth limit: 100 MB per minute
+const DEFAULT_BANDWIDTH_LIMIT_BYTES: u64 = 100 * 1024 * 1024;
+
+/// Minimum bandwidth limit: 10 MB per minute (cannot be set lower)
+const MIN_BANDWIDTH_LIMIT_BYTES: u64 = 10 * 1024 * 1024;
+
+/// Maximum bandwidth limit: 1 GB per minute
+const MAX_BANDWIDTH_LIMIT_BYTES: u64 = 1024 * 1024 * 1024;
+
+/// Bandwidth tracking window duration (1 minute)
+const BANDWIDTH_WINDOW_SECS: u64 = 60;
+
+/// Maximum concurrent downloads per client
+const MAX_CONCURRENT_DOWNLOADS: usize = 5;
+
+/// Get configured bandwidth limit from environment or use default
+fn get_bandwidth_limit() -> u64 {
+    std::env::var("AEGIS_IPFS_BANDWIDTH_LIMIT_MB")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|mb| (mb * 1024 * 1024).clamp(MIN_BANDWIDTH_LIMIT_BYTES, MAX_BANDWIDTH_LIMIT_BYTES))
+        .unwrap_or(DEFAULT_BANDWIDTH_LIMIT_BYTES)
+}
+
+/// Bandwidth tracker for rate limiting IPFS downloads
+/// SECURITY FIX (X4.12): Prevents bandwidth exhaustion attacks
+#[derive(Debug)]
+struct BandwidthTracker {
+    /// Rolling window of (timestamp, bytes) for bandwidth tracking
+    window: Vec<(Instant, u64)>,
+    /// Bandwidth limit in bytes per window
+    limit_bytes: u64,
+    /// Window duration
+    window_duration: Duration,
+    /// Current number of active downloads
+    active_downloads: usize,
+    /// Maximum concurrent downloads
+    max_concurrent: usize,
+}
+
+impl BandwidthTracker {
+    fn new() -> Self {
+        Self {
+            window: Vec::with_capacity(1000),
+            limit_bytes: get_bandwidth_limit(),
+            window_duration: Duration::from_secs(BANDWIDTH_WINDOW_SECS),
+            active_downloads: 0,
+            max_concurrent: MAX_CONCURRENT_DOWNLOADS,
+        }
+    }
+
+    /// Create tracker with custom limit (for testing)
+    #[cfg(test)]
+    fn with_limit(limit_bytes: u64) -> Self {
+        Self {
+            window: Vec::with_capacity(1000),
+            limit_bytes,
+            window_duration: Duration::from_secs(BANDWIDTH_WINDOW_SECS),
+            active_downloads: 0,
+            max_concurrent: MAX_CONCURRENT_DOWNLOADS,
+        }
+    }
+
+    /// Clean up old entries outside the window
+    fn cleanup(&mut self) {
+        let cutoff = Instant::now() - self.window_duration;
+        self.window.retain(|(ts, _)| *ts > cutoff);
+    }
+
+    /// Get current bandwidth usage in the window
+    fn current_usage(&mut self) -> u64 {
+        self.cleanup();
+        self.window.iter().map(|(_, bytes)| bytes).sum()
+    }
+
+    /// Check if a download of given size can proceed
+    fn can_download(&mut self, size_hint: u64) -> bool {
+        // Check concurrent download limit
+        if self.active_downloads >= self.max_concurrent {
+            return false;
+        }
+
+        // Check bandwidth limit
+        let current = self.current_usage();
+        current + size_hint <= self.limit_bytes
+    }
+
+    /// Record a download
+    fn record_download(&mut self, bytes: u64) {
+        self.window.push((Instant::now(), bytes));
+        // Prevent unbounded growth
+        if self.window.len() > 10_000 {
+            self.cleanup();
+        }
+    }
+
+    /// Start a download (increment active count)
+    fn start_download(&mut self) {
+        self.active_downloads = self.active_downloads.saturating_add(1);
+    }
+
+    /// End a download (decrement active count)
+    fn end_download(&mut self) {
+        self.active_downloads = self.active_downloads.saturating_sub(1);
+    }
+
+    /// Get remaining bandwidth in current window
+    fn remaining_bandwidth(&mut self) -> u64 {
+        let current = self.current_usage();
+        self.limit_bytes.saturating_sub(current)
+    }
+
+    /// Get time until bandwidth resets (oldest entry expires)
+    fn time_until_reset(&mut self) -> Option<Duration> {
+        self.cleanup();
+        self.window.first().map(|(ts, _)| {
+            let elapsed = ts.elapsed();
+            if elapsed < self.window_duration {
+                self.window_duration - elapsed
+            } else {
+                Duration::ZERO
+            }
+        })
+    }
+}
+
 /// IPFS client for Wasm module distribution
 pub struct IpfsClient {
     /// IPFS HTTP API client
@@ -52,6 +185,9 @@ pub struct IpfsClient {
 
     /// HTTP client with timeout
     http_client: reqwest::Client,
+
+    /// SECURITY FIX (X4.12): Bandwidth tracker for rate limiting
+    bandwidth_tracker: Arc<RwLock<BandwidthTracker>>,
 }
 
 impl IpfsClient {
@@ -88,6 +224,7 @@ impl IpfsClient {
             api_client,
             cache_dir,
             http_client,
+            bandwidth_tracker: Arc::new(RwLock::new(BandwidthTracker::new())),
         })
     }
 
@@ -162,6 +299,51 @@ impl IpfsClient {
         }
 
         debug!("Cache MISS for module CID: {}, fetching from IPFS", cid);
+
+        // SECURITY FIX (X4.12): Check bandwidth limits before downloading
+        // Use MAX_MODULE_SIZE as the size hint since we don't know actual size yet
+        {
+            let mut tracker = self.bandwidth_tracker.write().await;
+            if !tracker.can_download(MAX_MODULE_SIZE as u64) {
+                let remaining = tracker.remaining_bandwidth();
+                let reset_time = tracker.time_until_reset();
+                warn!(
+                    "IPFS bandwidth limit exceeded for CID {}. Remaining: {} bytes, Reset in: {:?}",
+                    cid, remaining, reset_time
+                );
+                anyhow::bail!(
+                    "IPFS bandwidth limit exceeded. Remaining bandwidth: {} bytes. \
+                     Try again in {:?}.",
+                    remaining,
+                    reset_time.unwrap_or(Duration::from_secs(60))
+                );
+            }
+            tracker.start_download();
+        }
+
+        // Ensure we end the download tracking even on error
+        let result = self.fetch_module_internal(cid).await;
+
+        // Record bandwidth usage and end download
+        {
+            let mut tracker = self.bandwidth_tracker.write().await;
+            tracker.end_download();
+            if let Ok(ref bytes) = result {
+                tracker.record_download(bytes.len() as u64);
+                info!(
+                    "IPFS bandwidth recorded: {} bytes for CID {}. Remaining: {} bytes",
+                    bytes.len(),
+                    cid,
+                    tracker.remaining_bandwidth()
+                );
+            }
+        }
+
+        result
+    }
+
+    /// Internal fetch implementation (after bandwidth check)
+    async fn fetch_module_internal(&self, cid: &str) -> Result<Vec<u8>> {
         info!("Downloading module from IPFS: {}", cid);
 
         // Try local IPFS node first
@@ -502,6 +684,36 @@ impl IpfsClient {
             total_size_bytes: total_size,
         })
     }
+
+    /// SECURITY FIX (X4.12): Get bandwidth statistics
+    pub async fn bandwidth_stats(&self) -> BandwidthStats {
+        let mut tracker = self.bandwidth_tracker.write().await;
+        BandwidthStats {
+            used_bytes: tracker.current_usage(),
+            limit_bytes: tracker.limit_bytes,
+            remaining_bytes: tracker.remaining_bandwidth(),
+            active_downloads: tracker.active_downloads,
+            max_concurrent_downloads: tracker.max_concurrent,
+            reset_time: tracker.time_until_reset(),
+        }
+    }
+}
+
+/// SECURITY FIX (X4.12): Statistics about bandwidth usage
+#[derive(Debug, Clone)]
+pub struct BandwidthStats {
+    /// Bytes used in current window
+    pub used_bytes: u64,
+    /// Bandwidth limit in bytes per window
+    pub limit_bytes: u64,
+    /// Remaining bytes available
+    pub remaining_bytes: u64,
+    /// Number of active downloads
+    pub active_downloads: usize,
+    /// Maximum concurrent downloads allowed
+    pub max_concurrent_downloads: usize,
+    /// Time until oldest entry expires (bandwidth partially resets)
+    pub reset_time: Option<Duration>,
 }
 
 /// Statistics about the local module cache
@@ -758,5 +970,143 @@ mod tests {
                 "Gateway {} must use HTTPS for security", gateway
             );
         }
+    }
+
+    // ========================================================================
+    // SECURITY TESTS (X4.12): Bandwidth limiting
+    // ========================================================================
+
+    #[test]
+    fn test_x412_bandwidth_tracker_creation() {
+        let tracker = BandwidthTracker::new();
+        assert_eq!(tracker.limit_bytes, get_bandwidth_limit());
+        assert_eq!(tracker.active_downloads, 0);
+        assert_eq!(tracker.max_concurrent, MAX_CONCURRENT_DOWNLOADS);
+    }
+
+    #[test]
+    fn test_x412_bandwidth_tracker_can_download() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB limit
+
+        // Should allow download when under limit
+        assert!(tracker.can_download(10 * 1024 * 1024)); // 10MB
+
+        // Should allow download when exactly at limit
+        assert!(tracker.can_download(100 * 1024 * 1024)); // 100MB
+
+        // Should reject when over limit
+        assert!(!tracker.can_download(101 * 1024 * 1024)); // 101MB
+    }
+
+    #[test]
+    fn test_x412_bandwidth_tracker_records_usage() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        assert_eq!(tracker.current_usage(), 0);
+
+        tracker.record_download(10 * 1024 * 1024); // 10MB
+        assert_eq!(tracker.current_usage(), 10 * 1024 * 1024);
+
+        tracker.record_download(5 * 1024 * 1024); // 5MB more
+        assert_eq!(tracker.current_usage(), 15 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_x412_bandwidth_tracker_remaining() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        assert_eq!(tracker.remaining_bandwidth(), 100 * 1024 * 1024);
+
+        tracker.record_download(30 * 1024 * 1024); // 30MB
+        assert_eq!(tracker.remaining_bandwidth(), 70 * 1024 * 1024);
+
+        tracker.record_download(70 * 1024 * 1024); // 70MB more
+        assert_eq!(tracker.remaining_bandwidth(), 0);
+    }
+
+    #[test]
+    fn test_x412_bandwidth_tracker_concurrent_limit() {
+        let mut tracker = BandwidthTracker::with_limit(1024 * 1024 * 1024); // 1GB (high to not trigger bandwidth limit)
+
+        // Can start downloads up to the limit
+        for _ in 0..MAX_CONCURRENT_DOWNLOADS {
+            assert!(tracker.can_download(1024)); // 1KB
+            tracker.start_download();
+        }
+
+        // Cannot start another download even though bandwidth is available
+        assert!(!tracker.can_download(1024), "Should reject when at max concurrent downloads");
+
+        // After ending one, can start another
+        tracker.end_download();
+        assert!(tracker.can_download(1024), "Should allow after ending a download");
+    }
+
+    #[test]
+    fn test_x412_bandwidth_tracker_start_end_download() {
+        let mut tracker = BandwidthTracker::new();
+
+        assert_eq!(tracker.active_downloads, 0);
+
+        tracker.start_download();
+        assert_eq!(tracker.active_downloads, 1);
+
+        tracker.start_download();
+        assert_eq!(tracker.active_downloads, 2);
+
+        tracker.end_download();
+        assert_eq!(tracker.active_downloads, 1);
+
+        tracker.end_download();
+        assert_eq!(tracker.active_downloads, 0);
+
+        // Should not underflow
+        tracker.end_download();
+        assert_eq!(tracker.active_downloads, 0);
+    }
+
+    #[test]
+    fn test_x412_bandwidth_limits_constants() {
+        // Verify sensible default values
+        assert_eq!(DEFAULT_BANDWIDTH_LIMIT_BYTES, 100 * 1024 * 1024); // 100MB/min
+        assert_eq!(MIN_BANDWIDTH_LIMIT_BYTES, 10 * 1024 * 1024); // 10MB/min minimum
+        assert_eq!(MAX_BANDWIDTH_LIMIT_BYTES, 1024 * 1024 * 1024); // 1GB/min maximum
+        assert_eq!(MAX_CONCURRENT_DOWNLOADS, 5);
+        assert_eq!(BANDWIDTH_WINDOW_SECS, 60);
+    }
+
+    #[test]
+    fn test_x412_bandwidth_limits_prevent_exhaustion() {
+        // SECURITY TEST: Verify bandwidth limiting prevents resource exhaustion attacks
+        let mut tracker = BandwidthTracker::with_limit(50 * 1024 * 1024); // 50MB limit
+
+        // Attacker tries to download many large modules rapidly
+        for _ in 0..5 {
+            if tracker.can_download(MAX_MODULE_SIZE as u64) {
+                tracker.record_download(MAX_MODULE_SIZE as u64);
+            }
+        }
+
+        // After 5 x 10MB = 50MB, should be at limit
+        assert!(!tracker.can_download(MAX_MODULE_SIZE as u64),
+            "Bandwidth limit should prevent further downloads");
+        assert_eq!(tracker.remaining_bandwidth(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_x412_ipfs_client_bandwidth_stats() {
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test-bandwidth")),
+        )
+        .unwrap();
+
+        let stats = client.bandwidth_stats().await;
+
+        // Initial state should have no usage
+        assert_eq!(stats.used_bytes, 0);
+        assert_eq!(stats.remaining_bytes, stats.limit_bytes);
+        assert_eq!(stats.active_downloads, 0);
+        assert_eq!(stats.max_concurrent_downloads, MAX_CONCURRENT_DOWNLOADS);
     }
 }

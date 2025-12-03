@@ -231,8 +231,9 @@ impl AegisProxy {
                 })
             }
             Err(e) => {
+                // SECURITY FIX (X5.2): Log error internally, return generic message
                 log::error!("Challenge verification error: {}", e);
-                format!(r#"{{"success":false,"error":"{}"}}"#, e)
+                r#"{"success":false,"error":"Verification failed"}"#.to_string()
             }
         };
 

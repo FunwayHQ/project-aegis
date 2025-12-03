@@ -195,7 +195,14 @@ fn find_header(headers: &[(String, String)], name: &str) -> Option<String> {
 }
 
 /// Validate if a string is a valid IP address
+/// SECURITY (X5.9): Strict validation - reject any control characters or whitespace
 fn is_valid_ip(ip: &str) -> bool {
+    // Reject strings with control characters (newlines, tabs, null bytes, etc.)
+    // This prevents HTTP header injection attacks
+    if ip.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return false;
+    }
+    // Standard IP parsing
     IpAddr::from_str(ip).is_ok()
 }
 
@@ -349,5 +356,147 @@ mod tests {
         let result = extract_client_ip(&config, "127.0.0.1", &headers);
         // Should use X-Forwarded-For (first in priority list)
         assert_eq!(result.ip(), "203.0.113.1");
+    }
+
+    // ============================================
+    // SECURITY TESTS (X5.9): IP format validation
+    // ============================================
+
+    #[test]
+    fn test_x59_ipv6_validation() {
+        let config = IpExtractionConfig::default();
+
+        // Valid IPv6 addresses
+        let headers = vec![
+            ("X-Forwarded-For".to_string(), "2001:db8::1".to_string()),
+        ];
+        let result = extract_client_ip(&config, "127.0.0.1", &headers);
+        assert_eq!(result.ip(), "2001:db8::1");
+
+        // Full IPv6
+        let headers2 = vec![
+            ("X-Forwarded-For".to_string(), "2001:0db8:85a3:0000:0000:8a2e:0370:7334".to_string()),
+        ];
+        let result2 = extract_client_ip(&config, "127.0.0.1", &headers2);
+        assert_eq!(result2.ip(), "2001:0db8:85a3:0000:0000:8a2e:0370:7334");
+    }
+
+    #[test]
+    fn test_x59_malformed_ip_rejection() {
+        let config = IpExtractionConfig::default();
+
+        // Various malformed IPs - note that leading/trailing whitespace is trimmed by extract_leftmost_ip
+        let malformed_ips = [
+            "256.1.1.1",           // Octet out of range
+            "192.168.1",           // Missing octet
+            "192.168.1.1.1",       // Extra octet
+            "192.168.1.1:80",      // Port appended
+            "::ffff:300.1.1.1",    // Invalid IPv4-mapped IPv6
+            "not-an-ip",
+            "",
+            "   ",
+            "192.168.1\n.1",       // Embedded newline (mid-string)
+            "192.168\r.1.1",       // Embedded CR (mid-string)
+            "192.168\x00.1.1",     // Embedded null byte (mid-string)
+            "192 .168.1.1",        // Embedded space (mid-string)
+            "192.\t168.1.1",       // Embedded tab (mid-string)
+        ];
+
+        for bad_ip in malformed_ips {
+            let headers = vec![
+                ("X-Forwarded-For".to_string(), bad_ip.to_string()),
+            ];
+            let result = extract_client_ip(&config, "192.168.1.100", &headers);
+            // Should fall back to connection IP for invalid IPs
+            assert_eq!(
+                result.ip(),
+                "192.168.1.100",
+                "Failed to reject malformed IP: '{:?}'",
+                bad_ip
+            );
+        }
+    }
+
+    #[test]
+    fn test_x59_trailing_whitespace_trimmed() {
+        let config = IpExtractionConfig::default();
+
+        // Trailing whitespace should be trimmed successfully
+        // This is handled by extract_leftmost_ip's trim() call
+        let acceptable_ips = [
+            ("192.168.1.1\n", "192.168.1.1"),     // Trailing newline trimmed
+            ("192.168.1.1\r\n", "192.168.1.1"),   // Trailing CRLF trimmed
+            ("192.168.1.1  ", "192.168.1.1"),     // Trailing spaces trimmed
+            ("  192.168.1.1", "192.168.1.1"),     // Leading spaces trimmed
+        ];
+
+        for (input, expected) in acceptable_ips {
+            let headers = vec![
+                ("X-Forwarded-For".to_string(), input.to_string()),
+            ];
+            let result = extract_client_ip(&config, "127.0.0.1", &headers);
+            assert_eq!(
+                result.ip(),
+                expected,
+                "Expected IP '{}' after trimming '{:?}'",
+                expected,
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_x59_multiple_ips_with_malformed() {
+        let config = IpExtractionConfig::default();
+
+        // First IP is malformed, second is valid
+        let headers = vec![
+            ("X-Forwarded-For".to_string(), "not-valid".to_string()),
+            ("X-Real-IP".to_string(), "203.0.113.5".to_string()),
+        ];
+        let result = extract_client_ip(&config, "127.0.0.1", &headers);
+        // Should skip X-Forwarded-For and use X-Real-IP
+        assert_eq!(result.ip(), "203.0.113.5");
+    }
+
+    #[test]
+    fn test_x59_whitespace_handling() {
+        let config = IpExtractionConfig::default();
+
+        // Various whitespace scenarios
+        let headers = vec![
+            ("X-Forwarded-For".to_string(), "  203.0.113.1  , 10.0.0.1  ".to_string()),
+        ];
+        let result = extract_client_ip(&config, "127.0.0.1", &headers);
+        assert_eq!(result.ip(), "203.0.113.1");
+    }
+
+    #[test]
+    fn test_x59_empty_header_value() {
+        let config = IpExtractionConfig::default();
+
+        let headers = vec![
+            ("X-Forwarded-For".to_string(), "".to_string()),
+            ("X-Real-IP".to_string(), "".to_string()),
+        ];
+        let result = extract_client_ip(&config, "192.168.1.100", &headers);
+        // Should fall back to connection IP
+        assert_eq!(result.ip(), "192.168.1.100");
+    }
+
+    #[test]
+    fn test_x59_connection_ip_validation() {
+        // The is_valid_ip function is used for header IPs but connection_ip is trusted
+        // This test ensures the connection_ip is passed through as-is
+        let config = IpExtractionConfig::default();
+        let headers = vec![];
+
+        let result = extract_client_ip(&config, "192.168.1.100", &headers);
+        assert_eq!(result.ip(), "192.168.1.100");
+
+        // Even if connection_ip looks weird, it's passed through
+        // (in production, this would be validated by the network layer)
+        let result2 = extract_client_ip(&config, "0.0.0.0", &headers);
+        assert_eq!(result2.ip(), "0.0.0.0");
     }
 }

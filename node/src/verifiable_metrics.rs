@@ -192,6 +192,75 @@ impl MetricsSigner {
         })
     }
 
+    /// SECURITY (X5.8): Load from file or generate new key with persistence
+    ///
+    /// This ensures the signing key persists across node restarts, maintaining
+    /// consistent identity for verifiable metrics.
+    ///
+    /// # File Format
+    /// The key file contains 32 bytes of raw Ed25519 private key data.
+    /// File permissions should be restricted to owner read/write only (0600).
+    pub fn load_or_generate(key_path: &std::path::Path) -> Result<Self> {
+        use std::fs;
+        use std::io::{Read, Write};
+
+        // Try to load existing key
+        if key_path.exists() {
+            let mut file = fs::File::open(key_path)
+                .map_err(|e| anyhow::anyhow!("Failed to open key file: {}", e))?;
+
+            let mut key_bytes = [0u8; 32];
+            let bytes_read = file
+                .read(&mut key_bytes)
+                .map_err(|e| anyhow::anyhow!("Failed to read key file: {}", e))?;
+
+            if bytes_read != 32 {
+                return Err(anyhow::anyhow!(
+                    "Invalid key file: expected 32 bytes, got {}",
+                    bytes_read
+                ));
+            }
+
+            info!(
+                "Loaded existing metrics signing key from {}",
+                key_path.display()
+            );
+            return Self::from_bytes(&key_bytes);
+        }
+
+        // Generate new key and persist
+        let signer = Self::generate();
+
+        // Create parent directories if needed
+        if let Some(parent) = key_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| anyhow::anyhow!("Failed to create key directory: {}", e))?;
+        }
+
+        // Write key with restricted permissions
+        let mut file = fs::File::create(key_path)
+            .map_err(|e| anyhow::anyhow!("Failed to create key file: {}", e))?;
+
+        // Set file permissions to 0600 (owner read/write only) on Unix
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = fs::Permissions::from_mode(0o600);
+            fs::set_permissions(key_path, permissions)
+                .map_err(|e| anyhow::anyhow!("Failed to set key file permissions: {}", e))?;
+        }
+
+        file.write_all(&signer.private_key_bytes())
+            .map_err(|e| anyhow::anyhow!("Failed to write key file: {}", e))?;
+
+        info!(
+            "Generated and persisted new metrics signing key to {}",
+            key_path.display()
+        );
+
+        Ok(signer)
+    }
+
     /// Get the public key as hex string
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.verifying_key.to_bytes())
@@ -797,6 +866,92 @@ mod tests {
         // Both signers should verify each other's signatures
         assert!(signer1.verify_report(&report2).unwrap());
         assert!(signer2.verify_report(&report1).unwrap());
+    }
+
+    // ============================================
+    // SECURITY TESTS (X5.8): Key persistence
+    // ============================================
+
+    #[test]
+    fn test_x58_load_or_generate_creates_new_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key_path = temp_dir.path().join("metrics_signing_key.bin");
+
+        // Key file doesn't exist yet
+        assert!(!key_path.exists());
+
+        // Should generate and persist new key
+        let signer1 = MetricsSigner::load_or_generate(&key_path).unwrap();
+        assert!(key_path.exists());
+
+        // Verify file size is exactly 32 bytes
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        assert_eq!(metadata.len(), 32);
+    }
+
+    #[test]
+    fn test_x58_load_or_generate_loads_existing_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key_path = temp_dir.path().join("metrics_signing_key.bin");
+
+        // Generate first signer
+        let signer1 = MetricsSigner::load_or_generate(&key_path).unwrap();
+        let pubkey1 = signer1.public_key_hex();
+
+        // Load same key - should get same public key
+        let signer2 = MetricsSigner::load_or_generate(&key_path).unwrap();
+        let pubkey2 = signer2.public_key_hex();
+
+        assert_eq!(pubkey1, pubkey2, "Loaded key should have same public key");
+    }
+
+    #[test]
+    fn test_x58_persisted_key_produces_verifiable_signatures() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key_path = temp_dir.path().join("metrics_signing_key.bin");
+
+        // Generate and sign
+        let signer1 = MetricsSigner::load_or_generate(&key_path).unwrap();
+        let metrics = AggregatedMetrics::new(1000, 1300);
+        let report = signer1.sign_metrics(&metrics).unwrap();
+
+        // Load and verify
+        let signer2 = MetricsSigner::load_or_generate(&key_path).unwrap();
+        assert!(signer2.verify_report(&report).unwrap());
+    }
+
+    #[test]
+    fn test_x58_invalid_key_file_size_rejected() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key_path = temp_dir.path().join("bad_key.bin");
+
+        // Write invalid key (wrong size)
+        std::fs::write(&key_path, b"too_short").unwrap();
+
+        // Should fail to load
+        let result = MetricsSigner::load_or_generate(&key_path);
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            err.to_string().contains("expected 32 bytes"),
+            "Error should mention expected size: {}",
+            err
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_x58_key_file_has_restricted_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let key_path = temp_dir.path().join("metrics_signing_key.bin");
+
+        MetricsSigner::load_or_generate(&key_path).unwrap();
+
+        let metadata = std::fs::metadata(&key_path).unwrap();
+        let mode = metadata.permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "Key file should have 0600 permissions");
     }
 
     #[test]

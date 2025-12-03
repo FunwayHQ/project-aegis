@@ -51,7 +51,8 @@ redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
 sysinfo = "0.30"
 
 # WebAssembly runtime for bot management (Sprint 9)
-wasmtime = "27.0"
+# SECURITY FIX (X4.11): Upgraded from 27.0 to 39.0 for security patches
+wasmtime = "39.0"
 
 # P2P Networking for threat intelligence (Sprint 10)
 libp2p = { version = "0.54", features = ["gossipsub", "mdns", "noise", "tcp", "tokio", "yamux", "kad", "identify", "macros"] }

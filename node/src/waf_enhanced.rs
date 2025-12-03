@@ -7,11 +7,58 @@
 // 4. Rule priority, chaining, and skip logic
 // 5. ML anomaly scoring for requests
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::waf::{Severity, WafAction, RuleMatch};
+
+// ============================================
+// SECURITY FIX (X5.1): Pre-compiled regex patterns
+// These patterns are compiled once at startup instead of per-request
+// ============================================
+
+/// Pre-compiled SQL injection detection patterns
+/// SECURITY FIX (X5.1): Compiled once at startup, not per-request
+static SQLI_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    let patterns = [
+        r"union\s+select",
+        r"select\s+.*\s+from",
+        r"insert\s+into",
+        r"delete\s+from",
+        r"drop\s+table",
+        r"'\s*(or|and)\s*'",
+        r"--\s*$",
+        r"/\*.*\*/",
+        r"exec\s*\(",
+        r"xp_cmdshell",
+    ];
+    patterns
+        .iter()
+        .filter_map(|p| Regex::new(p).ok())
+        .collect()
+});
+
+/// Pre-compiled XSS detection patterns
+/// SECURITY FIX (X5.1): Compiled once at startup, not per-request
+static XSS_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+    let patterns = [
+        r"<script[^>]*>",
+        r"javascript:",
+        r"on\w+\s*=",
+        r"<iframe",
+        r"<object",
+        r"<embed",
+        r"expression\s*\(",
+        r"document\.",
+        r"window\.",
+    ];
+    patterns
+        .iter()
+        .filter_map(|p| Regex::new(p).ok())
+        .collect()
+});
 
 // ============================================
 // Regex Security Configuration
@@ -1405,26 +1452,14 @@ fn sigmoid_scale(z: f64) -> f64 {
 }
 
 /// Simple SQLi detection
+/// SECURITY FIX (X5.1): Uses pre-compiled patterns from SQLI_PATTERNS
 fn detect_sqli(input: &str) -> bool {
     let input_lower = input.to_lowercase();
-    let patterns = [
-        r"union\s+select",
-        r"select\s+.*\s+from",
-        r"insert\s+into",
-        r"delete\s+from",
-        r"drop\s+table",
-        r"'\s*(or|and)\s*'",
-        r"--\s*$",
-        r"/\*.*\*/",
-        r"exec\s*\(",
-        r"xp_cmdshell",
-    ];
 
-    for pattern in &patterns {
-        if let Ok(re) = Regex::new(pattern) {
-            if re.is_match(&input_lower) {
-                return true;
-            }
+    // Use pre-compiled patterns (compiled once at startup)
+    for re in SQLI_PATTERNS.iter() {
+        if re.is_match(&input_lower) {
+            return true;
         }
     }
 
@@ -1432,25 +1467,14 @@ fn detect_sqli(input: &str) -> bool {
 }
 
 /// Simple XSS detection
+/// SECURITY FIX (X5.1): Uses pre-compiled patterns from XSS_PATTERNS
 fn detect_xss(input: &str) -> bool {
     let input_lower = input.to_lowercase();
-    let patterns = [
-        r"<script[^>]*>",
-        r"javascript:",
-        r"on\w+\s*=",
-        r"<iframe",
-        r"<object",
-        r"<embed",
-        r"expression\s*\(",
-        r"document\.",
-        r"window\.",
-    ];
 
-    for pattern in &patterns {
-        if let Ok(re) = Regex::new(pattern) {
-            if re.is_match(&input_lower) {
-                return true;
-            }
+    // Use pre-compiled patterns (compiled once at startup)
+    for re in XSS_PATTERNS.iter() {
+        if re.is_match(&input_lower) {
+            return true;
         }
     }
 

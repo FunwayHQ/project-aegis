@@ -2,6 +2,11 @@
 //
 // Provides HTTP endpoints for JavaScript challenge verification.
 // This runs alongside the main proxy to handle challenge-related requests.
+//
+// SECURITY FIXES:
+// - X4.7: Public key endpoint rate limiting
+// - X4.8: CSRF protection via Origin/Referer validation
+// - X4.10: Rate limiting on verification endpoint
 
 use crate::challenge::{
     ChallengeManager, ChallengeSolution, ChallengeType, VerificationResult,
@@ -9,25 +14,194 @@ use crate::challenge::{
 };
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{Body, Method, Request, Response, Server, StatusCode};
+use lru::LruCache;
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::sync::RwLock;
+
+// ============================================
+// SECURITY FIX (X4.7, X4.10): Rate Limiting Constants
+// ============================================
+
+/// Maximum requests per IP per minute for issue/verify endpoints
+const RATE_LIMIT_REQUESTS_PER_MINUTE: usize = 30;
+
+/// Maximum requests per IP per minute for public-key endpoint
+const PUBLIC_KEY_RATE_LIMIT: usize = 10;
+
+/// Rate limit window duration
+const RATE_LIMIT_WINDOW: Duration = Duration::from_secs(60);
+
+/// Maximum IPs to track for rate limiting
+const MAX_RATE_LIMIT_ENTRIES: usize = 10_000;
+
+// ============================================
+// SECURITY FIX (X4.8): CSRF Protection
+// ============================================
+
+/// Check if Origin/Referer header is from an allowed source
+/// Returns true if the request appears to be a legitimate same-origin request
+fn check_csrf_protection(req: &Request<Body>, allowed_origins: &[String]) -> bool {
+    // For GET requests, CSRF protection is less critical
+    if *req.method() == Method::GET {
+        return true;
+    }
+
+    // Check Origin header first (most reliable)
+    if let Some(origin) = req.headers().get("Origin") {
+        if let Ok(origin_str) = origin.to_str() {
+            // Allow same-origin (null origin)
+            if origin_str == "null" {
+                return true;
+            }
+            // Check against allowed origins
+            for allowed in allowed_origins {
+                if origin_str == allowed || origin_str.starts_with(allowed) {
+                    return true;
+                }
+            }
+            // If origin is set but not allowed, reject
+            log::warn!("CSRF: Rejected request with origin: {}", origin_str);
+            return false;
+        }
+    }
+
+    // Check Referer header as fallback
+    if let Some(referer) = req.headers().get("Referer") {
+        if let Ok(referer_str) = referer.to_str() {
+            for allowed in allowed_origins {
+                if referer_str.starts_with(allowed) {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // If no Origin or Referer, allow (might be API client)
+    // But require Content-Type for POST requests
+    if *req.method() == Method::POST {
+        if let Some(ct) = req.headers().get("Content-Type") {
+            if let Ok(ct_str) = ct.to_str() {
+                // Only allow application/json
+                return ct_str.starts_with("application/json");
+            }
+        }
+        return false;
+    }
+
+    true
+}
+
+/// Rate limiter for API endpoints
+struct RateLimiter {
+    /// IP -> (request_count, window_start)
+    entries: LruCache<String, (usize, Instant)>,
+    /// Max requests per window
+    max_requests: usize,
+    /// Window duration
+    window: Duration,
+}
+
+impl RateLimiter {
+    fn new(max_requests: usize, window: Duration) -> Self {
+        Self {
+            entries: LruCache::new(NonZeroUsize::new(MAX_RATE_LIMIT_ENTRIES).unwrap()),
+            max_requests,
+            window,
+        }
+    }
+
+    /// Check if request is allowed. Returns true if allowed, false if rate limited.
+    fn check(&mut self, ip: &str) -> bool {
+        let now = Instant::now();
+
+        if let Some((count, window_start)) = self.entries.get_mut(ip) {
+            if now.duration_since(*window_start) > self.window {
+                // Window expired, reset
+                *count = 1;
+                *window_start = now;
+                true
+            } else if *count < self.max_requests {
+                // Within window, increment
+                *count += 1;
+                true
+            } else {
+                // Rate limited
+                false
+            }
+        } else {
+            // New IP
+            self.entries.put(ip.to_string(), (1, now));
+            true
+        }
+    }
+
+    /// Get current request count for an IP (for logging)
+    fn get_count(&mut self, ip: &str) -> usize {
+        self.entries.get(ip).map(|(c, _)| *c).unwrap_or(0)
+    }
+}
 
 /// Challenge API server state
 pub struct ChallengeApi {
     challenge_manager: Arc<ChallengeManager>,
+    /// SECURITY FIX (X4.10): Rate limiter for verification endpoints
+    verify_rate_limiter: Arc<RwLock<RateLimiter>>,
+    /// SECURITY FIX (X4.7): Rate limiter for public key endpoint
+    public_key_rate_limiter: Arc<RwLock<RateLimiter>>,
+    /// SECURITY FIX (X4.8): Allowed origins for CSRF protection
+    allowed_origins: Vec<String>,
 }
 
 impl ChallengeApi {
     /// Create new Challenge API
     pub fn new(challenge_manager: Arc<ChallengeManager>) -> Self {
-        Self { challenge_manager }
+        Self::with_origins(challenge_manager, vec![])
+    }
+
+    /// Create new Challenge API with custom allowed origins
+    pub fn with_origins(challenge_manager: Arc<ChallengeManager>, allowed_origins: Vec<String>) -> Self {
+        Self {
+            challenge_manager,
+            verify_rate_limiter: Arc::new(RwLock::new(RateLimiter::new(
+                RATE_LIMIT_REQUESTS_PER_MINUTE,
+                RATE_LIMIT_WINDOW,
+            ))),
+            public_key_rate_limiter: Arc::new(RwLock::new(RateLimiter::new(
+                PUBLIC_KEY_RATE_LIMIT,
+                RATE_LIMIT_WINDOW,
+            ))),
+            allowed_origins,
+        }
     }
 
     /// Get shared reference to challenge manager
     pub fn challenge_manager(&self) -> &Arc<ChallengeManager> {
         &self.challenge_manager
     }
+}
+
+/// Build a rate limit error response
+fn rate_limit_response() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::TOO_MANY_REQUESTS)
+        .header("Content-Type", "application/json")
+        .header("Retry-After", "60")
+        .body(Body::from(r#"{"error":"Rate limit exceeded. Please try again later."}"#))
+        .unwrap()
+}
+
+/// Build a CSRF error response
+fn csrf_error_response() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::FORBIDDEN)
+        .header("Content-Type", "application/json")
+        .body(Body::from(r#"{"error":"Request rejected. Invalid origin."}"#))
+        .unwrap()
 }
 
 /// Handle incoming HTTP requests
@@ -41,9 +215,31 @@ async fn handle_request(
     // Extract client IP from headers or connection
     let client_ip = extract_client_ip(&req);
 
+    // SECURITY FIX (X4.8): Check CSRF protection for POST requests
+    if !check_csrf_protection(&req, &api.allowed_origins) {
+        log::warn!(
+            "CSRF protection blocked request: path={}, ip={}",
+            path,
+            client_ip
+        );
+        return Ok(csrf_error_response());
+    }
+
     let response = match (method, path.as_str()) {
         // Issue a new challenge
         (Method::GET, "/aegis/challenge/issue") => {
+            // SECURITY FIX (X4.10): Rate limit issue endpoint
+            {
+                let mut limiter = api.verify_rate_limiter.write().await;
+                if !limiter.check(&client_ip) {
+                    log::warn!(
+                        "Rate limit exceeded for /issue: ip={}, count={}",
+                        client_ip,
+                        limiter.get_count(&client_ip)
+                    );
+                    return Ok(rate_limit_response());
+                }
+            }
             let challenge_type = req.uri().query()
                 .and_then(|q| {
                     for part in q.split('&') {
@@ -61,6 +257,7 @@ async fn handle_request(
                 .unwrap_or(ChallengeType::Managed);
 
             // SECURITY FIX (X2.1): Handle challenge creation errors
+            // SECURITY FIX (X5.2): Reduce error detail in production - log internally, return generic message
             let challenge = match api.challenge_manager.issue_challenge(&client_ip, challenge_type).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -68,7 +265,7 @@ async fn handle_request(
                     return Ok(Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
+                        .body(Body::from(r#"{"error":"Challenge generation failed"}"#))
                         .unwrap());
                 }
             };
@@ -93,6 +290,7 @@ async fn handle_request(
         // Get challenge page HTML
         (Method::GET, "/aegis/challenge/page") => {
             // SECURITY FIX (X2.1): Handle challenge creation errors
+            // SECURITY FIX (X5.2): Reduce error detail in production - log internally, return generic message
             let challenge = match api.challenge_manager.issue_challenge(&client_ip, ChallengeType::Managed).await {
                 Ok(c) => c,
                 Err(e) => {
@@ -100,7 +298,7 @@ async fn handle_request(
                     return Ok(Response::builder()
                         .status(StatusCode::INTERNAL_SERVER_ERROR)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
+                        .body(Body::from(r#"{"error":"Challenge generation failed"}"#))
                         .unwrap());
                 }
             };
@@ -123,6 +321,19 @@ async fn handle_request(
 
         // Verify challenge solution
         (Method::POST, "/aegis/challenge/verify") => {
+            // SECURITY FIX (X4.10): Rate limit verification endpoint
+            {
+                let mut limiter = api.verify_rate_limiter.write().await;
+                if !limiter.check(&client_ip) {
+                    log::warn!(
+                        "Rate limit exceeded for /verify: ip={}, count={}",
+                        client_ip,
+                        limiter.get_count(&client_ip)
+                    );
+                    return Ok(rate_limit_response());
+                }
+            }
+
             match parse_challenge_solution(req).await {
                 Ok(solution) => {
                     let result = api.challenge_manager.verify_solution(&solution, &client_ip).await;
@@ -191,26 +402,42 @@ async fn handle_request(
                     }
                 }
                 Err(e) => {
+                    // SECURITY FIX (X5.2): Log error internally, return generic message
+                    log::warn!("Challenge verification parse error: {}", e);
                     Response::builder()
                         .status(StatusCode::BAD_REQUEST)
                         .header("Content-Type", "application/json")
-                        .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
+                        .body(Body::from(r#"{"error":"Invalid request format"}"#))
                         .unwrap()
                 }
             }
         }
 
         // Get public key for external verification
+        // SECURITY FIX (X4.7): Rate limit public key endpoint to prevent abuse
         (Method::GET, "/aegis/challenge/public-key") => {
+            {
+                let mut limiter = api.public_key_rate_limiter.write().await;
+                if !limiter.check(&client_ip) {
+                    log::warn!(
+                        "Rate limit exceeded for /public-key: ip={}",
+                        client_ip
+                    );
+                    return Ok(rate_limit_response());
+                }
+            }
+
             let public_key = api.challenge_manager.public_key_hex();
             let response = serde_json::json!({
                 "algorithm": "Ed25519",
                 "public_key": public_key,
             });
 
+            // SECURITY FIX (X4.7): Add cache headers to reduce abuse potential
             Response::builder()
                 .status(StatusCode::OK)
                 .header("Content-Type", "application/json")
+                .header("Cache-Control", "public, max-age=3600") // Cache for 1 hour
                 .body(Body::from(response.to_string()))
                 .unwrap()
         }

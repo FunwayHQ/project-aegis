@@ -92,6 +92,27 @@ static PAGINATION_PATTERN: Lazy<Option<Regex>> = Lazy::new(|| {
     }
 });
 
+/// Pre-compiled OpenAPI path parameter pattern
+/// SECURITY FIX (X5.1): Compiled once at startup, used in add_endpoint()
+static OPENAPI_PARAM_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\{([^}]+)\}").expect("Invalid OpenAPI param regex - this is a bug")
+});
+
+/// Pre-compiled numeric ID extraction pattern
+/// SECURITY FIX (X5.1): Compiled once at startup, used in extract_numeric_id()
+static NUMERIC_ID_PATTERN: Lazy<Option<Regex>> = Lazy::new(|| {
+    match Regex::new(r"/(\d+)(?:/|$|\?)") {
+        Ok(re) => Some(re),
+        Err(e) => {
+            warn!(
+                "SECURITY (X5.1): Failed to compile numeric ID regex: {}",
+                e
+            );
+            None
+        }
+    }
+});
+
 // ============================================
 // SECURITY FIX (X3.6): Secure Secret Storage
 // HMAC secrets are zeroized when dropped to prevent
@@ -674,13 +695,14 @@ impl SchemaValidator {
 
     /// Add an endpoint specification
     /// SECURITY FIX (X3.4): Uses safe_compile_regex to prevent ReDoS from malicious patterns
+    /// SECURITY FIX (X5.1): Uses pre-compiled OPENAPI_PARAM_PATTERN
     pub fn add_endpoint(&mut self, spec: EndpointSpec) {
         // Convert OpenAPI path pattern to regex
         let mut regex_pattern = spec.path.clone();
 
         // Replace {param} with named capture groups
-        let param_re = Regex::new(r"\{([^}]+)\}").unwrap();
-        regex_pattern = param_re
+        // SECURITY FIX (X5.1): Use pre-compiled pattern instead of compiling per-call
+        regex_pattern = OPENAPI_PARAM_PATTERN
             .replace_all(&regex_pattern, r"(?P<$1>[^/]+)")
             .to_string();
 
@@ -1573,9 +1595,10 @@ impl SequenceDetector {
         }
     }
 
+    /// SECURITY FIX (X5.1): Uses pre-compiled NUMERIC_ID_PATTERN
     fn extract_numeric_id(&self, path: &str) -> Option<i64> {
-        // Extract numeric segments from path
-        let re = Regex::new(r"/(\d+)(?:/|$|\?)").ok()?;
+        // Extract numeric segments from path using pre-compiled pattern
+        let re = NUMERIC_ID_PATTERN.as_ref()?;
         re.captures(path)?
             .get(1)?
             .as_str()

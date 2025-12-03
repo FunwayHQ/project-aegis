@@ -34,8 +34,12 @@ impl RoutePattern {
                 path == normalized_prefix || path.starts_with(&format!("{}/", normalized_prefix))
             }
             RoutePattern::Regex(pattern) => {
-                // For now, use simple glob-style matching
-                // In production, compile and cache regex::Regex
+                // SECURITY FIX (X5.1): This method compiles regex on each call.
+                // For production use, prefer CompiledRoutePattern::compile() and
+                // CompiledRoutePattern::matches() which caches the compiled regex.
+                // This fallback implementation is kept for backward compatibility.
+                //
+                // TODO: Deprecate this method in favor of CompiledRoutePattern
                 if let Ok(re) = regex::Regex::new(pattern) {
                     re.is_match(path)
                 } else {

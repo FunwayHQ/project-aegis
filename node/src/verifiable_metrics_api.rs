@@ -90,8 +90,9 @@ async fn handle_get_recent_reports(
                 .body(Body::from(serde_json::to_string_pretty(&response)?))?)
         }
         Err(e) => {
+            // SECURITY FIX (X5.2): Log error internally, return generic message
             warn!("Failed to get recent reports: {}", e);
-            let response = MetricsApiResponse::error(format!("Failed to get reports: {}", e));
+            let response = MetricsApiResponse::error("Failed to retrieve metrics".to_string());
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -126,8 +127,9 @@ async fn handle_get_latest_report(
                 .body(Body::from(serde_json::to_string(&response)?))?)
         }
         Err(e) => {
+            // SECURITY FIX (X5.2): Log error internally, return generic message
             warn!("Failed to get latest report: {}", e);
-            let response = MetricsApiResponse::error(format!("Failed to get report: {}", e));
+            let response = MetricsApiResponse::error("Failed to retrieve metrics".to_string());
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -199,8 +201,9 @@ async fn handle_get_range_reports(
                 .body(Body::from(serde_json::to_string_pretty(&response)?))?)
         }
         Err(e) => {
+            // SECURITY FIX (X5.2): Log error internally, return generic message
             warn!("Failed to get range reports: {}", e);
-            let response = MetricsApiResponse::error(format!("Failed to get reports: {}", e));
+            let response = MetricsApiResponse::error("Failed to retrieve metrics".to_string());
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
