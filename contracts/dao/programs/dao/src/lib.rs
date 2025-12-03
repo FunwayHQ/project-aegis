@@ -124,63 +124,24 @@ pub mod dao {
         Ok(())
     }
 
-    /// SECURITY FIX (X1.4): Close the DAO config account (returns rent to authority)
+    /// SECURITY FIX (X1.4 + X6): Close the DAO config account (returns rent to authority)
     ///
     /// WARNING: This is destructive and should only be used for migration/cleanup.
     ///
     /// Security measures:
     /// 1. PDA validation via seeds constraint
-    /// 2. Program ownership verification
-    /// 3. Authority validation from account data (CRITICAL FIX)
-    /// 4. Ensures signer matches stored authority before closing
+    /// 2. Program ownership verification via Anchor's Account<'info, DaoConfig>
+    /// 3. Authority validation via has_one constraint (REFACTORED - no raw byte manipulation)
+    /// 4. Anchor's close constraint handles lamport transfer and account zeroing
     pub fn close_dao_config(ctx: Context<CloseDaoConfig>) -> Result<()> {
+        // 🔒 SECURITY FIX (X6): Using Anchor's Account<DaoConfig> for proper deserialization
+        // Authority validation is now done via has_one constraint in CloseDaoConfig
+        // Program ownership is automatically verified by Anchor's Account type
+
         let dao_config = &ctx.accounts.dao_config;
         let authority = &ctx.accounts.authority;
 
-        // 🔒 SECURITY FIX (X1.4): Verify the account is owned by this program
-        require!(
-            dao_config.owner == &crate::ID,
-            DaoError::InvalidDaoConfig
-        );
-
-        // 🔒 SECURITY FIX (X1.4): Verify authority from account data
-        // The DaoConfig account structure has authority at bytes 8-40 (after discriminator)
-        let data = dao_config.try_borrow_data()?;
-
-        // Validate account data is long enough (discriminator + authority = 40 bytes minimum)
-        require!(
-            data.len() >= 40,
-            DaoError::InvalidDaoConfig
-        );
-
-        // Extract authority pubkey from account data (bytes 8-40)
-        let stored_authority_bytes: [u8; 32] = data[8..40]
-            .try_into()
-            .map_err(|_| DaoError::InvalidDaoConfig)?;
-        let stored_authority = Pubkey::new_from_array(stored_authority_bytes);
-
-        // 🔒 CRITICAL: Verify signer matches the stored authority
-        require!(
-            authority.key() == stored_authority,
-            DaoError::UnauthorizedAuthority
-        );
-
-        // Drop the borrow before modifying the account
-        drop(data);
-
-        // Transfer lamports from dao_config to authority
-        let lamports = dao_config.lamports();
-        **dao_config.try_borrow_mut_lamports()? = 0;
-        **authority.try_borrow_mut_lamports()? = authority
-            .lamports()
-            .checked_add(lamports)
-            .ok_or(DaoError::Overflow)?;
-
-        // Zero out the account data to mark it as closed
-        dao_config.try_borrow_mut_data()?.fill(0);
-
-        // Assign to system program to fully close
-        dao_config.assign(&anchor_lang::system_program::ID);
+        let lamports = dao_config.to_account_info().lamports();
 
         msg!(
             "DAO config closed by authority {}, {} lamports returned",
@@ -192,6 +153,9 @@ pub mod dao {
             authority: authority.key(),
             timestamp: Clock::get()?.unix_timestamp,
         });
+
+        // Note: Account closing (lamport transfer + zeroing) is handled by
+        // the 'close = authority' constraint in CloseDaoConfig
 
         Ok(())
     }
@@ -1351,28 +1315,30 @@ pub struct InitializeDao<'info> {
     pub system_program: Program<'info, System>,
 }
 
-/// SECURITY FIX (X1.4): Close DAO configuration (for migration/cleanup)
+/// SECURITY FIX (X1.4 + X6): Close DAO configuration (for migration/cleanup)
 ///
 /// Security measures:
 /// 1. PDA validation via seeds constraint (prevents closing arbitrary accounts)
-/// 2. Authority is validated in instruction from account data (prevents unauthorized close)
-/// 3. Program ownership check in instruction
+/// 2. Program ownership verified via Anchor's Account<DaoConfig> type
+/// 3. Authority validated via has_one constraint (no raw byte manipulation)
+/// 4. Account properly closed via Anchor's close constraint
 #[derive(Accounts)]
 pub struct CloseDaoConfig<'info> {
-    /// CHECK: We intentionally use AccountInfo to handle migration scenarios where
-    /// the account structure may have changed. Security is enforced in the instruction:
-    /// - PDA derivation validated by seeds constraint
-    /// - Program ownership check (dao_config.owner == program_id)
-    /// - Authority extracted from account data and verified against signer
+    /// 🔒 SECURITY FIX (X6): Using Account<DaoConfig> instead of AccountInfo
+    /// This provides:
+    /// - Automatic program ownership verification
+    /// - Proper account deserialization
+    /// - Type-safe authority field access
     #[account(
         mut,
         seeds = [b"dao_config"],
-        bump
+        bump = dao_config.bump,
+        has_one = authority @ DaoError::UnauthorizedAuthority,
+        close = authority
     )]
-    pub dao_config: AccountInfo<'info>,
+    pub dao_config: Account<'info, DaoConfig>,
 
-    /// Authority must match the authority stored in dao_config account data.
-    /// This is validated in the close_dao_config instruction.
+    /// Authority is validated via has_one constraint on dao_config
     #[account(mut)]
     pub authority: Signer<'info>,
 

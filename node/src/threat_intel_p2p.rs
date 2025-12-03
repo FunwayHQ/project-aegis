@@ -13,12 +13,137 @@ use libp2p::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, error, info, warn};
+
+// =============================================================================
+// SECURITY FIX (X6): P2P Gossip Rate Limiting
+// =============================================================================
+
+/// Maximum messages per peer per window
+const RATE_LIMIT_MAX_MESSAGES: u32 = 100;
+
+/// Rate limit window duration (1 second)
+const RATE_LIMIT_WINDOW_SECS: u64 = 1;
+
+/// How often to clean up old rate limit entries (60 seconds)
+const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 60;
+
+/// Rate limiter entry for a single peer
+#[derive(Debug, Clone)]
+struct RateLimitEntry {
+    /// Number of messages in current window
+    count: u32,
+    /// When the current window started
+    window_start: Instant,
+}
+
+impl RateLimitEntry {
+    fn new() -> Self {
+        Self {
+            count: 0,
+            window_start: Instant::now(),
+        }
+    }
+
+    /// Check if a message is allowed and update counter
+    /// Returns true if message is allowed, false if rate limited
+    fn check_and_update(&mut self) -> bool {
+        let now = Instant::now();
+        let window_duration = Duration::from_secs(RATE_LIMIT_WINDOW_SECS);
+
+        // Reset window if expired
+        if now.duration_since(self.window_start) >= window_duration {
+            self.window_start = now;
+            self.count = 1;
+            return true;
+        }
+
+        // Check if under limit
+        if self.count < RATE_LIMIT_MAX_MESSAGES {
+            self.count += 1;
+            return true;
+        }
+
+        false
+    }
+}
+
+/// P2P Gossip Rate Limiter
+///
+/// SECURITY FIX (X6): Implements token bucket style rate limiting per peer
+/// to prevent gossip flood attacks where a malicious peer sends excessive messages.
+#[derive(Debug)]
+pub struct GossipRateLimiter {
+    /// Rate limit entries per peer ID
+    entries: HashMap<PeerId, RateLimitEntry>,
+    /// Last cleanup time
+    last_cleanup: Instant,
+    /// Total messages dropped due to rate limiting
+    pub dropped_count: u64,
+}
+
+impl GossipRateLimiter {
+    /// Create a new rate limiter
+    pub fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            last_cleanup: Instant::now(),
+            dropped_count: 0,
+        }
+    }
+
+    /// Check if a message from a peer should be allowed
+    ///
+    /// Returns true if the message is allowed, false if rate limited
+    pub fn check_rate_limit(&mut self, peer_id: &PeerId) -> bool {
+        // Periodic cleanup of stale entries
+        self.maybe_cleanup();
+
+        let entry = self.entries.entry(*peer_id).or_insert_with(RateLimitEntry::new);
+        let allowed = entry.check_and_update();
+
+        if !allowed {
+            self.dropped_count += 1;
+            warn!(
+                "SECURITY (X6): Rate limited peer {} - {} messages dropped total",
+                peer_id, self.dropped_count
+            );
+        }
+
+        allowed
+    }
+
+    /// Clean up stale entries periodically
+    fn maybe_cleanup(&mut self) {
+        let now = Instant::now();
+        let cleanup_interval = Duration::from_secs(RATE_LIMIT_CLEANUP_INTERVAL_SECS);
+
+        if now.duration_since(self.last_cleanup) >= cleanup_interval {
+            let window_duration = Duration::from_secs(RATE_LIMIT_WINDOW_SECS * 2);
+            self.entries.retain(|_, entry| {
+                now.duration_since(entry.window_start) < window_duration
+            });
+            self.last_cleanup = now;
+            debug!("Rate limiter cleanup: {} active peers tracked", self.entries.len());
+        }
+    }
+
+    /// Get the number of tracked peers
+    pub fn tracked_peers(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+impl Default for GossipRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// Get current Unix timestamp in seconds
 /// Returns 0 if system clock is before Unix epoch (should never happen on modern systems)
@@ -422,6 +547,8 @@ pub struct ThreatIntelP2P {
     signing_key: SigningKey,
     /// Registry of trusted node public keys
     trusted_registry: TrustedNodeRegistry,
+    /// SECURITY FIX (X6): Rate limiter for gossip messages
+    rate_limiter: GossipRateLimiter,
 }
 
 impl ThreatIntelP2P {
@@ -521,6 +648,7 @@ impl ThreatIntelP2P {
             sender,
             signing_key,
             trusted_registry,
+            rate_limiter: GossipRateLimiter::new(),
         })
     }
 
@@ -614,6 +742,7 @@ impl ThreatIntelP2P {
             sender,
             signing_key,
             trusted_registry,
+            rate_limiter: GossipRateLimiter::new(),
         })
     }
 
@@ -694,11 +823,20 @@ impl ThreatIntelP2P {
                     match event {
                         SwarmEvent::Behaviour(ThreatIntelBehaviourEvent::Gossipsub(
                             gossipsub::Event::Message {
-                                propagation_source: _,
+                                propagation_source,
                                 message_id: _,
                                 message,
                             },
                         )) => {
+                            // 🔒 SECURITY FIX (X6): Apply rate limiting per peer
+                            if !self.rate_limiter.check_rate_limit(&propagation_source) {
+                                debug!(
+                                    "Rate limited gossip message from peer {}",
+                                    propagation_source
+                                );
+                                continue;
+                            }
+
                             // Received a message from the network
                             match String::from_utf8(message.data.clone()) {
                                 Ok(json) => {
@@ -1268,5 +1406,106 @@ mod tests {
         // This test will fail to compile in release if the function is available
         let _ = TrustedNodeRegistry::new_open_mode_for_testing();
         // If we get here, we're in debug mode and the function exists
+    }
+
+    // ========================================
+    // X6: P2P Gossip Rate Limiting Tests
+    // ========================================
+
+    #[test]
+    fn test_x6_rate_limiter_allows_normal_traffic() {
+        let mut limiter = GossipRateLimiter::new();
+        let peer_id = PeerId::random();
+
+        // Should allow up to RATE_LIMIT_MAX_MESSAGES per window
+        for i in 0..RATE_LIMIT_MAX_MESSAGES {
+            assert!(
+                limiter.check_rate_limit(&peer_id),
+                "Message {} should be allowed",
+                i + 1
+            );
+        }
+
+        // Verify no messages were dropped
+        assert_eq!(limiter.dropped_count, 0);
+    }
+
+    #[test]
+    fn test_x6_rate_limiter_blocks_excessive_traffic() {
+        let mut limiter = GossipRateLimiter::new();
+        let peer_id = PeerId::random();
+
+        // Exhaust the limit
+        for _ in 0..RATE_LIMIT_MAX_MESSAGES {
+            limiter.check_rate_limit(&peer_id);
+        }
+
+        // Next message should be blocked
+        assert!(
+            !limiter.check_rate_limit(&peer_id),
+            "Message exceeding limit should be blocked"
+        );
+
+        // Verify message was dropped
+        assert_eq!(limiter.dropped_count, 1);
+
+        // More messages should also be blocked
+        assert!(!limiter.check_rate_limit(&peer_id));
+        assert!(!limiter.check_rate_limit(&peer_id));
+        assert_eq!(limiter.dropped_count, 3);
+    }
+
+    #[test]
+    fn test_x6_rate_limiter_tracks_multiple_peers() {
+        let mut limiter = GossipRateLimiter::new();
+        let peer_a = PeerId::random();
+        let peer_b = PeerId::random();
+
+        // Exhaust peer A's limit
+        for _ in 0..RATE_LIMIT_MAX_MESSAGES {
+            limiter.check_rate_limit(&peer_a);
+        }
+
+        // Peer A should be blocked
+        assert!(!limiter.check_rate_limit(&peer_a));
+
+        // Peer B should still be allowed
+        assert!(limiter.check_rate_limit(&peer_b));
+
+        // Verify tracking
+        assert_eq!(limiter.tracked_peers(), 2);
+    }
+
+    #[test]
+    fn test_x6_rate_limiter_window_reset() {
+        let mut limiter = GossipRateLimiter::new();
+        let peer_id = PeerId::random();
+
+        // Exhaust the limit
+        for _ in 0..RATE_LIMIT_MAX_MESSAGES {
+            limiter.check_rate_limit(&peer_id);
+        }
+
+        // Should be blocked
+        assert!(!limiter.check_rate_limit(&peer_id));
+
+        // Manually modify the window start to simulate time passing
+        // (In real usage, the window resets after RATE_LIMIT_WINDOW_SECS)
+        if let Some(entry) = limiter.entries.get_mut(&peer_id) {
+            entry.window_start = Instant::now() - Duration::from_secs(RATE_LIMIT_WINDOW_SECS + 1);
+        }
+
+        // Now should be allowed again (window reset)
+        assert!(
+            limiter.check_rate_limit(&peer_id),
+            "After window reset, messages should be allowed"
+        );
+    }
+
+    #[test]
+    fn test_x6_rate_limiter_default() {
+        let limiter = GossipRateLimiter::default();
+        assert_eq!(limiter.dropped_count, 0);
+        assert_eq!(limiter.tracked_peers(), 0);
     }
 }
