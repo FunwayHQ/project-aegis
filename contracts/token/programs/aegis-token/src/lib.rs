@@ -179,6 +179,20 @@ pub mod aegis_token {
         require!(threshold >= 1, TokenError::InvalidThreshold);
         require!(fee_burn_bps <= 10000, TokenError::InvalidFeeBps);
 
+        // 🔒 SECURITY FIX (X6): Check for duplicate signers
+        // Duplicate signers (e.g., [A, A, B]) can permanently lock funds
+        // because the same signer cannot approve twice, effectively reducing
+        // the available approvals below the threshold
+        {
+            let mut seen = std::collections::HashSet::new();
+            for signer in &signers {
+                require!(
+                    seen.insert(*signer),
+                    TokenError::DuplicateSigner
+                );
+            }
+        }
+
         let config = &mut ctx.accounts.token_config;
         let clock = Clock::get()?;
 
@@ -527,6 +541,17 @@ pub mod aegis_token {
             TokenError::TooManySigners
         );
         require!(new_threshold >= 1, TokenError::InvalidThreshold);
+
+        // 🔒 SECURITY FIX (X6): Check for duplicate signers in updates too
+        {
+            let mut seen = std::collections::HashSet::new();
+            for signer in &new_signers {
+                require!(
+                    seen.insert(*signer),
+                    TokenError::DuplicateSigner
+                );
+            }
+        }
 
         let old_threshold = config.threshold;
         let old_count = config.signer_count;
@@ -1016,4 +1041,8 @@ pub enum TokenError {
 
     #[msg("Config does not match transaction")]
     ConfigMismatch,
+
+    // SECURITY FIX (X6): Duplicate signer detection
+    #[msg("Duplicate signer detected - all signers must be unique")]
+    DuplicateSigner,
 }

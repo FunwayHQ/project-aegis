@@ -6,7 +6,7 @@ use tracing::{error, info, warn};
 
 use crate::blocklist_persistence::BlocklistPersistence;
 use crate::ebpf_loader::EbpfLoader;
-use crate::threat_intel_p2p::{P2PConfig, ThreatIntelP2P, ThreatIntelligence};
+use crate::threat_intel_p2p::{P2PConfig, SignedThreatIntelligence, ThreatIntelP2P, ThreatIntelligence};
 // SECURITY FIX (X2.6): Import lock recovery utilities
 use crate::lock_utils::lock_or_recover;
 
@@ -145,7 +145,11 @@ impl ThreatIntelService {
 
         // Spawn P2P event loop
         tokio::spawn(async move {
-            let handler = move |threat: ThreatIntelligence| -> Result<()> {
+            // Handler now receives SignedThreatIntelligence (signature already verified by P2P layer)
+            let handler = move |signed_threat: SignedThreatIntelligence| -> Result<()> {
+                // Extract the threat from the signed wrapper
+                let threat = signed_threat.threat;
+
                 // Check severity threshold
                 if threat.severity < min_severity {
                     info!(
