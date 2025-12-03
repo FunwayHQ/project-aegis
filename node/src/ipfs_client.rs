@@ -9,11 +9,20 @@
 //! - Pin/unpin modules to prevent garbage collection
 //! - Local disk caching to reduce IPFS fetches
 //! - Content verification (CID matches actual content hash)
+//!
+//! ## Security (X1.2)
+//! - Full cryptographic CID verification implemented
+//! - Content hash must match CID's embedded hash
+//! - Prevents MITM attacks and content substitution
 
 use anyhow::{Context, Result};
+use cid::Cid;
 use ipfs_api_backend_hyper::{IpfsApi, IpfsClient as IpfsApiClient, TryFromUri};
-use log::{debug, info, warn};
+use log::{debug, info, warn, error};
+use multihash::Multihash;
+use sha2::{Sha256, Digest};
 use std::path::PathBuf;
+use std::str::FromStr;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
@@ -374,26 +383,81 @@ impl IpfsClient {
 
     /// Verify that the downloaded content matches the CID
     ///
-    /// IPFS CIDs are content-addressed, so we can verify integrity by
-    /// computing the hash of the content and comparing with the CID.
-    fn verify_cid(&self, cid: &str, content: &[u8]) -> Result<()> {
-        // For now, we trust IPFS to return correct content matching the CID
-        // Full CID verification would require parsing the multihash format
-        // and computing the correct hash based on the CID's hash function.
-        //
-        // TODO: Implement full CID verification using cid and multihash crates
-        // For Sprint 17, we rely on:
-        // 1. IPFS daemon's content verification
-        // 2. Ed25519 signature verification (from Sprint 15)
-        // 3. Size validation
+    /// SECURITY FIX (X1.2): Full cryptographic CID verification
+    ///
+    /// IPFS CIDs are content-addressed, so we verify integrity by:
+    /// 1. Parsing the CID to extract the hash algorithm and expected hash
+    /// 2. Computing the hash of the downloaded content using the same algorithm
+    /// 3. Comparing the computed hash with the CID's embedded hash
+    ///
+    /// This prevents MITM attacks where an attacker could substitute
+    /// malicious content while keeping the same CID string.
+    fn verify_cid(&self, cid_str: &str, content: &[u8]) -> Result<()> {
+        debug!("CID verification for: {} ({} bytes)", cid_str, content.len());
 
-        debug!("CID verification for: {} ({} bytes)", cid, content.len());
+        // Parse the CID to extract hash information
+        let parsed_cid = Cid::from_str(cid_str)
+            .map_err(|e| anyhow::anyhow!("Failed to parse CID '{}': {}", cid_str, e))?;
 
-        // Basic validation: CID format
-        if !cid.starts_with("Qm") && !cid.starts_with("bafy") {
-            anyhow::bail!("Invalid CID format: {}", cid);
+        // Get the multihash from the CID
+        let expected_hash = parsed_cid.hash();
+        let hash_code = expected_hash.code();
+
+        // Compute the hash of the content using the same algorithm
+        let computed_hash = match hash_code {
+            // SHA2-256 (most common for IPFS)
+            0x12 => {
+                let digest = Sha256::digest(content);
+                Multihash::<64>::wrap(0x12, &digest)
+                    .map_err(|e| anyhow::anyhow!("Failed to create multihash: {}", e))?
+            }
+            // SHA2-512
+            0x13 => {
+                use sha2::Sha512;
+                let digest = Sha512::digest(content);
+                Multihash::<64>::wrap(0x13, &digest)
+                    .map_err(|e| anyhow::anyhow!("Failed to create multihash: {}", e))?
+            }
+            // Identity hash (content IS the hash, used for small data)
+            0x00 => {
+                if content.len() > 64 {
+                    anyhow::bail!("Content too large for identity hash");
+                }
+                Multihash::<64>::wrap(0x00, content)
+                    .map_err(|e| anyhow::anyhow!("Failed to create identity multihash: {}", e))?
+            }
+            _ => {
+                // For unsupported hash algorithms, we cannot verify
+                // Log a warning but don't fail - the Ed25519 signature verification
+                // from Sprint 15 provides a secondary layer of security
+                warn!(
+                    "Unsupported hash algorithm 0x{:x} in CID {}, cannot verify content integrity",
+                    hash_code, cid_str
+                );
+                warn!("Relying on Ed25519 module signature for security");
+                return Ok(());
+            }
+        };
+
+        // Compare the computed hash with the expected hash from the CID
+        if computed_hash.digest() != expected_hash.digest() {
+            error!(
+                "CID VERIFICATION FAILED for {}: content hash does not match!",
+                cid_str
+            );
+            error!(
+                "Expected hash: {:?}, Computed hash: {:?}",
+                hex::encode(expected_hash.digest()),
+                hex::encode(computed_hash.digest())
+            );
+            anyhow::bail!(
+                "CID verification failed: downloaded content hash does not match CID {}. \
+                 This could indicate a MITM attack or corrupted download.",
+                cid_str
+            );
         }
 
+        info!("CID verification PASSED for {} ({} bytes)", cid_str, content.len());
         Ok(())
     }
 
@@ -482,20 +546,217 @@ mod tests {
     }
 
     #[test]
-    fn test_verify_cid_format() {
+    fn test_verify_cid_invalid_format() {
         let client = IpfsClient::with_config(
             DEFAULT_IPFS_API,
             Some(PathBuf::from("/tmp/aegis-test")),
         )
         .unwrap();
 
-        // Valid CIDv0 format
-        assert!(client.verify_cid("QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG", b"test").is_ok());
+        // Invalid CID format should fail
+        let result = client.verify_cid("invalid-cid", b"test");
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Failed to parse CID"), "Error: {}", err_msg);
+    }
 
-        // Valid CIDv1 format
-        assert!(client.verify_cid("bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi", b"test").is_ok());
+    #[test]
+    fn test_verify_cid_sha256_valid() {
+        // SECURITY TEST (X1.2): Verify CID verification works correctly
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
 
-        // Invalid format
-        assert!(client.verify_cid("invalid-cid", b"test").is_err());
+        // Test content: "hello world"
+        let content = b"hello world";
+
+        // SHA256("hello world") = b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9
+        // CIDv1 (base32, dag-pb, sha2-256) for "hello world":
+        // This is a real CID - we'll compute it properly
+        // The CID format is: <multibase><version><codec><multihash>
+        // For CIDv0 (starts with Qm), the content is hashed with SHA256, then
+        // the result is base58btc encoded with multihash prefix
+
+        // Instead of hardcoding, let's create a known CID from test content
+        // CIDv1 base32 for raw SHA256 of "hello world":
+        // bafkreifzjut3te2nhyekklss27ez56hb6xn37yp5zl5u27bwxlymzwcvhy
+        // Note: This is computed using CIDv1 with raw codec (0x55) and sha2-256
+
+        // Let's use a simpler approach - compute what the CID should be for our content
+        // and test that tampered content fails
+
+        // First, let's verify that identical content passes with a real IPFS CID
+        // QmPK1s3pNYLi9ERiq3BDxKa4XosgWwFRQUydHUtz4YgpqB is a well-known test CID
+        // Its actual content is empty directory, so we can't easily test with it
+
+        // Instead, test that any properly formatted CIDv0 parses without error
+        // and that hash mismatch is detected
+        let valid_cidv0 = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+        let result = client.verify_cid(valid_cidv0, content);
+        // This should fail because the content doesn't match the CID's hash
+        assert!(result.is_err(), "CID verification should fail for mismatched content");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("CID verification failed") || err_msg.contains("does not match"),
+            "Error should indicate hash mismatch: {}", err_msg
+        );
+    }
+
+    #[test]
+    fn test_verify_cid_tampered_content_detected() {
+        // SECURITY TEST (X1.2): Verify tampered content is detected
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
+
+        // Use a valid CID format (CIDv0 - starts with Qm)
+        // QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG
+        let cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+
+        // Any random content won't match this CID's hash
+        let tampered_content = b"malicious wasm module with backdoor";
+
+        let result = client.verify_cid(cid, tampered_content);
+        assert!(result.is_err(), "CID verification should detect tampered content");
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("CID verification failed") || err_msg.contains("does not match"),
+            "Error should indicate content tampering: {}", err_msg
+        );
+    }
+
+    #[test]
+    fn test_verify_cid_cidv1_parsing() {
+        // SECURITY TEST (X1.2): Verify CIDv1 format parsing works
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
+
+        // CIDv1 format (base32, starts with 'bafy')
+        // This is a well-known CID format
+        let cidv1 = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+
+        // Content won't match, but the CID should parse successfully
+        // Error should be about hash mismatch, not CID parsing
+        let result = client.verify_cid(cidv1, b"random content");
+        assert!(result.is_err());
+
+        let err_msg = result.unwrap_err().to_string();
+        // Should fail due to content mismatch, NOT parsing error
+        assert!(
+            !err_msg.contains("Failed to parse CID"),
+            "CIDv1 should parse correctly: {}", err_msg
+        );
+    }
+
+    #[test]
+    fn test_verify_cid_empty_content() {
+        // SECURITY TEST (X1.2): Verify empty content handling
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
+
+        // Real CID for empty content would be:
+        // QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH (empty file)
+        // But we test that random CID + empty content still verifies hash correctly
+        let cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+        let empty_content: &[u8] = b"";
+
+        let result = client.verify_cid(cid, empty_content);
+        // Should fail because empty content hash doesn't match CID
+        assert!(result.is_err(), "Empty content should not match random CID");
+    }
+
+    #[test]
+    fn test_verify_cid_known_content_match() {
+        // SECURITY TEST (X1.2): Test with content we can compute CID for
+        // This tests that VALID content passes verification
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
+
+        // Compute SHA256 hash of test content and create CIDv1
+        let content = b"test content for aegis";
+
+        // Compute the SHA256 hash
+        let digest = Sha256::digest(content);
+
+        // Create CIDv1 with raw codec (0x55) and sha2-256 (0x12)
+        // Using the cid crate to construct a proper CID
+        let mh = Multihash::<64>::wrap(0x12, &digest).unwrap();
+        let computed_cid = Cid::new_v1(0x55, mh); // 0x55 = raw codec
+        let cid_string = computed_cid.to_string();
+
+        // Now verify - this should PASS because content matches CID
+        let result = client.verify_cid(&cid_string, content);
+        assert!(result.is_ok(), "Valid content should pass CID verification: {:?}", result);
+    }
+
+    #[test]
+    fn test_verify_cid_prevents_mitm_attack() {
+        // SECURITY TEST (X1.2): Simulate MITM attack scenario
+        // Attacker tries to substitute malicious content while keeping same CID
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test")),
+        )
+        .unwrap();
+
+        // Original legitimate content and its CID
+        let original_content = b"legitimate wasm module";
+        let digest = Sha256::digest(original_content);
+        let mh = Multihash::<64>::wrap(0x12, &digest).unwrap();
+        let original_cid = Cid::new_v1(0x55, mh);
+        let cid_string = original_cid.to_string();
+
+        // Verify original content works
+        assert!(
+            client.verify_cid(&cid_string, original_content).is_ok(),
+            "Original content should pass verification"
+        );
+
+        // MITM attack: attacker substitutes malicious content
+        let malicious_content = b"malicious wasm with backdoor that steals keys";
+
+        // Verification should FAIL for malicious content
+        let result = client.verify_cid(&cid_string, malicious_content);
+        assert!(
+            result.is_err(),
+            "MITM attack should be detected - malicious content must fail verification"
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("CID verification failed") || err_msg.contains("does not match"),
+            "Error should clearly indicate MITM/tampering: {}", err_msg
+        );
+    }
+
+    #[test]
+    fn test_module_size_validation() {
+        // Test that MAX_MODULE_SIZE constant is reasonable
+        assert_eq!(MAX_MODULE_SIZE, 10 * 1024 * 1024); // 10MB
+    }
+
+    #[test]
+    fn test_public_gateways_use_https() {
+        // SECURITY TEST: Verify all public gateways use HTTPS
+        for gateway in PUBLIC_IPFS_GATEWAYS {
+            assert!(
+                gateway.starts_with("https://"),
+                "Gateway {} must use HTTPS for security", gateway
+            );
+        }
     }
 }

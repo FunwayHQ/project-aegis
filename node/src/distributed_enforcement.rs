@@ -16,6 +16,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
+// SECURITY FIX (X2.6): Import lock recovery utilities for std::sync::RwLock
+use crate::lock_utils::{read_lock_or_recover, write_lock_or_recover};
+
 // ============================================
 // IPv6-Enabled Threat Intelligence
 // ============================================
@@ -1100,21 +1103,23 @@ impl MockEbpfUpdater {
     }
 
     pub fn get_blocked_count(&self) -> usize {
-        let v4 = self.blocked_v4.read().unwrap().len();
-        let v6 = self.blocked_v6.read().unwrap().len();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let v4 = read_lock_or_recover(&self.blocked_v4, "mock eBPF blocklist v4").len();
+        let v6 = read_lock_or_recover(&self.blocked_v6, "mock eBPF blocklist v6").len();
         v4 + v6
     }
 }
 
 impl EbpfBlocklistUpdater for MockEbpfUpdater {
     fn add_to_blocklist(&self, ip: &ThreatIpAddress, block_info: BlockInfo) -> Result<(), String> {
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
         match ip {
             ThreatIpAddress::V4(v4) => {
-                let mut blocked = self.blocked_v4.write().unwrap();
+                let mut blocked = write_lock_or_recover(&self.blocked_v4, "mock eBPF blocklist v4");
                 blocked.insert(*v4, block_info);
             }
             ThreatIpAddress::V6(v6) => {
-                let mut blocked = self.blocked_v6.write().unwrap();
+                let mut blocked = write_lock_or_recover(&self.blocked_v6, "mock eBPF blocklist v6");
                 blocked.insert(*v6, block_info);
             }
         }
@@ -1122,13 +1127,14 @@ impl EbpfBlocklistUpdater for MockEbpfUpdater {
     }
 
     fn remove_from_blocklist(&self, ip: &ThreatIpAddress) -> Result<(), String> {
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
         match ip {
             ThreatIpAddress::V4(v4) => {
-                let mut blocked = self.blocked_v4.write().unwrap();
+                let mut blocked = write_lock_or_recover(&self.blocked_v4, "mock eBPF blocklist v4");
                 blocked.remove(v4);
             }
             ThreatIpAddress::V6(v6) => {
-                let mut blocked = self.blocked_v6.write().unwrap();
+                let mut blocked = write_lock_or_recover(&self.blocked_v6, "mock eBPF blocklist v6");
                 blocked.remove(v6);
             }
         }

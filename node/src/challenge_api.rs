@@ -60,7 +60,18 @@ async fn handle_request(
                 })
                 .unwrap_or(ChallengeType::Managed);
 
-            let challenge = api.challenge_manager.issue_challenge(&client_ip, challenge_type).await;
+            // SECURITY FIX (X2.1): Handle challenge creation errors
+            let challenge = match api.challenge_manager.issue_challenge(&client_ip, challenge_type).await {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Failed to issue challenge: {}", e);
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
+                        .unwrap());
+                }
+            };
 
             log::info!(
                 "Challenge issued via API: id={}, type={:?}, ip={}",
@@ -81,7 +92,18 @@ async fn handle_request(
 
         // Get challenge page HTML
         (Method::GET, "/aegis/challenge/page") => {
-            let challenge = api.challenge_manager.issue_challenge(&client_ip, ChallengeType::Managed).await;
+            // SECURITY FIX (X2.1): Handle challenge creation errors
+            let challenge = match api.challenge_manager.issue_challenge(&client_ip, ChallengeType::Managed).await {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Failed to issue challenge: {}", e);
+                    return Ok(Response::builder()
+                        .status(StatusCode::INTERNAL_SERVER_ERROR)
+                        .header("Content-Type", "application/json")
+                        .body(Body::from(format!(r#"{{"error":"{}"}}"#, e)))
+                        .unwrap());
+                }
+            };
             let html = api.challenge_manager.generate_challenge_page(&challenge);
 
             log::info!(
@@ -426,7 +448,7 @@ mod tests {
         let client_ip = "192.168.1.50";
 
         // First, issue a challenge
-        let challenge = manager.issue_challenge(client_ip, ChallengeType::Managed).await;
+        let challenge = manager.issue_challenge(client_ip, ChallengeType::Managed).await.unwrap();
 
         // Solve the PoW (find valid nonce)
         let mut nonce = 0u64;

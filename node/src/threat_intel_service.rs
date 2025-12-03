@@ -7,6 +7,8 @@ use tracing::{error, info, warn};
 use crate::blocklist_persistence::BlocklistPersistence;
 use crate::ebpf_loader::EbpfLoader;
 use crate::threat_intel_p2p::{P2PConfig, ThreatIntelP2P, ThreatIntelligence};
+// SECURITY FIX (X2.6): Import lock recovery utilities
+use crate::lock_utils::lock_or_recover;
 
 /// Configuration for the threat intelligence service
 #[derive(Debug, Clone)]
@@ -153,8 +155,9 @@ impl ThreatIntelService {
                     return Ok(());
                 }
 
+                // SECURITY FIX (X2.6): Use lock recovery to prevent panics
                 // Update eBPF blocklist
-                let mut ebpf = ebpf_clone.lock().unwrap();
+                let mut ebpf = lock_or_recover(&ebpf_clone, "eBPF blocklist loader");
                 ebpf.blocklist_ip(&threat.ip, threat.block_duration_secs)
                     .context("Failed to blocklist IP")?;
 
@@ -217,9 +220,10 @@ impl ThreatIntelService {
         block_duration_secs: u64,
         source_node: String,
     ) -> Result<()> {
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
         // Update local eBPF blocklist
         {
-            let mut ebpf = self.ebpf.lock().unwrap();
+            let mut ebpf = lock_or_recover(&self.ebpf, "eBPF blocklist loader");
             ebpf.blocklist_ip(&ip, block_duration_secs)
                 .context("Failed to blocklist IP locally")?;
         }
@@ -257,25 +261,29 @@ impl ThreatIntelService {
 
     /// Get current blocklist from eBPF
     pub fn get_blocklist(&self) -> Result<Vec<(String, u64)>> {
-        let ebpf = self.ebpf.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let ebpf = lock_or_recover(&self.ebpf, "eBPF blocklist loader");
         ebpf.get_blocklist()
     }
 
     /// Remove IP from blocklist
     pub fn remove_from_blocklist(&self, ip: &str) -> Result<()> {
-        let mut ebpf = self.ebpf.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let mut ebpf = lock_or_recover(&self.ebpf, "eBPF blocklist loader");
         ebpf.remove_from_blocklist(ip)
     }
 
     /// Check if IP is blocklisted
     pub fn is_blocklisted(&self, ip: &str) -> Result<bool> {
-        let ebpf = self.ebpf.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let ebpf = lock_or_recover(&self.ebpf, "eBPF blocklist loader");
         ebpf.is_blocklisted(ip)
     }
 
     /// Get eBPF statistics
     pub fn get_stats(&self) -> Result<crate::ebpf_loader::DDoSStats> {
-        let ebpf = self.ebpf.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let ebpf = lock_or_recover(&self.ebpf, "eBPF blocklist loader");
         ebpf.get_stats()
     }
 }

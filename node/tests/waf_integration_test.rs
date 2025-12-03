@@ -1,4 +1,4 @@
-use aegis_node::waf::{AegisWaf, WafAction, WafConfig, Severity};
+use aegis_node::waf::{AegisWaf, WafAction, WafConfig, Severity, OversizedBodyAction, DEFAULT_MAX_INSPECTION_SIZE};
 use hyper::{Body, Client, Request, StatusCode};
 use std::net::SocketAddr;
 use tokio::time::{sleep, Duration};
@@ -39,6 +39,8 @@ async fn test_waf_blocks_sql_injection() {
         min_severity: Severity::Warning,
         default_action: WafAction::Block,
         category_actions: std::collections::HashMap::new(),
+        max_inspection_size: DEFAULT_MAX_INSPECTION_SIZE,
+        oversized_body_action: OversizedBodyAction::Skip,
     };
 
     let waf = AegisWaf::new(waf_config);
@@ -183,6 +185,8 @@ async fn test_waf_logging_mode() {
         min_severity: Severity::Warning,
         default_action: WafAction::Log,  // Log instead of block
         category_actions: std::collections::HashMap::new(),
+        max_inspection_size: DEFAULT_MAX_INSPECTION_SIZE,
+        oversized_body_action: OversizedBodyAction::Skip,
     };
 
     let waf = AegisWaf::new(waf_config);
@@ -206,6 +210,8 @@ async fn test_waf_disabled_mode() {
         min_severity: Severity::Warning,
         default_action: WafAction::Block,
         category_actions: std::collections::HashMap::new(),
+        max_inspection_size: DEFAULT_MAX_INSPECTION_SIZE,
+        oversized_body_action: OversizedBodyAction::Skip,
     };
 
     let waf = AegisWaf::new(waf_config);
@@ -232,6 +238,8 @@ async fn test_waf_category_specific_actions() {
         min_severity: Severity::Info,  // Catch everything
         default_action: WafAction::Block,
         category_actions,
+        max_inspection_size: DEFAULT_MAX_INSPECTION_SIZE,
+        oversized_body_action: OversizedBodyAction::Skip,
     };
 
     let waf = AegisWaf::new(waf_config);
@@ -254,6 +262,8 @@ async fn test_waf_severity_thresholds() {
         min_severity: Severity::Critical,
         default_action: WafAction::Block,
         category_actions: std::collections::HashMap::new(),
+        max_inspection_size: DEFAULT_MAX_INSPECTION_SIZE,
+        oversized_body_action: OversizedBodyAction::Skip,
     };
 
     let waf = AegisWaf::new(waf_config);

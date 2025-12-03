@@ -174,10 +174,11 @@ pub mod staking {
         let new_total_stake = stake_account.staked_amount;
 
         let cpi_program = ctx.accounts.registry_program.to_account_info();
+        // SECURITY FIX (X1.3): Use staking_authority PDA field name (matches registry's UpdateStake)
         let cpi_accounts = registry::cpi::accounts::UpdateStake {
             registry_config: ctx.accounts.registry_config.to_account_info(),
             node_account: ctx.accounts.node_account.to_account_info(),
-            authority: ctx.accounts.staking_authority.to_account_info(),
+            staking_authority: ctx.accounts.staking_authority.to_account_info(),
         };
 
         // Sign with staking program PDA
@@ -305,7 +306,7 @@ pub mod staking {
         let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
             registry_config: ctx.accounts.registry_config.to_account_info(),
             node_account: ctx.accounts.node_account.to_account_info(),
-            authority: ctx.accounts.staking_authority.to_account_info(),
+            staking_authority: ctx.accounts.staking_authority.to_account_info(),
         };
 
         // Sign with staking program PDA
@@ -522,7 +523,7 @@ pub mod staking {
         let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
             registry_config: ctx.accounts.registry_config.to_account_info(),
             node_account: ctx.accounts.node_account.to_account_info(),
-            authority: ctx.accounts.staking_authority.to_account_info(),
+            staking_authority: ctx.accounts.staking_authority.to_account_info(),
         };
 
         let staking_seeds = &[
@@ -659,7 +660,7 @@ pub mod staking {
         let registry_cpi_accounts = registry::cpi::accounts::UpdateStake {
             registry_config: ctx.accounts.registry_config.to_account_info(),
             node_account: ctx.accounts.node_account.to_account_info(),
-            authority: ctx.accounts.staking_authority.to_account_info(),
+            staking_authority: ctx.accounts.staking_authority.to_account_info(),
         };
 
         // Sign with staking program PDA

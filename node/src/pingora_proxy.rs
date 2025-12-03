@@ -287,7 +287,21 @@ impl AegisProxy {
         client_ip: &str,
     ) -> Result<bool> {
         // Issue a new challenge
-        let challenge = challenge_manager.issue_challenge(client_ip, ChallengeType::Managed).await;
+        // SECURITY FIX (X2.1): Handle challenge creation errors
+        let challenge = match challenge_manager.issue_challenge(client_ip, ChallengeType::Managed).await {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("Failed to issue challenge: {}", e);
+                // Return 500 error if challenge generation fails
+                let mut header = pingora::http::ResponseHeader::build(500, Some(1))?;
+                header.insert_header("Content-Type", "text/plain")?;
+                session.write_response_header(Box::new(header), false).await?;
+                session
+                    .write_response_body(Some(Bytes::from("Internal Server Error")), true)
+                    .await?;
+                return Ok(true);
+            }
+        };
 
         // Generate challenge page HTML
         let challenge_page = challenge_manager.generate_challenge_page(&challenge);

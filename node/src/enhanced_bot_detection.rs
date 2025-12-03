@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 use crate::bot_management::{BotAction, BotManager, BotMetrics, BotPolicy, BotVerdict};
+// SECURITY FIX (X2.6): Import lock recovery utilities
+use crate::lock_utils::lock_or_recover;
 use crate::tls_fingerprint::{
     ClientType, TlsAnalysisResult, TlsFingerprintAnalyzer, TlsFingerprint, TlsSuspicionLevel,
 };
@@ -406,7 +408,8 @@ impl EnhancedBotDetector {
 
     /// Get current metrics
     pub fn get_metrics(&self) -> EnhancedBotMetrics {
-        self.metrics.lock().unwrap().clone()
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        lock_or_recover(&self.metrics, "enhanced bot metrics").clone()
     }
 
     /// Reset metrics

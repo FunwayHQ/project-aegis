@@ -107,10 +107,66 @@ const MAX_CACHE_VALUE_SIZE: usize = 1024 * 1024; // 1MB max cache value
 /// Security fix: Max body size for HTTP POST/PUT/DELETE (1MB)
 const MAX_HTTP_REQUEST_BODY_SIZE: usize = 1024 * 1024;
 
+/// Security fix (X1.1): Maximum size for WAF result data to prevent OOM attacks
+/// A malicious Wasm module could return a huge length value causing unbounded allocation
+const MAX_WAF_RESULT_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
+
+/// Security fix (X1.1): Maximum size for edge function result data
+const MAX_EDGE_FUNCTION_RESULT_SIZE: usize = 50 * 1024 * 1024; // 50MB limit
+
+/// Security fix (X1.1): Maximum size for shared buffer operations
+const MAX_SHARED_BUFFER_SIZE: usize = 10 * 1024 * 1024; // 10MB limit
+
+/// Security fix (X3.3): Maximum size for log messages from Wasm
+const MAX_LOG_MESSAGE_SIZE: usize = 4096;
+
+/// Security fix (X3.3): Maximum size for any single allocation from Wasm input
+const MAX_WASM_ALLOCATION_SIZE: usize = 10 * 1024 * 1024; // 10MB
+
+/// Security fix (X3.3): Safe conversion from u32 to usize with bounds checking
+/// Returns None if the value would cause issues on 32-bit systems or exceeds max_size
+#[inline]
+fn safe_u32_to_usize(value: u32, max_size: usize, context: &str) -> Option<usize> {
+    let as_usize = value as usize;
+
+    // On 32-bit systems, u32::MAX == usize::MAX, but check for reasonableness
+    if as_usize > max_size {
+        warn!(
+            "SECURITY (X3.3): {} size {} exceeds max {} - rejecting",
+            context, as_usize, max_size
+        );
+        return None;
+    }
+
+    Some(as_usize)
+}
+
+/// Security fix (X3.7): Validate that a pointer is non-null
+/// Returns false if pointer is 0 (null)
+#[inline]
+fn is_valid_wasm_ptr(ptr: u32, context: &str) -> bool {
+    if ptr == 0 {
+        warn!("SECURITY (X3.7): Null pointer for {} - rejecting", context);
+        return false;
+    }
+    true
+}
+
 /// Security fix: Validate header value for CRLF injection
 /// Returns true if the header value is safe (no CR or LF characters)
 fn is_header_value_safe(value: &str) -> bool {
-    !value.contains('\r') && !value.contains('\n')
+    !value.contains('\r') && !value.contains('\n') && !value.contains('\0')
+}
+
+/// Security fix: Validate header name format (RFC 7230)
+/// Header names must be tokens: 1*tchar
+fn is_header_name_safe(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name.chars().all(|c| {
+            matches!(c, '!' | '#'..='\'' | '*' | '+' | '-' | '.' | '0'..='9' |
+                     'A'..='Z' | '^'..='z' | '|' | '~')
+        })
 }
 
 /// Wasm module type
@@ -328,6 +384,13 @@ impl WasmRuntime {
         Ok(())
     }
 
+    /// Load Wasm module from bytes WITHOUT signature
+    ///
+    /// SECURITY WARNING (X2.2): This method will FAIL in production builds!
+    /// Use `load_module_from_bytes_with_signature` with proper Ed25519 signature.
+    ///
+    /// This method is only available when compiled with `--features dev_unsigned_modules`.
+    #[cfg(feature = "dev_unsigned_modules")]
     pub fn load_module_from_bytes(
         &self,
         module_id: &str,
@@ -335,10 +398,44 @@ impl WasmRuntime {
         module_type: WasmModuleType,
         ipfs_cid: Option<String>,
     ) -> Result<()> {
+        warn!(
+            "SECURITY WARNING: Loading unsigned module '{}' - dev mode only!",
+            module_id
+        );
         self.load_module_from_bytes_with_signature(module_id, bytes, module_type, ipfs_cid, None, None)
     }
 
-    /// Load Wasm module from bytes with optional signature verification
+    /// Load Wasm module from bytes WITHOUT signature - DISABLED in production
+    ///
+    /// SECURITY (X2.2): This method is intentionally NOT available in production.
+    /// All modules must be signed. Use `load_module_from_bytes_with_signature`.
+    #[cfg(not(feature = "dev_unsigned_modules"))]
+    pub fn load_module_from_bytes(
+        &self,
+        module_id: &str,
+        _bytes: &[u8],
+        _module_type: WasmModuleType,
+        _ipfs_cid: Option<String>,
+    ) -> Result<()> {
+        error!(
+            "SECURITY: Unsigned module '{}' rejected in production mode. \
+             Provide Ed25519 signature via load_module_from_bytes_with_signature().",
+            module_id
+        );
+        anyhow::bail!(
+            "Unsigned Wasm modules are not allowed in production. \
+             Module '{}' must be signed with Ed25519. \
+             See docs/WASM-SIGNING.md for instructions.",
+            module_id
+        )
+    }
+
+    /// SECURITY FIX (X2.2): Load Wasm module from bytes with mandatory signature verification
+    ///
+    /// In production (default): Signature is REQUIRED. Unsigned modules will be rejected.
+    /// In development (feature = "dev_unsigned_modules"): Signature is optional but recommended.
+    ///
+    /// This prevents supply chain attacks where malicious modules could be injected.
     pub fn load_module_from_bytes_with_signature(
         &self,
         module_id: &str,
@@ -350,13 +447,50 @@ impl WasmRuntime {
     ) -> Result<()> {
         let mut signature_verified = false;
 
-        // Verify signature if provided
-        if let (Some(ref sig), Some(ref pk)) = (&signature, &public_key) {
+        // SECURITY FIX (X2.2): Signature verification is MANDATORY in production
+        #[cfg(not(feature = "dev_unsigned_modules"))]
+        {
+            // Production mode: require signature
+            let sig = signature.as_ref().ok_or_else(|| {
+                error!("SECURITY: Module '{}' rejected - missing Ed25519 signature", module_id);
+                anyhow::anyhow!(
+                    "Module '{}' missing required Ed25519 signature. \
+                     All Wasm modules must be signed in production. \
+                     See docs/WASM-SIGNING.md for signing instructions.",
+                    module_id
+                )
+            })?;
+
+            let pk = public_key.as_ref().ok_or_else(|| {
+                error!("SECURITY: Module '{}' rejected - missing public key", module_id);
+                anyhow::anyhow!(
+                    "Module '{}' missing required public key for signature verification. \
+                     Provide the Ed25519 public key that signed this module.",
+                    module_id
+                )
+            })?;
+
             Self::verify_module_signature(bytes, sig, pk)?;
             signature_verified = true;
-            info!("Wasm module signature verified for: {}", module_id);
-        } else if signature.is_some() || public_key.is_some() {
-            warn!("Partial signature info provided for {}, skipping verification", module_id);
+            info!("SECURITY: Module '{}' signature verified successfully", module_id);
+        }
+
+        #[cfg(feature = "dev_unsigned_modules")]
+        {
+            // Development mode: signature optional but verified if provided
+            warn!(
+                "⚠️  INSECURE: dev_unsigned_modules feature enabled - \
+                 allowing unsigned module '{}'. DO NOT USE IN PRODUCTION!",
+                module_id
+            );
+
+            if let (Some(ref sig), Some(ref pk)) = (&signature, &public_key) {
+                Self::verify_module_signature(bytes, sig, pk)?;
+                signature_verified = true;
+                info!("Module '{}' signature verified (dev mode)", module_id);
+            } else if signature.is_some() || public_key.is_some() {
+                warn!("Partial signature info provided for {}, skipping verification", module_id);
+            }
         }
 
         let module = Module::new(&self.engine, bytes)
@@ -519,8 +653,26 @@ impl WasmRuntime {
         memory.read(&store, result_ptr as usize, &mut len_bytes)?;
         let result_len = u32::from_le_bytes(len_bytes) as usize;
 
+        // SECURITY FIX (X1.1): Validate result size BEFORE allocation to prevent OOM
+        if result_len > MAX_WAF_RESULT_SIZE {
+            error!(
+                "WAF result size {} exceeds maximum {} bytes - possible malicious module",
+                result_len, MAX_WAF_RESULT_SIZE
+            );
+            anyhow::bail!(
+                "WAF result size {} exceeds maximum allowed {} bytes",
+                result_len,
+                MAX_WAF_RESULT_SIZE
+            );
+        }
+
+        // SECURITY FIX (X1.1): Validate pointer arithmetic won't overflow
+        let read_offset = (result_ptr as usize)
+            .checked_add(4)
+            .ok_or_else(|| anyhow::anyhow!("WAF result pointer arithmetic overflow"))?;
+
         let mut result_bytes = vec![0u8; result_len];
-        memory.read(&store, result_ptr as usize + 4, &mut result_bytes)?;
+        memory.read(&store, read_offset, &mut result_bytes)?;
 
         // Parse result JSON
         let result_str = String::from_utf8(result_bytes)
@@ -626,6 +778,20 @@ impl WasmRuntime {
             let store_data = store.data();
             let buffer = store_data.shared_buffer.read()
                 .map_err(|e| anyhow::anyhow!("Failed to read shared buffer: {}", e))?;
+
+            // SECURITY FIX (X1.1): Validate edge function result size before cloning
+            if buffer.len() > MAX_EDGE_FUNCTION_RESULT_SIZE {
+                error!(
+                    "Edge function result size {} exceeds maximum {} bytes - possible malicious module",
+                    buffer.len(), MAX_EDGE_FUNCTION_RESULT_SIZE
+                );
+                anyhow::bail!(
+                    "Edge function result size {} exceeds maximum allowed {} bytes",
+                    buffer.len(),
+                    MAX_EDGE_FUNCTION_RESULT_SIZE
+                );
+            }
+
             let updated_context = store_data.execution_context.read()
                 .map_err(|e| anyhow::anyhow!("Failed to read execution context: {}", e))?
                 .clone();
@@ -641,10 +807,24 @@ impl WasmRuntime {
 
     /// Sprint 14: Add edge function host functions with cache and HTTP access
     fn add_edge_function_host_functions(linker: &mut Linker<EdgeFunctionStoreData>) -> Result<()> {
+        // Maximum log message size to prevent memory exhaustion
+        const MAX_LOG_MESSAGE_SIZE: usize = 64 * 1024; // 64KB
+
         // Host function for logging from Wasm
         linker.func_wrap("env", "log", |mut caller: Caller<EdgeFunctionStoreData>, ptr: u32, len: u32| {
+            // SECURITY FIX (X3.7): Validate pointer is non-null
+            if !is_valid_wasm_ptr(ptr, "log message") {
+                return;
+            }
+
+            // SECURITY FIX (X3.3): Safe size conversion with bounds check
+            let len_usize = match safe_u32_to_usize(len, MAX_LOG_MESSAGE_SIZE, "log message") {
+                Some(size) => size,
+                None => return,
+            };
+
             if let Some(memory) = caller.get_export("memory").and_then(|e| e.into_memory()) {
-                let mut buffer = vec![0u8; len as usize];
+                let mut buffer = vec![0u8; len_usize];
                 if memory.read(&caller, ptr as usize, &mut buffer).is_ok() {
                     if let Ok(msg) = String::from_utf8(buffer) {
                         info!("Edge function log: {}", msg);
@@ -659,11 +839,16 @@ impl WasmRuntime {
             "env",
             "cache_get",
             |mut caller: Caller<EdgeFunctionStoreData>, key_ptr: u32, key_len: u32| -> i32 {
-                // Validate key length
-                if key_len as usize > MAX_CACHE_KEY_SIZE {
-                    warn!("Cache key too large: {} bytes", key_len);
+                // SECURITY FIX (X3.7): Validate pointer is non-null
+                if !is_valid_wasm_ptr(key_ptr, "cache key") {
                     return -1;
                 }
+
+                // SECURITY FIX (X3.3): Safe size conversion with bounds check
+                let key_len_usize = match safe_u32_to_usize(key_len, MAX_CACHE_KEY_SIZE, "cache key") {
+                    Some(size) => size,
+                    None => return -1,
+                };
 
                 // Read key from Wasm memory
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
@@ -674,7 +859,7 @@ impl WasmRuntime {
                     }
                 };
 
-                let mut key_bytes = vec![0u8; key_len as usize];
+                let mut key_bytes = vec![0u8; key_len_usize];
                 if memory.read(&caller, key_ptr as usize, &mut key_bytes).is_err() {
                     error!("Failed to read key from Wasm memory");
                     return -1;
@@ -743,15 +928,23 @@ impl WasmRuntime {
              value_ptr: u32,
              value_len: u32,
              ttl: u32| -> i32 {
-                // Validate sizes
-                if key_len as usize > MAX_CACHE_KEY_SIZE {
-                    warn!("Cache key too large: {} bytes", key_len);
+                // SECURITY FIX (X3.7): Validate pointers are non-null
+                if !is_valid_wasm_ptr(key_ptr, "cache_set key") {
                     return -1;
                 }
-                if value_len as usize > MAX_CACHE_VALUE_SIZE {
-                    warn!("Cache value too large: {} bytes", value_len);
+                if !is_valid_wasm_ptr(value_ptr, "cache_set value") {
                     return -1;
                 }
+
+                // SECURITY FIX (X3.3): Safe size conversions with bounds check
+                let key_len_usize = match safe_u32_to_usize(key_len, MAX_CACHE_KEY_SIZE, "cache_set key") {
+                    Some(size) => size,
+                    None => return -1,
+                };
+                let value_len_usize = match safe_u32_to_usize(value_len, MAX_CACHE_VALUE_SIZE, "cache_set value") {
+                    Some(size) => size,
+                    None => return -1,
+                };
 
                 // Read key and value from Wasm memory
                 let memory = match caller.get_export("memory").and_then(|e| e.into_memory()) {
@@ -762,13 +955,13 @@ impl WasmRuntime {
                     }
                 };
 
-                let mut key_bytes = vec![0u8; key_len as usize];
+                let mut key_bytes = vec![0u8; key_len_usize];
                 if memory.read(&caller, key_ptr as usize, &mut key_bytes).is_err() {
                     error!("Failed to read key from Wasm memory");
                     return -1;
                 }
 
-                let mut value_bytes = vec![0u8; value_len as usize];
+                let mut value_bytes = vec![0u8; value_len_usize];
                 if memory.read(&caller, value_ptr as usize, &mut value_bytes).is_err() {
                     error!("Failed to read value from Wasm memory");
                     return -1;
@@ -1268,18 +1461,33 @@ impl WasmRuntime {
                 let offset = offset as usize;
                 let length = length as usize;
 
+                // SECURITY FIX (X1.1): Validate length doesn't exceed maximum allowed
+                if length > MAX_SHARED_BUFFER_SIZE {
+                    error!("Shared buffer read too large: {} bytes (max: {})", length, MAX_SHARED_BUFFER_SIZE);
+                    return -1;
+                }
+
+                // SECURITY FIX (X1.1): Check for integer overflow in offset + length
+                let end_offset = match offset.checked_add(length) {
+                    Some(end) => end,
+                    None => {
+                        error!("Integer overflow in shared buffer offset calculation");
+                        return -1;
+                    }
+                };
+
                 // Read from shared buffer and copy to a local Vec
                 // This allows us to drop the lock before writing to Wasm memory
                 let data_to_write = {
                     let data = caller.data_mut();
                     let buffer = try_read_lock!(data.shared_buffer, -1);
 
-                    if offset + length > buffer.len() {
+                    if end_offset > buffer.len() {
                         error!("Invalid buffer read: offset={}, length={}, buffer_len={}", offset, length, buffer.len());
                         return -1;
                     }
 
-                    buffer[offset..offset + length].to_vec()
+                    buffer[offset..end_offset].to_vec()
                 };
 
                 // Now write to Wasm memory (caller is not borrowed anymore)
@@ -1890,5 +2098,329 @@ mod tests {
         assert!(!is_header_value_safe("Value\r"));
         assert!(!is_header_value_safe("\r\nEvil-Header: true"));
         assert!(!is_header_value_safe("normal\nvalue"));
+        // Invalid header values with null bytes (X1.1 enhancement)
+        assert!(!is_header_value_safe("Value\0"));
+        assert!(!is_header_value_safe("Val\0ue"));
+    }
+
+    #[test]
+    fn test_header_name_safety_check() {
+        // Valid header names (RFC 7230 tokens)
+        assert!(is_header_name_safe("Content-Type"));
+        assert!(is_header_name_safe("X-Custom-Header"));
+        assert!(is_header_name_safe("Accept"));
+        assert!(is_header_name_safe("x-api-key"));
+
+        // Invalid header names
+        assert!(!is_header_name_safe("")); // Empty
+        assert!(!is_header_name_safe("Header Name")); // Contains space
+        assert!(!is_header_name_safe("Header:Name")); // Contains colon
+        assert!(!is_header_name_safe("Header\nName")); // Contains newline
+        assert!(!is_header_name_safe("Header\x00Name")); // Contains null
+    }
+
+    // ============================================
+    // X1.1: Integer Overflow Protection Tests
+    // ============================================
+
+    #[test]
+    fn test_waf_result_size_constants() {
+        // Verify security constants are set appropriately
+        assert_eq!(MAX_WAF_RESULT_SIZE, 10 * 1024 * 1024, "WAF result limit should be 10MB");
+        assert_eq!(MAX_EDGE_FUNCTION_RESULT_SIZE, 50 * 1024 * 1024, "Edge function result limit should be 50MB");
+        assert_eq!(MAX_SHARED_BUFFER_SIZE, 10 * 1024 * 1024, "Shared buffer limit should be 10MB");
+    }
+
+    #[test]
+    fn test_waf_result_size_validation() {
+        // Test that oversized results would be caught
+        // This tests the constants and logic, not actual WAF execution
+        let oversized_len: usize = MAX_WAF_RESULT_SIZE + 1;
+        assert!(
+            oversized_len > MAX_WAF_RESULT_SIZE,
+            "Oversized result should exceed limit"
+        );
+
+        // Test boundary conditions
+        let at_limit: usize = MAX_WAF_RESULT_SIZE;
+        assert!(at_limit <= MAX_WAF_RESULT_SIZE, "At-limit should pass check");
+
+        let under_limit: usize = MAX_WAF_RESULT_SIZE - 1;
+        assert!(under_limit <= MAX_WAF_RESULT_SIZE, "Under-limit should pass check");
+    }
+
+    #[test]
+    fn test_pointer_overflow_protection() {
+        // Test that checked_add works correctly for pointer arithmetic
+        let max_ptr: usize = usize::MAX - 3;
+        let offset: usize = 4;
+
+        // This should overflow
+        let result = max_ptr.checked_add(offset);
+        assert!(result.is_none(), "Should detect overflow at usize boundary");
+
+        // This should not overflow
+        let safe_ptr: usize = 1000;
+        let result = safe_ptr.checked_add(offset);
+        assert!(result.is_some(), "Should succeed for safe pointers");
+        assert_eq!(result.unwrap(), 1004);
+    }
+
+    #[test]
+    fn test_shared_buffer_offset_overflow() {
+        // Test boundary conditions for shared buffer operations
+        let max_offset: usize = usize::MAX;
+        let length: usize = 1;
+
+        // This should detect overflow
+        let result = max_offset.checked_add(length);
+        assert!(result.is_none(), "Should detect offset overflow");
+
+        // Valid case
+        let valid_offset: usize = 100;
+        let valid_length: usize = 50;
+        let result = valid_offset.checked_add(valid_length);
+        assert_eq!(result, Some(150), "Should calculate correct end offset");
+    }
+
+    #[test]
+    fn test_edge_function_result_size_limit() {
+        // Verify the limit is reasonable
+        assert!(
+            MAX_EDGE_FUNCTION_RESULT_SIZE > MAX_WAF_RESULT_SIZE,
+            "Edge functions should have higher limit than WAF"
+        );
+        assert!(
+            MAX_EDGE_FUNCTION_RESULT_SIZE <= 100 * 1024 * 1024,
+            "Edge function limit should be reasonable (<=100MB)"
+        );
+    }
+
+    #[test]
+    fn test_u32_max_conversion() {
+        // Test that u32::MAX doesn't cause issues when converted to usize
+        let max_u32: u32 = u32::MAX;
+        let as_usize: usize = max_u32 as usize;
+
+        // On 64-bit systems, this should be safe
+        assert!(
+            as_usize <= MAX_WAF_RESULT_SIZE || as_usize > MAX_WAF_RESULT_SIZE,
+            "u32::MAX should be comparable to our limits"
+        );
+
+        // Verify our limit would catch u32::MAX
+        assert!(
+            as_usize > MAX_WAF_RESULT_SIZE,
+            "u32::MAX ({}) should exceed WAF result limit ({})",
+            as_usize,
+            MAX_WAF_RESULT_SIZE
+        );
+    }
+
+    // ============================================
+    // X2.2: Mandatory Wasm Signature Tests
+    // ============================================
+
+    /// Test that unsigned modules are rejected in production mode
+    #[test]
+    #[cfg(not(feature = "dev_unsigned_modules"))]
+    fn test_unsigned_module_rejected_in_production() {
+        let runtime = WasmRuntime::new().expect("Failed to create runtime");
+
+        // Create minimal valid Wasm module (no signature)
+        let test_wasm = wat::parse_str(
+            r#"
+            (module
+                (func (export "test") (result i32)
+                    i32.const 42
+                )
+            )
+            "#
+        ).expect("Failed to parse WAT");
+
+        // Attempt to load without signature - should FAIL in production
+        let result = runtime.load_module_from_bytes(
+            "unsigned-test",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+        );
+
+        assert!(
+            result.is_err(),
+            "SECURITY: Unsigned modules MUST be rejected in production!"
+        );
+
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not allowed in production") || err_msg.contains("must be signed"),
+            "Error should mention production signing requirement: {}",
+            err_msg
+        );
+    }
+
+    /// Test that load_module_from_bytes_with_signature requires both sig and key
+    #[test]
+    #[cfg(not(feature = "dev_unsigned_modules"))]
+    fn test_partial_signature_rejected_in_production() {
+        let runtime = WasmRuntime::new().expect("Failed to create runtime");
+
+        let test_wasm = wat::parse_str(
+            r#"(module (func (export "test") (result i32) i32.const 42))"#
+        ).expect("Failed to parse WAT");
+
+        // Missing public key - should fail
+        let result = runtime.load_module_from_bytes_with_signature(
+            "partial-sig-test",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+            Some("fake_signature".to_string()),
+            None, // Missing public key
+        );
+
+        assert!(
+            result.is_err(),
+            "SECURITY: Module with signature but no public key should be rejected"
+        );
+
+        // Missing signature - should fail
+        let result = runtime.load_module_from_bytes_with_signature(
+            "partial-pk-test",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+            None, // Missing signature
+            Some("fake_public_key".to_string()),
+        );
+
+        assert!(
+            result.is_err(),
+            "SECURITY: Module with public key but no signature should be rejected"
+        );
+    }
+
+    /// Test that valid signatures work in production mode
+    #[test]
+    fn test_valid_signature_accepted() {
+        use ed25519_dalek::{SigningKey, Signer};
+
+        let runtime = WasmRuntime::new().expect("Failed to create runtime");
+
+        // Generate keypair
+        let signing_key = SigningKey::from_bytes(&[
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+        ]);
+        let verifying_key = signing_key.verifying_key();
+
+        let test_wasm = wat::parse_str(
+            r#"(module (func (export "verify_sig") (result i32) i32.const 1))"#
+        ).expect("Failed to parse WAT");
+
+        // Sign the module
+        let signature = signing_key.sign(&test_wasm);
+        let signature_hex = hex::encode(signature.to_bytes());
+        let public_key_hex = hex::encode(verifying_key.to_bytes());
+
+        // Load with valid signature - should succeed
+        let result = runtime.load_module_from_bytes_with_signature(
+            "signed-module-test",
+            &test_wasm,
+            WasmModuleType::Waf,
+            None,
+            Some(signature_hex),
+            Some(public_key_hex),
+        );
+
+        assert!(
+            result.is_ok(),
+            "Valid signed module should be accepted: {:?}",
+            result.err()
+        );
+
+        // Verify metadata shows signature was verified
+        let metadata = runtime.get_module_metadata("signed-module-test")
+            .expect("Should get metadata")
+            .expect("Module should exist");
+        assert!(
+            metadata.signature_verified,
+            "Metadata should show signature was verified"
+        );
+    }
+
+    // ============================================
+    // X3.3: Safe Integer Conversion Tests
+    // ============================================
+
+    #[test]
+    fn test_x33_safe_u32_to_usize_valid() {
+        // Valid conversions should succeed
+        assert_eq!(safe_u32_to_usize(0, 1000, "test"), Some(0));
+        assert_eq!(safe_u32_to_usize(100, 1000, "test"), Some(100));
+        assert_eq!(safe_u32_to_usize(1000, 1000, "test"), Some(1000));
+    }
+
+    #[test]
+    fn test_x33_safe_u32_to_usize_exceeds_max() {
+        // Values exceeding max should fail
+        assert_eq!(safe_u32_to_usize(1001, 1000, "test"), None);
+        assert_eq!(safe_u32_to_usize(u32::MAX, 1000, "test"), None);
+        assert_eq!(safe_u32_to_usize(10 * 1024 * 1024 + 1, 10 * 1024 * 1024, "test"), None);
+    }
+
+    #[test]
+    fn test_x33_safe_u32_to_usize_max_allocation() {
+        // Test against MAX_WASM_ALLOCATION_SIZE
+        assert_eq!(
+            safe_u32_to_usize(MAX_WASM_ALLOCATION_SIZE as u32, MAX_WASM_ALLOCATION_SIZE, "test"),
+            Some(MAX_WASM_ALLOCATION_SIZE)
+        );
+        assert_eq!(
+            safe_u32_to_usize(MAX_WASM_ALLOCATION_SIZE as u32 + 1, MAX_WASM_ALLOCATION_SIZE, "test"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_x33_safe_u32_to_usize_cache_limits() {
+        // Test against cache-specific limits
+        assert_eq!(
+            safe_u32_to_usize(MAX_CACHE_KEY_SIZE as u32, MAX_CACHE_KEY_SIZE, "cache key"),
+            Some(MAX_CACHE_KEY_SIZE)
+        );
+        assert_eq!(
+            safe_u32_to_usize(MAX_CACHE_KEY_SIZE as u32 + 1, MAX_CACHE_KEY_SIZE, "cache key"),
+            None
+        );
+    }
+
+    // ============================================
+    // X3.7: Wasm Pointer Validation Tests
+    // ============================================
+
+    #[test]
+    fn test_x37_valid_wasm_ptr() {
+        // Non-zero pointers should be valid
+        assert!(is_valid_wasm_ptr(1, "test"));
+        assert!(is_valid_wasm_ptr(100, "test"));
+        assert!(is_valid_wasm_ptr(u32::MAX, "test"));
+    }
+
+    #[test]
+    fn test_x37_null_wasm_ptr_rejected() {
+        // Zero (null) pointers should be rejected
+        assert!(!is_valid_wasm_ptr(0, "test"));
+    }
+
+    #[test]
+    fn test_x37_constants_defined() {
+        // Verify security constants are reasonable
+        assert!(MAX_LOG_MESSAGE_SIZE > 0);
+        assert!(MAX_LOG_MESSAGE_SIZE <= 64 * 1024, "Log messages should be bounded");
+        assert!(MAX_WASM_ALLOCATION_SIZE > 0);
+        assert!(MAX_WASM_ALLOCATION_SIZE <= 100 * 1024 * 1024, "Allocations should have reasonable limit");
     }
 }

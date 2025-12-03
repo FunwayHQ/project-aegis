@@ -37,6 +37,190 @@ const TOKEN_TTL: Duration = Duration::from_secs(900); // 15 minutes
 #[allow(dead_code)]
 const TOKEN_MAX_TTL: Duration = Duration::from_secs(86400); // 24 hours
 
+/// SECURITY FIX (X2.1): Helper to get current Unix timestamp safely
+/// Returns an error if system time is before UNIX epoch (extremely rare but possible)
+fn current_unix_timestamp() -> Result<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .map_err(|e| anyhow!("System time before UNIX epoch: {}", e))
+}
+
+/// SECURITY FIX (X2.3): Serialize to canonical JSON (sorted keys, no whitespace)
+///
+/// This ensures consistent JSON output for signature verification,
+/// regardless of struct field ordering in different Rust versions or platforms.
+fn canonical_json<T: Serialize>(value: &T) -> Result<String> {
+    // First serialize to a Value so we can sort keys
+    let json_value = serde_json::to_value(value)
+        .map_err(|e| anyhow!("JSON serialization failed: {}", e))?;
+
+    // Sort keys recursively and serialize
+    let sorted = sort_json_keys(&json_value);
+    serde_json::to_string(&sorted)
+        .map_err(|e| anyhow!("JSON canonical serialization failed: {}", e))
+}
+
+/// Recursively sort JSON object keys
+fn sort_json_keys(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::Object(map) => {
+            let mut sorted: serde_json::Map<String, serde_json::Value> =
+                serde_json::Map::new();
+            let mut keys: Vec<_> = map.keys().collect();
+            keys.sort();
+            for key in keys {
+                sorted.insert(key.clone(), sort_json_keys(&map[key]));
+            }
+            serde_json::Value::Object(sorted)
+        }
+        serde_json::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(sort_json_keys).collect())
+        }
+        _ => value.clone(),
+    }
+}
+
+/// Subnet mask level for IP binding flexibility
+/// SECURITY FIX (X3.5): More granular subnet options than just /24
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubnetMask {
+    /// Exact IP match (most secure) - /32 for IPv4
+    Exact,
+    /// Very narrow subnet - /30 (4 IPs) - minimal flexibility
+    Narrow,
+    /// Moderate subnet - /28 (16 IPs) - for small load-balanced setups
+    Moderate,
+    /// Wide subnet - /24 (256 IPs) - LESS SECURE, use with caution
+    Wide,
+}
+
+impl SubnetMask {
+    /// Get the number of bits to use for comparison
+    pub fn prefix_bits(&self) -> u8 {
+        match self {
+            SubnetMask::Exact => 32,    // All bits must match
+            SubnetMask::Narrow => 30,   // Only 4 IPs allowed
+            SubnetMask::Moderate => 28, // 16 IPs allowed
+            SubnetMask::Wide => 24,     // 256 IPs allowed
+        }
+    }
+
+    /// Get the number of possible IPs in this subnet
+    pub fn possible_ips(&self) -> u32 {
+        match self {
+            SubnetMask::Exact => 1,
+            SubnetMask::Narrow => 4,
+            SubnetMask::Moderate => 16,
+            SubnetMask::Wide => 256,
+        }
+    }
+}
+
+/// SECURITY FIX (X2.4 + X3.5): Challenge system configuration
+///
+/// Controls security behavior for token verification, particularly IP binding.
+#[derive(Debug, Clone)]
+pub struct ChallengeConfig {
+    /// Enforce IP binding (default: true - SECURE)
+    ///
+    /// When enabled, tokens are bound to the client's IP address and will
+    /// fail verification if used from a different IP.
+    ///
+    /// Disable ONLY for mobile-first applications where IP changes are
+    /// expected and acceptable (mobile networks frequently change IPs).
+    pub enforce_ip_binding: bool,
+
+    /// SECURITY FIX (X3.5): Subnet mask for IP binding flexibility
+    ///
+    /// When enforce_ip_binding is true, this controls how strict the IP
+    /// matching is. More restrictive is more secure.
+    pub subnet_mask: SubnetMask,
+
+    /// DEPRECATED: Allow IP changes within same /24 subnet
+    /// Use `subnet_mask` instead for finer control
+    #[deprecated(since = "X3.5", note = "Use subnet_mask field instead")]
+    pub allow_subnet_changes: bool,
+}
+
+impl Default for ChallengeConfig {
+    /// SECURE DEFAULTS: IP binding is enforced with exact match
+    fn default() -> Self {
+        #[allow(deprecated)]
+        Self {
+            enforce_ip_binding: true,       // SECURITY: Bind tokens to IP by default
+            subnet_mask: SubnetMask::Exact, // SECURITY (X3.5): Exact IP match
+            allow_subnet_changes: false,    // DEPRECATED: kept for compatibility
+        }
+    }
+}
+
+impl ChallengeConfig {
+    /// SECURITY WARNING: Create a config that completely disables IP binding
+    ///
+    /// This is the LEAST secure option and should ONLY be used when:
+    /// 1. Your application is mobile-first AND
+    /// 2. IP changes during a session are acceptable AND
+    /// 3. You have other security measures in place (rate limiting, etc.)
+    ///
+    /// Consider using `load_balanced_narrow()` or `load_balanced_moderate()` instead,
+    /// which still provide some IP binding protection.
+    #[deprecated(since = "X3.5", note = "Use load_balanced_narrow() or load_balanced_moderate() for better security")]
+    pub fn mobile_permissive() -> Self {
+        #[allow(deprecated)]
+        Self {
+            enforce_ip_binding: false,
+            subnet_mask: SubnetMask::Exact, // N/A when binding disabled
+            allow_subnet_changes: false,
+        }
+    }
+
+    /// SECURITY FIX (X3.5): Config for narrow load-balanced environments (/30 = 4 IPs)
+    ///
+    /// This is the RECOMMENDED option for load-balanced setups. It allows
+    /// clients to use tokens from up to 4 IPs in the same /30 subnet.
+    pub fn load_balanced_narrow() -> Self {
+        #[allow(deprecated)]
+        Self {
+            enforce_ip_binding: true,
+            subnet_mask: SubnetMask::Narrow,
+            allow_subnet_changes: true,
+        }
+    }
+
+    /// Config for moderate load-balanced environments (/28 = 16 IPs)
+    ///
+    /// Provides more flexibility than `load_balanced_narrow()` but less
+    /// security. Use only if you have more than 4 IPs behind your load balancer.
+    pub fn load_balanced_moderate() -> Self {
+        #[allow(deprecated)]
+        Self {
+            enforce_ip_binding: true,
+            subnet_mask: SubnetMask::Moderate,
+            allow_subnet_changes: true,
+        }
+    }
+
+    /// DEPRECATED: Create a config that allows /24 subnet changes
+    /// SECURITY WARNING: /24 allows 256 different IPs - this is LESS SECURE
+    ///
+    /// Consider using `load_balanced_narrow()` or `load_balanced_moderate()` instead.
+    #[deprecated(since = "X3.5", note = "Use load_balanced_narrow() or load_balanced_moderate() for better security")]
+    pub fn allow_subnet() -> Self {
+        #[allow(deprecated)]
+        Self {
+            enforce_ip_binding: true,
+            subnet_mask: SubnetMask::Wide,
+            allow_subnet_changes: true,
+        }
+    }
+
+    /// Check if the new subnet mask field should be used
+    pub fn uses_subnet_mask(&self) -> bool {
+        self.subnet_mask != SubnetMask::Exact
+    }
+}
+
 /// Challenge types supported by the system
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,7 +321,7 @@ pub struct VerificationResult {
 /// Challenge token payload (JWT-like structure)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChallengeToken {
-    /// Token version
+    /// Token version (incremented to 2 for X2.4 subnet hash support)
     pub ver: u8,
     /// Fingerprint hash (for binding)
     pub fph: String,
@@ -151,6 +335,10 @@ pub struct ChallengeToken {
     pub exp: u64,
     /// Client IP hash (for binding)
     pub iph: String,
+    /// SECURITY FIX (X2.4): Client IP subnet hash (for relaxed binding)
+    /// Stores hash of /24 subnet (IPv4) or /64 prefix (IPv6)
+    #[serde(default)]
+    pub snh: Option<String>,
     /// Challenge type that was solved
     pub ctype: ChallengeType,
 }
@@ -173,20 +361,41 @@ pub struct ChallengeManager {
     signing_key: ed25519_dalek::SigningKey,
     /// Known bot patterns
     bot_patterns: Vec<BotPattern>,
+    /// SECURITY FIX (X2.4): Security configuration
+    config: ChallengeConfig,
 }
 
 impl ChallengeManager {
-    /// Create new challenge manager with random signing key
+    /// Create new challenge manager with random signing key and SECURE defaults
+    ///
+    /// SECURITY FIX (X2.4): Uses ChallengeConfig::default() which enforces IP binding.
     pub fn new() -> Self {
+        Self::with_config(ChallengeConfig::default())
+    }
+
+    /// Create with custom configuration
+    ///
+    /// SECURITY FIX (X2.4): Allows customizing IP binding behavior.
+    /// Use `ChallengeConfig::default()` for secure defaults.
+    /// Use `ChallengeConfig::mobile_permissive()` only for mobile apps.
+    pub fn with_config(config: ChallengeConfig) -> Self {
         use rand::RngCore;
         let mut secret_key_bytes = [0u8; 32];
         rand::thread_rng().fill_bytes(&mut secret_key_bytes);
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_key_bytes);
 
+        if !config.enforce_ip_binding {
+            log::warn!(
+                "⚠️  SECURITY WARNING: IP binding is DISABLED! \
+                 Tokens can be reused from any IP address."
+            );
+        }
+
         Self {
             challenges: Arc::new(RwLock::new(HashMap::new())),
             signing_key,
             bot_patterns: Self::default_bot_patterns(),
+            config,
         }
     }
 
@@ -196,7 +405,13 @@ impl ChallengeManager {
             challenges: Arc::new(RwLock::new(HashMap::new())),
             signing_key,
             bot_patterns: Self::default_bot_patterns(),
+            config: ChallengeConfig::default(),
         }
+    }
+
+    /// Get the current configuration
+    pub fn config(&self) -> &ChallengeConfig {
+        &self.config
     }
 
     /// Get public key for token verification
@@ -244,11 +459,12 @@ impl ChallengeManager {
     }
 
     /// Issue a new challenge
+    /// SECURITY FIX (X2.1): Now returns Result to handle timestamp errors
     pub async fn issue_challenge(
         &self,
         client_ip: &str,
         challenge_type: ChallengeType,
-    ) -> Challenge {
+    ) -> Result<Challenge> {
         use rand::Rng;
 
         // Generate random data before any await points (ThreadRng is not Send)
@@ -265,10 +481,8 @@ impl ChallengeManager {
             (id, pow_challenge)
         }; // rng dropped here, before await
 
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // SECURITY FIX (X2.1): Use safe timestamp helper
+        let now = current_unix_timestamp()?;
 
         let challenge = Challenge {
             id: id.clone(),
@@ -287,7 +501,7 @@ impl ChallengeManager {
         // Cleanup expired challenges
         challenges.retain(|_, c| c.expires_at > now);
 
-        challenge
+        Ok(challenge)
     }
 
     /// Verify a challenge solution
@@ -318,11 +532,19 @@ impl ChallengeManager {
             }
         };
 
-        // Check expiration
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // SECURITY FIX (X2.1): Check expiration with safe timestamp handling
+        let now = match current_unix_timestamp() {
+            Ok(ts) => ts,
+            Err(e) => {
+                return VerificationResult {
+                    success: false,
+                    token: None,
+                    error: Some(format!("System time error: {}", e)),
+                    score: 0,
+                    issues: vec!["system_time_error".to_string()],
+                };
+            }
+        };
 
         if now > challenge.expires_at {
             return VerificationResult {
@@ -394,19 +616,35 @@ impl ChallengeManager {
             // Generate token
             let fingerprint_hash = self.hash_fingerprint(&solution.fingerprint);
             let ip_hash = self.hash_string(client_ip);
+            // SECURITY FIX (X2.4): Store subnet hash for relaxed IP binding
+            let subnet = self.extract_subnet(client_ip);
+            let subnet_hash = self.hash_string(&subnet);
 
             let token = ChallengeToken {
-                ver: 1,
+                ver: 2, // Version 2 includes subnet hash
                 fph: fingerprint_hash,
                 pow: true,
                 score,
                 iat: now,
                 exp: now + TOKEN_TTL.as_secs(),
                 iph: ip_hash,
+                snh: Some(subnet_hash), // X2.4: Subnet hash for relaxed binding
                 ctype: challenge.challenge_type,
             };
 
-            let token_str = self.sign_token(&token);
+            // SECURITY FIX (X2.1): Handle token signing errors gracefully
+            let token_str = match self.sign_token(&token) {
+                Ok(t) => t,
+                Err(e) => {
+                    return VerificationResult {
+                        success: false,
+                        token: None,
+                        error: Some(format!("Token signing failed: {}", e)),
+                        score,
+                        issues: vec!["token_signing_error".to_string()],
+                    };
+                }
+            };
 
             VerificationResult {
                 success: true,
@@ -526,17 +764,137 @@ impl ChallengeManager {
         hex::encode(&hash[..8]) // First 8 bytes
     }
 
-    /// Sign a challenge token
-    fn sign_token(&self, token: &ChallengeToken) -> String {
+    /// SECURITY FIX (X2.4): Check if client IP is in the same subnet as the original token IP
+    ///
+    /// For IPv4: Compares first 3 octets (/24 subnet)
+    /// For IPv6: Compares first 4 segments (/64 subnet)
+    ///
+    /// This allows for some IP changes (NAT, mobile carrier changes) while still
+    /// providing meaningful security against token theft across networks.
+    fn check_subnet_match(&self, client_ip: &str, token: &ChallengeToken) -> bool {
+        // Extract subnet from client IP and compute hash
+        let client_subnet = self.extract_subnet(client_ip);
+        let client_subnet_hash = self.hash_string(&client_subnet);
+
+        // Check if token has subnet hash (version 2+ tokens)
+        match &token.snh {
+            Some(stored_subnet_hash) => {
+                // Use constant-time comparison for the subnet hash
+                let client_bytes = client_subnet_hash.as_bytes();
+                let stored_bytes = stored_subnet_hash.as_bytes();
+
+                let subnet_match = client_bytes.len() == stored_bytes.len()
+                    && client_bytes.ct_eq(stored_bytes).into();
+
+                if subnet_match {
+                    log::debug!(
+                        "Subnet match: client_ip={} is in same subnet as token origin",
+                        client_ip
+                    );
+                } else {
+                    log::debug!(
+                        "Subnet mismatch: client_ip={}, client_subnet_hash={}, token_subnet_hash={}",
+                        client_ip,
+                        client_subnet_hash,
+                        stored_subnet_hash
+                    );
+                }
+                subnet_match
+            }
+            None => {
+                // Legacy token (version 1) - no subnet hash stored
+                // Allow for backward compatibility but log warning
+                log::warn!(
+                    "Legacy token without subnet hash - allowing for backward compatibility (ip={})",
+                    client_ip
+                );
+                true
+            }
+        }
+    }
+
+    /// SECURITY FIX (X3.5): Extract subnet portion from an IP address based on configured mask
+    ///
+    /// IPv4: Applies configured SubnetMask (Exact=/32, Narrow=/30, Moderate=/28, Wide=/24)
+    /// IPv6: Always uses /64 (first 4 segments) - standard for IPv6 subnetting
+    ///
+    /// For IPv4, the subnet is extracted by masking the IP address bits according
+    /// to the prefix length, providing granular control over IP binding flexibility.
+    fn extract_subnet(&self, ip: &str) -> String {
+        if ip.contains(':') {
+            // IPv6: Take first 4 segments (/64) - standard IPv6 subnet
+            let segments: Vec<&str> = ip.split(':').collect();
+            if segments.len() >= 4 {
+                segments[..4].join(":")
+            } else {
+                ip.to_string()
+            }
+        } else {
+            // IPv4: Apply configured subnet mask
+            self.extract_ipv4_subnet(ip)
+        }
+    }
+
+    /// SECURITY FIX (X3.5): Extract IPv4 subnet based on configured mask
+    ///
+    /// This applies proper bit masking for precise subnet extraction:
+    /// - /32 (Exact): Full IP (e.g., "192.168.1.100")
+    /// - /30 (Narrow): 4 IPs (e.g., "192.168.1.100/30" -> "192.168.1.100")
+    /// - /28 (Moderate): 16 IPs (e.g., "192.168.1.100" -> "192.168.1.96")
+    /// - /24 (Wide): 256 IPs (e.g., "192.168.1.100" -> "192.168.1.0")
+    fn extract_ipv4_subnet(&self, ip: &str) -> String {
+        let prefix_bits = self.config.subnet_mask.prefix_bits();
+
+        // For exact match (/32), return the full IP
+        if prefix_bits == 32 {
+            return ip.to_string();
+        }
+
+        // Parse IPv4 octets
+        let octets: Vec<&str> = ip.split('.').collect();
+        if octets.len() != 4 {
+            log::warn!("SECURITY (X3.5): Invalid IPv4 address format: {}", ip);
+            return ip.to_string();
+        }
+
+        // Parse each octet to u8
+        let parsed: Result<Vec<u8>, _> = octets.iter().map(|o| o.parse::<u8>()).collect();
+        let bytes = match parsed {
+            Ok(b) => b,
+            Err(_) => {
+                log::warn!("SECURITY (X3.5): Failed to parse IPv4 octets: {}", ip);
+                return ip.to_string();
+            }
+        };
+
+        // Convert to u32, apply mask, convert back
+        let ip_u32 = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let mask = !((1u32 << (32 - prefix_bits)) - 1);
+        let subnet_u32 = ip_u32 & mask;
+        let subnet_bytes = subnet_u32.to_be_bytes();
+
+        // Return masked IP as subnet identifier
+        format!(
+            "{}.{}.{}.{}",
+            subnet_bytes[0], subnet_bytes[1], subnet_bytes[2], subnet_bytes[3]
+        )
+    }
+
+    /// SECURITY FIX (X2.1/X2.3): Sign a challenge token using canonical JSON
+    ///
+    /// Uses canonical JSON serialization (sorted keys) to ensure consistent
+    /// signatures across different serialization contexts/versions.
+    fn sign_token(&self, token: &ChallengeToken) -> Result<String> {
         use ed25519_dalek::Signer;
 
-        let payload = serde_json::to_string(token).unwrap();
+        // SECURITY FIX (X2.3): Use canonical JSON with sorted keys for deterministic signing
+        let payload = canonical_json(token)?;
         let payload_b64 = URL_SAFE_NO_PAD.encode(payload.as_bytes());
 
         let signature = self.signing_key.sign(payload.as_bytes());
         let sig_b64 = URL_SAFE_NO_PAD.encode(signature.to_bytes());
 
-        format!("{}.{}", payload_b64, sig_b64)
+        Ok(format!("{}.{}", payload_b64, sig_b64))
     }
 
     /// Verify and decode a challenge token
@@ -559,27 +917,56 @@ impl ChallengeManager {
 
         let token: ChallengeToken = serde_json::from_slice(&payload_bytes)?;
 
-        // Check expiration
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        // SECURITY FIX (X2.1): Check expiration with safe timestamp handling
+        let now = current_unix_timestamp()?;
 
         if now > token.exp {
             return Err(anyhow!("Token expired"));
         }
 
-        // Check IP binding (optional, can be disabled)
-        // SECURITY FIX: Use constant-time comparison for hash verification
+        // SECURITY FIX (X2.4): Enforce IP binding based on configuration
+        // Use constant-time comparison for hash verification to prevent timing attacks
         let ip_hash = self.hash_string(client_ip);
         let token_iph_bytes = token.iph.as_bytes();
         let ip_hash_bytes = ip_hash.as_bytes();
+
         // Constant-time comparison for hash values
         let ip_hash_match = token_iph_bytes.len() == ip_hash_bytes.len()
             && token_iph_bytes.ct_eq(ip_hash_bytes).into();
+
         if !ip_hash_match {
-            // Log but don't fail - IPs can change (NAT, mobile networks, etc.)
-            log::debug!("Token IP mismatch: expected {}, got {}", token.iph, ip_hash);
+            if self.config.enforce_ip_binding {
+                // Check if subnet matching is allowed (for mobile networks, NAT, etc.)
+                if self.config.allow_subnet_changes {
+                    // For subnet matching, compare first 3 octets of IPv4 or first 4 segments of IPv6
+                    let subnet_match = self.check_subnet_match(client_ip, &token);
+                    if !subnet_match {
+                        log::warn!(
+                            "SECURITY: Token IP binding failed - IP {} not in same subnet as original",
+                            client_ip
+                        );
+                        return Err(anyhow!(
+                            "Token IP binding failed: client IP not in allowed subnet"
+                        ));
+                    }
+                    log::debug!(
+                        "Token IP changed but within same subnet - allowing (ip={})",
+                        client_ip
+                    );
+                } else {
+                    // Strict IP binding - reject any IP change
+                    log::warn!(
+                        "SECURITY: Token IP binding failed - strict mode, IP {} does not match",
+                        client_ip
+                    );
+                    return Err(anyhow!(
+                        "Token IP binding failed: client IP does not match token"
+                    ));
+                }
+            } else {
+                // IP binding disabled - just log for monitoring
+                log::debug!("Token IP mismatch (binding disabled): expected hash {}, got {}", token.iph, ip_hash);
+            }
         }
 
         Ok(token)
@@ -860,7 +1247,7 @@ mod tests {
     #[tokio::test]
     async fn test_issue_challenge() {
         let manager = ChallengeManager::new();
-        let challenge = manager.issue_challenge("192.168.1.1", ChallengeType::Invisible).await;
+        let challenge = manager.issue_challenge("192.168.1.1", ChallengeType::Invisible).await.unwrap();
 
         assert!(!challenge.id.is_empty());
         assert!(!challenge.pow_challenge.is_empty());
@@ -956,7 +1343,7 @@ mod tests {
         let client_ip = "192.168.1.100";
 
         // Issue challenge
-        let challenge = manager.issue_challenge(client_ip, ChallengeType::Managed).await;
+        let challenge = manager.issue_challenge(client_ip, ChallengeType::Managed).await.unwrap();
 
         // Solve PoW (with lower difficulty for test)
         let mut nonce = 0u64;
@@ -1013,19 +1400,21 @@ mod tests {
     fn test_token_signing_and_verification() {
         let manager = ChallengeManager::new();
         let client_ip = "10.0.0.1";
+        let subnet = manager.extract_subnet(client_ip);
 
         let token = ChallengeToken {
-            ver: 1,
+            ver: 2, // Version 2 includes subnet hash
             fph: "fingerprint_hash".to_string(),
             pow: true,
             score: 85,
             iat: 1700000000,
             exp: 1700001000,
             iph: manager.hash_string(client_ip),
+            snh: Some(manager.hash_string(&subnet)), // X2.4: Include subnet hash
             ctype: ChallengeType::Invisible,
         };
 
-        let token_str = manager.sign_token(&token);
+        let token_str = manager.sign_token(&token).unwrap();
 
         // Token format should be payload.signature
         assert!(token_str.contains('.'));
@@ -1078,5 +1467,378 @@ mod tests {
         assert!(page.contains("Verifying your connection"));
         assert!(page.contains("Protected by AEGIS"));
         assert!(page.contains("page_test"));
+    }
+
+    // ==========================================================================
+    // SECURITY TESTS: X2.4 - IP Binding Enforcement
+    // ==========================================================================
+
+    #[test]
+    fn test_x24_ip_binding_strict_mode_rejects_different_ip() {
+        // Test: With strict IP binding (default), tokens from different IPs are rejected
+        let manager = ChallengeManager::new(); // Default config has enforce_ip_binding=true
+        let original_ip = "192.168.1.100";
+        let different_ip = "10.0.0.50"; // Completely different IP
+
+        // Create a valid, non-expired token
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let subnet = manager.extract_subnet(original_ip);
+
+        let token = ChallengeToken {
+            ver: 2,
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900, // Valid for 15 minutes
+            iph: manager.hash_string(original_ip),
+            snh: Some(manager.hash_string(&subnet)),
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Verification from same IP should succeed
+        let result = manager.verify_token(&token_str, original_ip);
+        assert!(result.is_ok(), "Same IP should be accepted");
+
+        // Verification from different IP should fail (strict mode)
+        let result = manager.verify_token(&token_str, different_ip);
+        assert!(result.is_err(), "Different IP should be rejected in strict mode");
+        assert!(
+            result.unwrap_err().to_string().contains("IP binding failed"),
+            "Error should mention IP binding"
+        );
+    }
+
+    #[test]
+    fn test_x24_ip_binding_disabled_allows_any_ip() {
+        // Test: With IP binding disabled, tokens from any IP are accepted
+        #[allow(deprecated)]
+        let config = ChallengeConfig {
+            enforce_ip_binding: false,
+            subnet_mask: SubnetMask::Exact,
+            allow_subnet_changes: false,
+        };
+        let manager = ChallengeManager::with_config(config);
+        let original_ip = "192.168.1.100";
+        let different_ip = "10.0.0.50";
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let subnet = manager.extract_subnet(original_ip);
+
+        let token = ChallengeToken {
+            ver: 2,
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900,
+            iph: manager.hash_string(original_ip),
+            snh: Some(manager.hash_string(&subnet)),
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Both IPs should be accepted when binding is disabled
+        let result = manager.verify_token(&token_str, original_ip);
+        assert!(result.is_ok(), "Same IP should be accepted");
+
+        let result = manager.verify_token(&token_str, different_ip);
+        assert!(result.is_ok(), "Different IP should be accepted when binding disabled");
+    }
+
+    #[test]
+    fn test_x24_subnet_mode_allows_same_subnet() {
+        // Test: With subnet mode, IPs in the same /24 subnet are accepted
+        #[allow(deprecated)]
+        let config = ChallengeConfig {
+            enforce_ip_binding: true,
+            subnet_mask: SubnetMask::Wide, // /24 for backward compatibility with old test
+            allow_subnet_changes: true,
+        };
+        let manager = ChallengeManager::with_config(config);
+        let original_ip = "192.168.1.100";
+        let same_subnet_ip = "192.168.1.200"; // Same /24 subnet
+        let different_subnet_ip = "192.168.2.100"; // Different /24 subnet
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let subnet = manager.extract_subnet(original_ip);
+
+        let token = ChallengeToken {
+            ver: 2,
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900,
+            iph: manager.hash_string(original_ip),
+            snh: Some(manager.hash_string(&subnet)),
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Same subnet should be accepted
+        let result = manager.verify_token(&token_str, same_subnet_ip);
+        assert!(result.is_ok(), "Same subnet IP should be accepted");
+
+        // Different subnet should be rejected
+        let result = manager.verify_token(&token_str, different_subnet_ip);
+        assert!(result.is_err(), "Different subnet IP should be rejected");
+    }
+
+    #[test]
+    fn test_x35_subnet_extraction_ipv4_exact() {
+        // SECURITY FIX (X3.5): Default config now uses Exact subnet mask
+        let manager = ChallengeManager::new();
+
+        // Test IPv4 subnet extraction with Exact (/32) - returns full IP
+        assert_eq!(manager.extract_subnet("192.168.1.100"), "192.168.1.100");
+        assert_eq!(manager.extract_subnet("10.0.0.1"), "10.0.0.1");
+        assert_eq!(manager.extract_subnet("172.16.254.1"), "172.16.254.1");
+    }
+
+    #[test]
+    fn test_x35_subnet_extraction_ipv4_narrow() {
+        // Test /30 subnet mask (4 IPs)
+        let config = ChallengeConfig::load_balanced_narrow();
+        let manager = ChallengeManager::with_config(config);
+
+        // 192.168.1.100 & /30 mask = 192.168.1.100 (network: 192.168.1.100)
+        assert_eq!(manager.extract_subnet("192.168.1.100"), "192.168.1.100");
+        // 192.168.1.101 & /30 mask = 192.168.1.100 (same /30 as .100)
+        assert_eq!(manager.extract_subnet("192.168.1.101"), "192.168.1.100");
+        // 192.168.1.103 & /30 mask = 192.168.1.100 (same /30)
+        assert_eq!(manager.extract_subnet("192.168.1.103"), "192.168.1.100");
+        // 192.168.1.104 is in the next /30 block
+        assert_eq!(manager.extract_subnet("192.168.1.104"), "192.168.1.104");
+    }
+
+    #[test]
+    fn test_x35_subnet_extraction_ipv4_moderate() {
+        // Test /28 subnet mask (16 IPs)
+        let config = ChallengeConfig::load_balanced_moderate();
+        let manager = ChallengeManager::with_config(config);
+
+        // 192.168.1.100 & /28 mask = 192.168.1.96 (network: 192.168.1.96 - .111)
+        assert_eq!(manager.extract_subnet("192.168.1.100"), "192.168.1.96");
+        // 192.168.1.111 & /28 mask = 192.168.1.96 (same /28)
+        assert_eq!(manager.extract_subnet("192.168.1.111"), "192.168.1.96");
+        // 192.168.1.112 is in the next /28 block (192.168.1.112 - .127)
+        assert_eq!(manager.extract_subnet("192.168.1.112"), "192.168.1.112");
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn test_x35_subnet_extraction_ipv4_wide() {
+        // Test /24 subnet mask (256 IPs) - LESS SECURE, use load_balanced configs instead
+        let config = ChallengeConfig::allow_subnet();
+        let manager = ChallengeManager::with_config(config);
+
+        // 192.168.1.100 & /24 mask = 192.168.1.0
+        assert_eq!(manager.extract_subnet("192.168.1.100"), "192.168.1.0");
+        assert_eq!(manager.extract_subnet("192.168.1.255"), "192.168.1.0");
+        // Different /24
+        assert_eq!(manager.extract_subnet("192.168.2.100"), "192.168.2.0");
+    }
+
+    #[test]
+    fn test_x24_subnet_extraction_ipv6() {
+        let manager = ChallengeManager::new();
+
+        // Test IPv6 subnet extraction (/64)
+        assert_eq!(
+            manager.extract_subnet("2001:db8:85a3:0:0:8a2e:370:7334"),
+            "2001:db8:85a3:0"
+        );
+        assert_eq!(
+            manager.extract_subnet("fe80:0:0:0:1:2:3:4"),
+            "fe80:0:0:0"
+        );
+
+        // Shorter IPv6 should return as-is
+        assert_eq!(
+            manager.extract_subnet("::1"),
+            "::1"
+        );
+    }
+
+    #[test]
+    fn test_x24_legacy_token_backward_compatibility() {
+        // Test: Legacy tokens (v1, without subnet hash) should still work
+        #[allow(deprecated)]
+        let config = ChallengeConfig {
+            enforce_ip_binding: true,
+            subnet_mask: SubnetMask::Wide, // /24 for backward compatibility
+            allow_subnet_changes: true, // Enable subnet mode
+        };
+        let manager = ChallengeManager::with_config(config);
+        let original_ip = "192.168.1.100";
+        let different_ip = "10.0.0.50";
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+
+        // Create a v1 token (no subnet hash)
+        let token = ChallengeToken {
+            ver: 1, // Legacy version
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900,
+            iph: manager.hash_string(original_ip),
+            snh: None, // No subnet hash in legacy tokens
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Legacy tokens should be allowed (backward compatibility)
+        // Even from different IPs when subnet mode is enabled
+        let result = manager.verify_token(&token_str, different_ip);
+        assert!(
+            result.is_ok(),
+            "Legacy tokens should be allowed for backward compatibility"
+        );
+    }
+
+    #[test]
+    fn test_x24_mobile_permissive_config() {
+        // Test: Mobile permissive config disables IP binding entirely
+        let config = ChallengeConfig::mobile_permissive();
+        // mobile_permissive disables IP binding (for mobile apps with frequent IP changes)
+        assert!(!config.enforce_ip_binding);
+        assert!(!config.allow_subnet_changes); // Not used when enforce_ip_binding is false
+
+        let manager = ChallengeManager::with_config(config);
+        let original_ip = "192.168.1.100";
+        let completely_different_ip = "10.0.0.50"; // Different network entirely
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let subnet = manager.extract_subnet(original_ip);
+
+        let token = ChallengeToken {
+            ver: 2,
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900,
+            iph: manager.hash_string(original_ip),
+            snh: Some(manager.hash_string(&subnet)),
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Any IP should be accepted in mobile permissive mode (no IP binding)
+        let result = manager.verify_token(&token_str, completely_different_ip);
+        assert!(result.is_ok(), "Mobile permissive should allow any IP");
+    }
+
+    #[test]
+    fn test_x24_allow_subnet_config() {
+        // Test: allow_subnet config enforces subnet binding
+        let config = ChallengeConfig::allow_subnet();
+        assert!(config.enforce_ip_binding);
+        assert!(config.allow_subnet_changes);
+
+        let manager = ChallengeManager::with_config(config);
+        let original_ip = "192.168.1.100";
+        let same_subnet_ip = "192.168.1.200";
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let subnet = manager.extract_subnet(original_ip);
+
+        let token = ChallengeToken {
+            ver: 2,
+            fph: "fingerprint".to_string(),
+            pow: true,
+            score: 80,
+            iat: now,
+            exp: now + 900,
+            iph: manager.hash_string(original_ip),
+            snh: Some(manager.hash_string(&subnet)),
+            ctype: ChallengeType::Invisible,
+        };
+
+        let token_str = manager.sign_token(&token).unwrap();
+
+        // Same subnet should be accepted with allow_subnet config
+        let result = manager.verify_token(&token_str, same_subnet_ip);
+        assert!(result.is_ok(), "allow_subnet should allow same subnet IPs");
+    }
+
+    // ============== X3.5 Security Tests ==============
+
+    #[test]
+    fn test_x35_subnet_mask_enum() {
+        // Test SubnetMask enum properties
+        assert_eq!(SubnetMask::Exact.prefix_bits(), 32);
+        assert_eq!(SubnetMask::Exact.possible_ips(), 1);
+
+        assert_eq!(SubnetMask::Narrow.prefix_bits(), 30);
+        assert_eq!(SubnetMask::Narrow.possible_ips(), 4);
+
+        assert_eq!(SubnetMask::Moderate.prefix_bits(), 28);
+        assert_eq!(SubnetMask::Moderate.possible_ips(), 16);
+
+        assert_eq!(SubnetMask::Wide.prefix_bits(), 24);
+        assert_eq!(SubnetMask::Wide.possible_ips(), 256);
+    }
+
+    #[test]
+    fn test_x35_default_config_is_exact() {
+        // SECURITY: Default config should use Exact subnet mask
+        let config = ChallengeConfig::default();
+        assert!(config.enforce_ip_binding, "Default should enforce IP binding");
+        assert_eq!(config.subnet_mask, SubnetMask::Exact, "Default should use Exact mask");
+    }
+
+    #[test]
+    fn test_x35_load_balanced_narrow_config() {
+        let config = ChallengeConfig::load_balanced_narrow();
+        assert!(config.enforce_ip_binding);
+        assert_eq!(config.subnet_mask, SubnetMask::Narrow);
+    }
+
+    #[test]
+    fn test_x35_load_balanced_moderate_config() {
+        let config = ChallengeConfig::load_balanced_moderate();
+        assert!(config.enforce_ip_binding);
+        assert_eq!(config.subnet_mask, SubnetMask::Moderate);
+    }
+
+    #[test]
+    fn test_x35_invalid_ipv4_graceful_fallback() {
+        // Test graceful handling of invalid IPv4 addresses
+        let config = ChallengeConfig::load_balanced_moderate();
+        let manager = ChallengeManager::with_config(config);
+
+        // Invalid format should return as-is (fail open for logging, not security)
+        assert_eq!(manager.extract_subnet("not.an.ip"), "not.an.ip");
+        assert_eq!(manager.extract_subnet("192.168.1"), "192.168.1");
+        assert_eq!(manager.extract_subnet("192.168.1.1.1"), "192.168.1.1.1");
+        assert_eq!(manager.extract_subnet("999.999.999.999"), "999.999.999.999"); // Out of range
     }
 }

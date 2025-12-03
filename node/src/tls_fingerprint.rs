@@ -12,6 +12,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// SECURITY FIX (X2.6): Import lock recovery utilities
+use crate::lock_utils::write_lock_or_recover;
+
 /// TLS version identifiers from ClientHello
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u16)]
@@ -521,8 +524,9 @@ impl FingerprintDatabase {
 
     /// Load built-in fingerprints for common clients
     fn load_builtin_fingerprints(&self) {
-        let mut ja3_db = self.ja3_db.write().unwrap();
-        let mut ja4_db = self.ja4_db.write().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let mut ja3_db = write_lock_or_recover(&self.ja3_db, "TLS JA3 fingerprint database");
+        let mut ja4_db = write_lock_or_recover(&self.ja4_db, "TLS JA4 fingerprint database");
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)

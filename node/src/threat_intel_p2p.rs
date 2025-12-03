@@ -18,7 +18,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, RwLock};
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Get current Unix timestamp in seconds
 /// Returns 0 if system clock is before Unix epoch (should never happen on modern systems)
@@ -308,28 +308,88 @@ pub struct TrustedNodeRegistry {
     /// Set of trusted public keys (hex encoded)
     trusted_keys: Arc<RwLock<HashSet<String>>>,
     /// Whether to accept any valid signature (open mode)
+    /// SECURITY (X2.7): Open mode is ONLY allowed in debug builds
     open_mode: bool,
 }
 
 impl TrustedNodeRegistry {
     /// Create a new registry from config
+    ///
+    /// # Security Note (X2.7)
+    /// Open mode (empty trusted_keys) is only allowed in debug builds.
+    /// In release builds, empty trusted_keys will disable open mode and require
+    /// explicit key management via add_trusted_key().
     pub fn new(trusted_keys: Vec<String>) -> Self {
-        let open_mode = trusted_keys.is_empty();
+        let requested_open_mode = trusted_keys.is_empty();
+
+        // SECURITY FIX (X2.7): Disable open mode in release builds
+        #[cfg(debug_assertions)]
+        let open_mode = {
+            if requested_open_mode {
+                warn!("SECURITY WARNING: P2P open mode enabled - accepting any valid signature (DEBUG BUILD ONLY)");
+            }
+            requested_open_mode
+        };
+
+        #[cfg(not(debug_assertions))]
+        let open_mode = {
+            if requested_open_mode {
+                error!(
+                    "SECURITY: P2P open mode requested but DISABLED in release build. \
+                     Configure trusted_public_keys or use add_trusted_key() to add nodes."
+                );
+            }
+            false // Always disabled in release
+        };
+
         Self {
             trusted_keys: Arc::new(RwLock::new(trusted_keys.into_iter().collect())),
             open_mode,
         }
     }
 
-    /// Check if a public key is trusted
-    pub async fn is_trusted(&self, public_key: &str) -> bool {
-        if self.open_mode {
-            // In open mode, accept any valid signature
-            true
-        } else {
-            let keys = self.trusted_keys.read().await;
-            keys.contains(public_key)
+    /// Create a registry that explicitly allows open mode (for testing only)
+    ///
+    /// # Safety
+    /// This function is ONLY available in debug builds. It should never be used
+    /// in production code.
+    #[cfg(debug_assertions)]
+    pub fn new_open_mode_for_testing() -> Self {
+        warn!("SECURITY WARNING: Creating open mode registry for TESTING ONLY");
+        Self {
+            trusted_keys: Arc::new(RwLock::new(HashSet::new())),
+            open_mode: true,
         }
+    }
+
+    /// Check if open mode is currently active
+    pub fn is_open_mode(&self) -> bool {
+        self.open_mode
+    }
+
+    /// Check if a public key is trusted
+    ///
+    /// # Security Note (X2.7)
+    /// In release builds, open mode is always disabled. If no trusted keys are
+    /// configured, ALL keys will be rejected (fail-secure).
+    pub async fn is_trusted(&self, public_key: &str) -> bool {
+        // SECURITY FIX (X2.7): Only allow open mode in debug builds
+        if self.open_mode {
+            #[cfg(debug_assertions)]
+            {
+                warn!("SECURITY: Open mode active - accepting key: {}...", &public_key[..16.min(public_key.len())]);
+                return true;
+            }
+            #[cfg(not(debug_assertions))]
+            {
+                // This branch should never execute due to new() logic, but defense in depth
+                error!("SECURITY VIOLATION: Open mode check reached in release build - REJECTING");
+                return false;
+            }
+        }
+
+        let keys = self.trusted_keys.read().await;
+        keys.contains(public_key)
     }
 
     /// Add a trusted public key
@@ -1076,12 +1136,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_trusted_registry_open_mode() {
-        // Empty trusted keys = open mode
-        let registry = TrustedNodeRegistry::new(Vec::new());
+        // SECURITY FIX (X2.7): Use explicit testing function for open mode
+        // In debug builds, this will allow open mode
+        // The new() constructor alone won't enable open mode in release builds
+        let registry = TrustedNodeRegistry::new_open_mode_for_testing();
 
-        // Any key should be trusted in open mode
-        assert!(registry.is_trusted("any-key").await);
-        assert!(registry.is_trusted("another-key").await);
+        // Any key should be trusted in open mode (debug builds only)
+        assert!(registry.is_trusted("any-key-1234567890").await);
+        assert!(registry.is_trusted("another-key-12345678").await);
     }
 
     #[tokio::test]
@@ -1114,5 +1176,97 @@ mod tests {
         let keys = registry.get_trusted_keys().await;
         assert_eq!(keys.len(), 1);
         assert!(keys.contains(&"key2".to_string()));
+    }
+
+    // ========================================
+    // X2.7: P2P Open Mode Security Tests
+    // ========================================
+
+    #[test]
+    fn test_x27_open_mode_flag_detection() {
+        // Test that is_open_mode() correctly reports state
+        let registry_with_keys = TrustedNodeRegistry::new(vec!["key1".to_string()]);
+        assert!(!registry_with_keys.is_open_mode());
+
+        let registry_open = TrustedNodeRegistry::new_open_mode_for_testing();
+        assert!(registry_open.is_open_mode());
+    }
+
+    #[tokio::test]
+    async fn test_x27_empty_keys_debug_behavior() {
+        // In debug builds, empty keys enables open mode
+        // This test verifies the new() constructor handles empty keys properly
+        let registry = TrustedNodeRegistry::new(Vec::new());
+
+        // In debug builds: open mode should be enabled
+        // In release builds: open mode should be disabled (this test runs in debug)
+        #[cfg(debug_assertions)]
+        {
+            assert!(registry.is_open_mode());
+            // But we need at least 16 chars for the log message
+            assert!(registry.is_trusted("abcdefghijklmnop").await);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_x27_restricted_mode_rejects_unknown() {
+        // Verify restricted mode correctly rejects unknown keys
+        let trusted_keys = vec!["trusted-key-abc1".to_string()];
+        let registry = TrustedNodeRegistry::new(trusted_keys);
+
+        assert!(!registry.is_open_mode());
+        assert!(registry.is_trusted("trusted-key-abc1").await);
+        assert!(!registry.is_trusted("untrusted-key-xyz").await);
+        assert!(!registry.is_trusted("").await);
+    }
+
+    #[tokio::test]
+    async fn test_x27_dynamic_key_management() {
+        // Start with one key, add more dynamically
+        let registry = TrustedNodeRegistry::new(vec!["initial-key-123".to_string()]);
+
+        // Initial state
+        assert!(registry.is_trusted("initial-key-123").await);
+        assert!(!registry.is_trusted("new-key-456").await);
+
+        // Add new key
+        registry.add_trusted_key("new-key-456".to_string()).await;
+        assert!(registry.is_trusted("new-key-456").await);
+
+        // Verify key list
+        let keys = registry.get_trusted_keys().await;
+        assert_eq!(keys.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn test_x27_empty_config_with_dynamic_keys() {
+        // SECURITY (X2.7): Production pattern - start with empty config, add keys dynamically
+        // This simulates production startup where keys are loaded from storage
+
+        // Create registry (will be restricted mode in release builds)
+        let registry = TrustedNodeRegistry::new(Vec::new());
+
+        // In release mode, even with no keys, unknown keys are rejected
+        // In debug mode, this is open mode so we need to use restricted registry
+        let registry = TrustedNodeRegistry::new(vec!["bootstrap-key-1".to_string()]);
+        assert!(!registry.is_open_mode());
+
+        // Add runtime keys (simulating bootstrap from config)
+        registry.add_trusted_key("node-key-abcd1234".to_string()).await;
+        registry.add_trusted_key("node-key-efgh5678".to_string()).await;
+
+        // Verify only added keys are trusted
+        assert!(registry.is_trusted("bootstrap-key-1").await);
+        assert!(registry.is_trusted("node-key-abcd1234").await);
+        assert!(registry.is_trusted("node-key-efgh5678").await);
+        assert!(!registry.is_trusted("malicious-key-xxx").await);
+    }
+
+    #[test]
+    fn test_x27_testing_function_only_in_debug() {
+        // Verify new_open_mode_for_testing() is available (it's cfg'd for debug only)
+        // This test will fail to compile in release if the function is available
+        let _ = TrustedNodeRegistry::new_open_mode_for_testing();
+        // If we get here, we're in debug mode and the function exists
     }
 }

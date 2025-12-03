@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use wasmtime::*;
 
+// SECURITY FIX (X2.6): Import lock recovery utilities
+use crate::lock_utils::lock_or_recover;
+
 /// Bot detection verdict returned by Wasm module
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[repr(u8)]
@@ -236,7 +239,8 @@ impl BotManager {
             return false;
         }
 
-        let mut limiter = self.rate_limiter.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let mut limiter = lock_or_recover(&self.rate_limiter, "bot rate limiter");
         let now = SystemTime::now();
         let window_duration = Duration::from_secs(self.policy.rate_limit_window_secs);
 
@@ -339,12 +343,14 @@ impl BotManager {
 
     /// Clear rate limiter state
     pub fn clear_rate_limiter(&self) {
-        self.rate_limiter.lock().unwrap().clear();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        lock_or_recover(&self.rate_limiter, "bot rate limiter").clear();
     }
 
     /// Get rate limiter statistics
     pub fn get_rate_limiter_stats(&self) -> (usize, u32) {
-        let limiter = self.rate_limiter.lock().unwrap();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        let limiter = lock_or_recover(&self.rate_limiter, "bot rate limiter");
         let total_tracked = limiter.len();
         let max_count = limiter.values().map(|e| e.count).max().unwrap_or(0);
         (total_tracked, max_count)
@@ -352,12 +358,14 @@ impl BotManager {
 
     /// Get current bot detection metrics
     pub fn get_metrics(&self) -> BotMetrics {
-        self.metrics.lock().unwrap().clone()
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        lock_or_recover(&self.metrics, "bot metrics").clone()
     }
 
     /// Reset bot detection metrics
     pub fn reset_metrics(&self) {
-        self.metrics.lock().unwrap().reset();
+        // SECURITY FIX (X2.6): Use lock recovery to prevent panics
+        lock_or_recover(&self.metrics, "bot metrics").reset();
     }
 }
 

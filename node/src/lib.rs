@@ -1,6 +1,9 @@
 // Library interface for AEGIS node components
 // Allows testing and reuse of proxy logic
 
+// Security utilities
+pub mod lock_utils;
+
 pub mod bot_management;
 pub mod cache;
 pub mod config;
