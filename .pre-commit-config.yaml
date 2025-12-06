@@ -1,0 +1,90 @@
+# Pre-commit hooks for AEGIS security
+# Install: pip install pre-commit && pre-commit install
+# Sprint: Y10.12
+
+repos:
+  # Secret scanning with detect-secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.0
+    hooks:
+      - id: detect-secrets
+        args:
+          - --baseline
+          - .secrets.baseline
+        exclude: |
+          (?x)^(
+            .*\.lock|
+            .*Cargo\.lock|
+            .*package-lock\.json|
+            .*yarn\.lock|
+            .*pnpm-lock\.yaml|
+            node_modules/.*|
+            target/.*|
+            .anchor/.*
+          )$
+
+  # Git secrets (AWS, Slack, etc.)
+  - repo: https://github.com/awslabs/git-secrets
+    rev: master
+    hooks:
+      - id: git-secrets
+        entry: git-secrets --scan
+        stages: [commit]
+
+  # Gitleaks for additional secret patterns
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.0
+    hooks:
+      - id: gitleaks
+
+  # Security linting for Rust
+  - repo: local
+    hooks:
+      - id: cargo-audit
+        name: cargo-audit
+        entry: cargo audit
+        language: system
+        files: \.rs$|Cargo\.toml$|Cargo\.lock$
+        pass_filenames: false
+        stages: [push]
+
+      - id: cargo-clippy-security
+        name: cargo-clippy (security)
+        entry: cargo clippy -- -D clippy::unwrap_used -D clippy::expect_used
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        stages: [push]
+
+  # Solana/Anchor specific checks
+  - repo: local
+    hooks:
+      - id: check-hardcoded-keys
+        name: Check for hardcoded Solana keys
+        entry: bash -c 'if grep -rE "[1-9A-HJ-NP-Za-km-z]{32,44}" --include="*.rs" --include="*.ts" --include="*.js" | grep -v "test" | grep -v "example" | grep -v "mock"; then echo "Possible hardcoded Solana key found!"; exit 1; fi'
+        language: system
+        pass_filenames: false
+
+      - id: check-private-key-files
+        name: Check for private key files
+        entry: bash -c 'if find . -name "*.json" -exec grep -l "\\[0-9" {} \; | grep -v node_modules | grep -v target | grep -v .anchor; then echo "Possible keypair file found!"; exit 1; fi'
+        language: system
+        pass_filenames: false
+
+  # General security patterns
+  - repo: local
+    hooks:
+      - id: no-console-secrets
+        name: No console.log with secrets
+        entry: bash -c 'if grep -rE "console\.(log|warn|error).*secret|password|key|token" --include="*.ts" --include="*.js" .; then exit 1; fi'
+        language: system
+        pass_filenames: false
+
+      - id: no-debug-in-production
+        name: No debug logging secrets
+        entry: bash -c 'if grep -rE "(debug|trace)!.*secret|password|key|token" --include="*.rs" .; then exit 1; fi'
+        language: system
+        pass_filenames: false
+
+# Default stages
+default_stages: [commit, push]

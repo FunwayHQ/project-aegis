@@ -1091,4 +1091,200 @@ mod tests {
 
         assert!(tracker.is_suspicious(1));
     }
+
+    // ========================================
+    // Y10.4: Property-Based Tests for CRDTs
+    // ========================================
+
+    mod proptest_crdt {
+        use super::*;
+        use proptest::prelude::*;
+
+        // Strategy to generate valid actor IDs (1-1000)
+        fn actor_id_strategy() -> impl Strategy<Value = ActorId> {
+            1u64..=1000
+        }
+
+        // Strategy to generate increment values (1-10000 to avoid huge state)
+        fn increment_value_strategy() -> impl Strategy<Value = u64> {
+            1u64..=10000
+        }
+
+        // Strategy to generate a list of (actor, value) operations
+        fn operations_strategy() -> impl Strategy<Value = Vec<(ActorId, u64)>> {
+            prop::collection::vec((actor_id_strategy(), increment_value_strategy()), 1..20)
+        }
+
+        proptest! {
+            /// Y10.4: Test CRDT commutativity - merge order should not affect result
+            #[test]
+            fn prop_crdt_commutativity(
+                actor1 in actor_id_strategy(),
+                actor2 in actor_id_strategy(),
+                value1 in increment_value_strategy(),
+                value2 in increment_value_strategy()
+            ) {
+                // Ensure distinct actors
+                prop_assume!(actor1 != actor2);
+
+                // Create counters with different actors
+                let c1a = DistributedCounter::new(actor1);
+                let c1b = DistributedCounter::new(actor2);
+
+                let c2a = DistributedCounter::new(actor1);
+                let c2b = DistributedCounter::new(actor2);
+
+                // Increment
+                c1a.increment(value1).unwrap();
+                c1b.increment(value2).unwrap();
+                c2a.increment(value1).unwrap();
+                c2b.increment(value2).unwrap();
+
+                // Merge in different orders
+                let state_1a = c1a.serialize_state().unwrap();
+                let state_1b = c1b.serialize_state().unwrap();
+                let state_2a = c2a.serialize_state().unwrap();
+                let state_2b = c2b.serialize_state().unwrap();
+
+                let final1 = DistributedCounter::new(999);
+                final1.merge_state(&state_1a).unwrap();
+                final1.merge_state(&state_1b).unwrap();
+
+                let final2 = DistributedCounter::new(999);
+                final2.merge_state(&state_2b).unwrap(); // Reverse order
+                final2.merge_state(&state_2a).unwrap();
+
+                // Values should be equal regardless of merge order
+                prop_assert_eq!(final1.value().unwrap(), final2.value().unwrap());
+            }
+
+            /// Y10.4: Test CRDT idempotence - merging same state multiple times = once
+            #[test]
+            fn prop_crdt_idempotence(
+                actor in actor_id_strategy(),
+                value in increment_value_strategy(),
+                merge_count in 1usize..10
+            ) {
+                let source = DistributedCounter::new(actor);
+                source.increment(value).unwrap();
+                let state = source.serialize_state().unwrap();
+
+                // Merge once
+                let single_merge = DistributedCounter::new(999);
+                single_merge.merge_state(&state).unwrap();
+                let single_value = single_merge.value().unwrap();
+
+                // Merge multiple times
+                let multi_merge = DistributedCounter::new(998);
+                for _ in 0..merge_count {
+                    multi_merge.merge_state(&state).unwrap();
+                }
+                let multi_value = multi_merge.value().unwrap();
+
+                // Should be the same
+                prop_assert_eq!(single_value, multi_value);
+            }
+
+            /// Y10.4: Test CRDT associativity - (a ⊕ b) ⊕ c = a ⊕ (b ⊕ c)
+            #[test]
+            fn prop_crdt_associativity(
+                actor1 in actor_id_strategy(),
+                actor2 in actor_id_strategy(),
+                actor3 in actor_id_strategy(),
+                value1 in increment_value_strategy(),
+                value2 in increment_value_strategy(),
+                value3 in increment_value_strategy()
+            ) {
+                // Ensure distinct actors
+                prop_assume!(actor1 != actor2 && actor2 != actor3 && actor1 != actor3);
+
+                // Create three counters
+                let c1 = DistributedCounter::new(actor1);
+                let c2 = DistributedCounter::new(actor2);
+                let c3 = DistributedCounter::new(actor3);
+
+                c1.increment(value1).unwrap();
+                c2.increment(value2).unwrap();
+                c3.increment(value3).unwrap();
+
+                let state1 = c1.serialize_state().unwrap();
+                let state2 = c2.serialize_state().unwrap();
+                let state3 = c3.serialize_state().unwrap();
+
+                // (a ⊕ b) ⊕ c
+                let left_assoc = DistributedCounter::new(990);
+                left_assoc.merge_state(&state1).unwrap();
+                left_assoc.merge_state(&state2).unwrap();
+                left_assoc.merge_state(&state3).unwrap();
+
+                // a ⊕ (b ⊕ c)
+                let right_assoc = DistributedCounter::new(991);
+                let temp = DistributedCounter::new(992);
+                temp.merge_state(&state2).unwrap();
+                temp.merge_state(&state3).unwrap();
+                let temp_state = temp.serialize_state().unwrap();
+
+                right_assoc.merge_state(&state1).unwrap();
+                right_assoc.merge_state(&temp_state).unwrap();
+
+                // Should be equal
+                prop_assert_eq!(left_assoc.value().unwrap(), right_assoc.value().unwrap());
+            }
+
+            /// Y10.4: Test CRDT convergence - all replicas converge to same value
+            #[test]
+            fn prop_crdt_convergence(ops in operations_strategy()) {
+                // Create N replicas (one per unique actor in ops)
+                let unique_actors: Vec<ActorId> = ops.iter().map(|(a, _)| *a).collect::<std::collections::HashSet<_>>().into_iter().collect();
+
+                // If no unique actors, skip
+                prop_assume!(!unique_actors.is_empty());
+
+                // Create a counter per actor and apply their operations
+                let mut counters = std::collections::HashMap::new();
+                for (actor, value) in &ops {
+                    let counter = counters.entry(*actor).or_insert_with(|| DistributedCounter::new(*actor));
+                    counter.increment(*value).unwrap();
+                }
+
+                // Merge all states into each counter
+                let states: Vec<_> = counters.values().map(|c| c.serialize_state().unwrap()).collect();
+
+                for counter in counters.values() {
+                    for state in &states {
+                        counter.merge_state(state).unwrap();
+                    }
+                }
+
+                // All counters should have same value
+                let values: Vec<u64> = counters.values().map(|c| c.value().unwrap()).collect();
+                let first = values[0];
+                for v in &values {
+                    prop_assert_eq!(*v, first, "All replicas should converge to same value");
+                }
+            }
+
+            /// Y10.4: Test value is always sum of increments
+            #[test]
+            fn prop_value_is_sum_of_increments(ops in operations_strategy()) {
+                let expected_sum: u64 = ops.iter().map(|(_, v)| v).sum();
+
+                // Create counters and apply operations
+                let mut counters = std::collections::HashMap::new();
+                for (actor, value) in &ops {
+                    let counter = counters.entry(*actor).or_insert_with(|| DistributedCounter::new(*actor));
+                    counter.increment(*value).unwrap();
+                }
+
+                // Merge all into one
+                let merged = DistributedCounter::new(9999);
+                for counter in counters.values() {
+                    let state = counter.serialize_state().unwrap();
+                    merged.merge_state(&state).unwrap();
+                }
+
+                prop_assert_eq!(merged.value().unwrap(), expected_sum);
+            }
+        }
+    }
 }

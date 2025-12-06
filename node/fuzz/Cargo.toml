@@ -1,0 +1,56 @@
+[package]
+name = "aegis-node-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+wasmtime = "27"
+
+[dependencies.aegis-node]
+path = ".."
+
+# Y10.1: TLS Fingerprint Parser Fuzzing
+[[bin]]
+name = "fuzz_tls_parser"
+path = "fuzz_targets/fuzz_tls_parser.rs"
+test = false
+doc = false
+bench = false
+
+# Y10.2: Wasm Module Loading Fuzzing
+[[bin]]
+name = "fuzz_wasm_loader"
+path = "fuzz_targets/fuzz_wasm_loader.rs"
+test = false
+doc = false
+bench = false
+
+# Y10.3: Route Config Parser Fuzzing
+[[bin]]
+name = "fuzz_route_config"
+path = "fuzz_targets/fuzz_route_config.rs"
+test = false
+doc = false
+bench = false
+
+# Additional: WAF Rule Matching Fuzzing
+[[bin]]
+name = "fuzz_waf"
+path = "fuzz_targets/fuzz_waf.rs"
+test = false
+doc = false
+bench = false
+
+# Additional: Cache Key Generation Fuzzing
+[[bin]]
+name = "fuzz_cache_key"
+path = "fuzz_targets/fuzz_cache_key.rs"
+test = false
+doc = false
+bench = false

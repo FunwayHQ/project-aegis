@@ -844,4 +844,194 @@ mod tests {
         // Epoch should be exactly 1 (only one successful reset)
         assert_eq!(window.current_epoch(), 1);
     }
+
+    // ========================================
+    // Y10.4: Property-Based Tests for Rate Limiter CRDT
+    // ========================================
+
+    mod proptest_rate_limiter {
+        use super::*;
+        use proptest::prelude::*;
+
+        // Strategy for actor IDs
+        fn actor_strategy() -> impl Strategy<Value = ActorId> {
+            1u64..=100
+        }
+
+        // Strategy for resource keys
+        fn resource_strategy() -> impl Strategy<Value = String> {
+            "[a-z]{3,10}".prop_map(|s| s)
+        }
+
+        // Strategy for request counts
+        fn request_count_strategy() -> impl Strategy<Value = usize> {
+            1usize..=20
+        }
+
+        proptest! {
+            /// Y10.4: Rate limiter counts are monotonically increasing within a window
+            #[test]
+            fn prop_counts_monotonic(
+                resource in resource_strategy(),
+                requests in request_count_strategy()
+            ) {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let config = RateLimiterConfig {
+                        actor_id: 1,
+                        max_requests: 1000, // High limit to not hit it
+                        window_duration_secs: 3600, // Long window
+                        auto_sync: false,
+                        ..Default::default()
+                    };
+
+                    let limiter = DistributedRateLimiter::new(config);
+
+                    let mut prev_count = 0u64;
+                    for _ in 0..requests {
+                        limiter.check_rate_limit(&resource).await.unwrap();
+                        let count = limiter.get_count(&resource).unwrap();
+                        prop_assert!(count >= prev_count, "Count should be monotonically increasing");
+                        prev_count = count;
+                    }
+
+                    Ok(())
+                })?;
+            }
+
+            /// Y10.4: Merging operations from multiple actors converges correctly
+            #[test]
+            fn prop_multi_actor_convergence(
+                actor1 in actor_strategy(),
+                actor2 in actor_strategy(),
+                value1 in 1u64..=100,
+                value2 in 1u64..=100,
+                resource in resource_strategy()
+            ) {
+                prop_assume!(actor1 != actor2);
+
+                let config1 = RateLimiterConfig {
+                    actor_id: actor1,
+                    max_requests: 1000,
+                    window_duration_secs: 3600,
+                    auto_sync: false,
+                    ..Default::default()
+                };
+
+                let config2 = RateLimiterConfig {
+                    actor_id: actor2,
+                    max_requests: 1000,
+                    window_duration_secs: 3600,
+                    auto_sync: false,
+                    ..Default::default()
+                };
+
+                let limiter1 = DistributedRateLimiter::new(config1);
+                let limiter2 = DistributedRateLimiter::new(config2);
+
+                // Simulate increments from each actor
+                let op1 = CounterOp::Increment { actor: actor1, value: value1 };
+                let op2 = CounterOp::Increment { actor: actor2, value: value2 };
+
+                // Each applies their own op
+                limiter1.merge_operation(&resource, op1.clone()).unwrap();
+                limiter2.merge_operation(&resource, op2.clone()).unwrap();
+
+                // Cross-merge
+                limiter1.merge_operation(&resource, op2).unwrap();
+                limiter2.merge_operation(&resource, op1).unwrap();
+
+                // Both should converge to same count
+                let count1 = limiter1.get_count(&resource).unwrap();
+                let count2 = limiter2.get_count(&resource).unwrap();
+                prop_assert_eq!(count1, count2, "Limiters should converge to same count");
+                prop_assert_eq!(count1, value1 + value2, "Count should be sum of increments");
+            }
+
+            /// Y10.4: Independent resources don't interfere
+            #[test]
+            fn prop_resource_independence(
+                resource1 in resource_strategy(),
+                resource2 in resource_strategy(),
+                count1 in 1usize..=10,
+                count2 in 1usize..=10
+            ) {
+                prop_assume!(resource1 != resource2);
+
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let config = RateLimiterConfig {
+                        actor_id: 1,
+                        max_requests: 1000,
+                        window_duration_secs: 3600,
+                        auto_sync: false,
+                        ..Default::default()
+                    };
+
+                    let limiter = DistributedRateLimiter::new(config);
+
+                    // Make requests to resource1
+                    for _ in 0..count1 {
+                        limiter.check_rate_limit(&resource1).await.unwrap();
+                    }
+
+                    // Make requests to resource2
+                    for _ in 0..count2 {
+                        limiter.check_rate_limit(&resource2).await.unwrap();
+                    }
+
+                    // Counts should be independent
+                    prop_assert_eq!(limiter.get_count(&resource1).unwrap(), count1 as u64);
+                    prop_assert_eq!(limiter.get_count(&resource2).unwrap(), count2 as u64);
+
+                    Ok(())
+                })?;
+            }
+
+            /// Y10.4: Requests beyond limit are always denied
+            #[test]
+            fn prop_limit_enforcement(
+                max_requests in 1usize..=10,
+                extra_requests in 1usize..=5,
+                resource in resource_strategy()
+            ) {
+                let rt = tokio::runtime::Runtime::new().unwrap();
+                rt.block_on(async {
+                    let config = RateLimiterConfig {
+                        actor_id: 1,
+                        max_requests: max_requests as u64,
+                        window_duration_secs: 3600,
+                        auto_sync: false,
+                        ..Default::default()
+                    };
+
+                    let limiter = DistributedRateLimiter::new(config);
+
+                    // Use up all allowed requests
+                    for i in 0..max_requests {
+                        let decision = limiter.check_rate_limit(&resource).await.unwrap();
+                        match decision {
+                            RateLimitDecision::Allowed { .. } => {}
+                            RateLimitDecision::Denied { .. } => {
+                                prop_assert!(false, "Request {} should be allowed", i);
+                            }
+                        }
+                    }
+
+                    // Additional requests should be denied
+                    for i in 0..extra_requests {
+                        let decision = limiter.check_rate_limit(&resource).await.unwrap();
+                        match decision {
+                            RateLimitDecision::Allowed { .. } => {
+                                prop_assert!(false, "Extra request {} should be denied", i);
+                            }
+                            RateLimitDecision::Denied { .. } => {}
+                        }
+                    }
+
+                    Ok(())
+                })?;
+            }
+        }
+    }
 }

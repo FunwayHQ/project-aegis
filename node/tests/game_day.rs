@@ -374,3 +374,350 @@ async fn test_crdt_idempotence() {
 
     println!("✅ PASS: CRDT idempotence verified");
 }
+
+// ========================================
+// Y10.5: DoS Resistance Stress Tests
+// ========================================
+
+/// Test: WAF under high request volume
+/// Target: <1ms average per request, no crashes
+#[tokio::test]
+async fn test_y105_waf_stress() {
+    use aegis_node::waf::{AegisWaf, WafConfig};
+
+    println!("\n=== Y10.5: WAF Stress Test ===\n");
+
+    let waf = AegisWaf::new(WafConfig::default());
+
+    // Test vectors including attack patterns
+    let test_vectors = [
+        "/api/users",
+        "/api/users?id=1",
+        "/api/users?id=1' OR '1'='1",
+        "/api/search?q=<script>alert(1)</script>",
+        "/../../etc/passwd",
+        "/api/exec?cmd=; cat /etc/passwd",
+        "/api/normal/path/with/segments",
+        "/?callback=__import__('os').system('id')",
+    ];
+
+    let iterations = 10_000;
+    let start = Instant::now();
+
+    for i in 0..iterations {
+        let uri = test_vectors[i % test_vectors.len()];
+        let headers = vec![
+            ("User-Agent".to_string(), "Mozilla/5.0".to_string()),
+            ("X-Request-Id".to_string(), format!("req-{}", i)),
+        ];
+
+        // This should not panic or hang
+        let _result = waf.analyze_request("GET", uri, &headers, None);
+    }
+
+    let elapsed = start.elapsed();
+    let avg_ms = elapsed.as_secs_f64() * 1000.0 / iterations as f64;
+    let rps = iterations as f64 / elapsed.as_secs_f64();
+
+    println!("Requests: {}", iterations);
+    println!("Total time: {:?}", elapsed);
+    println!("Average: {:.3}ms per request", avg_ms);
+    println!("Throughput: {:.0} req/sec", rps);
+
+    assert!(
+        avg_ms < 1.0,
+        "Average latency should be <1ms, was {:.3}ms",
+        avg_ms
+    );
+
+    println!("✅ PASS: WAF stress test - {:.3}ms avg, {:.0} req/sec", avg_ms, rps);
+}
+
+/// Test: WAF with malicious input patterns (ReDoS prevention)
+/// Target: No request takes >100ms
+#[tokio::test]
+async fn test_y105_waf_redos_resistance() {
+    use aegis_node::waf::{AegisWaf, WafConfig};
+
+    println!("\n=== Y10.5: WAF ReDoS Resistance Test ===\n");
+
+    let waf = AegisWaf::new(WafConfig::default());
+
+    // Known ReDoS-triggering patterns (exponential backtracking)
+    let redos_patterns = [
+        // Long strings of repeating characters
+        &"a".repeat(1000),
+        &"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab".repeat(10),
+        // Nested patterns
+        &format!("{}!", "a]".repeat(50)),
+        // URL-encoded attack payloads
+        &"%2527".repeat(100),
+        // Deep nesting
+        &"((((((((((((((((((((a))))))))))))))))))))".repeat(5),
+    ];
+
+    let mut max_time = Duration::ZERO;
+
+    for pattern in &redos_patterns {
+        let start = Instant::now();
+        let _result = waf.analyze_request("GET", pattern, &[], None);
+        let elapsed = start.elapsed();
+
+        if elapsed > max_time {
+            max_time = elapsed;
+        }
+
+        println!(
+            "Pattern len={}: {:?}",
+            pattern.len().min(50),
+            elapsed
+        );
+
+        assert!(
+            elapsed < Duration::from_millis(100),
+            "Request should complete in <100ms, took {:?}",
+            elapsed
+        );
+    }
+
+    println!("Max request time: {:?}", max_time);
+    println!("✅ PASS: WAF ReDoS resistance verified");
+}
+
+/// Test: Rate limiter under sequential high load
+/// Target: Correct counting at high volume
+#[tokio::test]
+async fn test_y105_rate_limiter_stress() {
+    use aegis_node::distributed_rate_limiter::{DistributedRateLimiter, RateLimiterConfig};
+
+    println!("\n=== Y10.5: Rate Limiter Stress ===\n");
+
+    let config = RateLimiterConfig {
+        actor_id: 1,
+        max_requests: 1_000_000, // High limit to test counting accuracy
+        window_duration_secs: 3600,
+        auto_sync: false,
+        ..Default::default()
+    };
+
+    let limiter = DistributedRateLimiter::new(config);
+    let iterations = 10_000;
+
+    let start = Instant::now();
+
+    for _ in 0..iterations {
+        let _ = limiter.check_rate_limit("stress-resource").await;
+    }
+
+    let elapsed = start.elapsed();
+    let final_count = limiter.get_count("stress-resource").expect("get count");
+    let rps = iterations as f64 / elapsed.as_secs_f64();
+
+    println!("Requests: {}", iterations);
+    println!("Final count: {}", final_count);
+    println!("Time: {:?}", elapsed);
+    println!("Throughput: {:.0} req/sec", rps);
+
+    assert_eq!(
+        final_count, iterations as u64,
+        "Count should match total requests"
+    );
+
+    println!("✅ PASS: Rate limiter stress - {:.0} req/sec, count accurate", rps);
+}
+
+/// Test: Cache key generation with adversarial inputs
+/// Target: No crashes, bounded memory usage
+#[tokio::test]
+async fn test_y105_cache_key_stress() {
+    use aegis_node::cache::{generate_cache_key, sanitize_cache_key_component};
+
+    println!("\n=== Y10.5: Cache Key Generation Stress ===\n");
+
+    // Pre-compute strings to avoid lifetime issues
+    let long_a = "a".repeat(10_000);
+    let emoji_str = "🔥🔥🔥🔥🔥".repeat(100);
+    let long_special = format!("{}\r\n{}", "a".repeat(5000), "b".repeat(5000));
+
+    // Adversarial inputs
+    let adversarial_inputs: Vec<&str> = vec![
+        // Very long strings
+        &long_a,
+        // CRLF injection attempts
+        "key\r\nSET attack value",
+        "key\nDEL *",
+        // Null bytes
+        "key\0with\0nulls",
+        // Unicode edge cases
+        &emoji_str,
+        // Control characters
+        "\x00\x01\x02\x03\x04\x05",
+        // Very long with special chars
+        &long_special,
+    ];
+
+    let iterations = 10_000;
+    let start = Instant::now();
+
+    for i in 0..iterations {
+        let input = adversarial_inputs[i % adversarial_inputs.len()];
+
+        // Test sanitization
+        let sanitized = sanitize_cache_key_component(input, 1024);
+
+        // Verify sanitization properties
+        assert!(!sanitized.contains('\r'), "Should not contain CR");
+        assert!(!sanitized.contains('\n'), "Should not contain LF");
+        assert!(!sanitized.contains('\0'), "Should not contain NULL");
+        // Note: Unicode characters can be multi-byte, so byte length may exceed char count
+        assert!(sanitized.chars().count() <= 1024, "Should be bounded by char count");
+
+        // Test full key generation
+        match generate_cache_key("GET", input) {
+            Ok(key) => {
+                assert!(!key.contains('\r'));
+                assert!(!key.contains('\n'));
+                assert!(!key.contains('\0'));
+            }
+            Err(_) => {
+                // Errors are fine for invalid input
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let rps = iterations as f64 / elapsed.as_secs_f64();
+
+    println!("Iterations: {}", iterations);
+    println!("Time: {:?}", elapsed);
+    println!("Throughput: {:.0} ops/sec", rps);
+
+    println!("✅ PASS: Cache key stress test completed");
+}
+
+/// Test: TLS fingerprint parsing with malformed data
+/// Target: No panics, graceful handling
+#[tokio::test]
+async fn test_y105_tls_fingerprint_stress() {
+    use aegis_node::tls_fingerprint::{ClientHello, TlsFingerprint};
+
+    println!("\n=== Y10.5: TLS Fingerprint Parsing Stress ===\n");
+
+    // Generate various malformed inputs
+    let test_inputs: Vec<Vec<u8>> = vec![
+        // Empty
+        vec![],
+        // Too short
+        vec![0x16, 0x03, 0x01],
+        // Invalid record type
+        vec![0xFF, 0x03, 0x01, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01, 0x00],
+        // Truncated length
+        vec![0x16, 0x03, 0x01, 0xFF, 0xFF],
+        // Maximum length field
+        vec![0x16, 0x03, 0x01, 0xFF, 0xFF, 0x01, 0x00, 0x00, 0x01, 0x00],
+        // Random garbage
+        (0..1000).map(|i| (i % 256) as u8).collect(),
+        // All zeros
+        vec![0u8; 1000],
+        // All 0xFF
+        vec![0xFFu8; 1000],
+        // Partial valid header
+        vec![0x16, 0x03, 0x03, 0x00, 0x05, 0x01, 0x00, 0x00, 0x01],
+    ];
+
+    let iterations = 10_000;
+    let start = Instant::now();
+    let mut parse_failures = 0;
+    let mut parse_successes = 0;
+
+    for i in 0..iterations {
+        let input = &test_inputs[i % test_inputs.len()];
+
+        // This should never panic
+        match ClientHello::parse(input) {
+            Some(ch) => {
+                // If parsing succeeds, fingerprint generation should also succeed
+                let _ = TlsFingerprint::from_client_hello(&ch);
+                parse_successes += 1;
+            }
+            None => {
+                parse_failures += 1;
+            }
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let rps = iterations as f64 / elapsed.as_secs_f64();
+
+    println!("Iterations: {}", iterations);
+    println!("Parse successes: {}", parse_successes);
+    println!("Parse failures: {}", parse_failures);
+    println!("Time: {:?}", elapsed);
+    println!("Throughput: {:.0} ops/sec", rps);
+
+    // Most should fail (malformed data)
+    assert!(parse_failures > parse_successes, "Most malformed inputs should fail parsing");
+
+    println!("✅ PASS: TLS fingerprint stress test - no panics");
+}
+
+/// Test: Byzantine validator under attack simulation
+/// Target: Correct detection, no bypasses
+#[tokio::test]
+async fn test_y105_byzantine_validator_stress() {
+    use aegis_node::distributed_counter::{ByzantineValidator, CounterOp, ByzantineCheck};
+
+    println!("\n=== Y10.5: Byzantine Validator Stress ===\n");
+
+    // Use very high rate limit to focus on value validation
+    let mut validator = ByzantineValidator::with_limits(1000, 100_000);
+
+    let iterations = 10_000;
+    let mut valid_count = 0;
+    let mut excessive_value_count = 0;
+    let mut rate_limited_count = 0;
+    let mut other_count = 0;
+
+    let start = Instant::now();
+
+    for i in 0..iterations {
+        // Mix of valid and attack operations
+        let op = if i % 10 < 8 {
+            // 80% normal operations with unique actors
+            CounterOp::Increment {
+                actor: i as u64 + 1, // Unique actor per request
+                value: (i % 100) as u64 + 1,
+            }
+        } else {
+            // 20% excessive value attacks
+            CounterOp::Increment {
+                actor: (i % 100) as u64 + 10000,
+                value: 100_000, // Way over limit
+            }
+        };
+
+        match validator.validate_operation(&op) {
+            ByzantineCheck::Valid => valid_count += 1,
+            ByzantineCheck::ExcessiveValue { .. } => excessive_value_count += 1,
+            ByzantineCheck::RateLimitExceeded { .. } => rate_limited_count += 1,
+            _ => other_count += 1,
+        }
+    }
+
+    let elapsed = start.elapsed();
+    let rps = iterations as f64 / elapsed.as_secs_f64();
+
+    println!("Iterations: {}", iterations);
+    println!("Valid: {}", valid_count);
+    println!("Excessive value blocked: {}", excessive_value_count);
+    println!("Rate limited: {}", rate_limited_count);
+    println!("Other: {}", other_count);
+    println!("Time: {:?}", elapsed);
+    println!("Throughput: {:.0} ops/sec", rps);
+
+    // Verify attack detection
+    assert!(excessive_value_count > 0, "Should detect excessive value attacks");
+    assert!(valid_count > excessive_value_count, "Valid ops should outnumber attacks");
+
+    println!("✅ PASS: Byzantine validator stress test - attacks detected");
+}

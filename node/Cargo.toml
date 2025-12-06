@@ -103,6 +103,7 @@ dev_unsigned_modules = []
 tempfile = "3.10"  # Temporary file/directory creation for tests
 wat = "1.0"  # WAT to Wasm conversion for testing
 criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+proptest = "1.4"  # Y10.4: Property-based testing for CRDTs
 
 [[bench]]
 name = "performance"
