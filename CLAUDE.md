@@ -629,6 +629,38 @@ aegis-cdn list
   - **External Audit Prep:** Created `SOLANA-AUDIT-REQUEST.md` for auditors
 - 🔲 **Sprint 30:** Mainnet Launch (TGE, 100+ nodes, geographic expansion)
 
+**Security Remediation (Sprints Y1-Y10):**
+
+Based on comprehensive security audit findings (85 total: 9 Critical, 16 High, 31 Medium, 21 Low, 8 Informational), implementing targeted fixes:
+
+- ✅ **Sprint Y1:** NATS & Distributed State Authentication - 23 tests
+  - Ed25519 signatures on CrdtMessage (sign, verify, is_trusted methods)
+  - NatsAuth enum: None, UserPassword, Token, NKey authentication
+  - TLS enforcement for production NATS connections
+  - Trusted node registry for signature verification
+  - Replay protection with message timestamps
+
+- ✅ **Sprint Y2:** Solana Contract Hardening - All 3 contracts compile
+  - **Rewards Contract:**
+    - Epoch validation in record_performance (prevents stale data)
+    - Nonce parameter for replay protection
+    - NonceTracker account with sliding window (100 nonces max)
+  - **Staking Contract:**
+    - MIN_COOLDOWN_PERIOD constant (1 day minimum)
+    - Slash nonce in GlobalConfig (deterministic PDA seeds)
+    - PDA seeds use nonce instead of timestamp
+  - **Registry Contract:**
+    - Config-based min_stake_for_registration validation
+
+- 🔲 **Sprint Y3:** Input Validation & Bounds Checking
+- 🔲 **Sprint Y4:** WAF & Bot Management Hardening
+- 🔲 **Sprint Y5:** P2P Network Security
+- 🔲 **Sprint Y6:** Wasm Runtime Isolation
+- 🔲 **Sprint Y7:** API Security & Rate Limiting
+- 🔲 **Sprint Y8:** Cryptographic Operations Audit
+- 🔲 **Sprint Y9:** Logging, Monitoring & Incident Response
+- 🔲 **Sprint Y10:** Final Security Review & Documentation
+
 ## Key Architectural Principles
 
 ### 1. Static Stability

@@ -14,6 +14,10 @@ const _MIN_STAKE_AMOUNT: u64 = 100_000_000_000; // 100 AEGIS tokens
 /// This allows node operators to dispute false positives before execution
 pub const SLASH_TIMELOCK_PERIOD: i64 = 24 * 60 * 60; // 24 hours
 
+/// Y2.7: Minimum cooldown period for unstaking (1 day in seconds)
+/// This prevents users from setting dangerously short cooldowns
+pub const MIN_COOLDOWN_PERIOD: i64 = 24 * 60 * 60; // 1 day minimum
+
 #[program]
 pub mod staking {
     use super::*;
@@ -21,6 +25,8 @@ pub mod staking {
     /// SECURITY FIX: Initialize global configuration (one-time, by deployer)
     /// This stores the admin authority who can slash stakes and update parameters
     /// Now also stores registry_program_id for CPI integration
+    /// Y2.5: Initializes slash_nonce for deterministic PDA seeds
+    /// Y2.7: Validates minimum cooldown period
     pub fn initialize_global_config(
         ctx: Context<InitializeGlobalConfig>,
         admin_authority: Pubkey,
@@ -28,6 +34,12 @@ pub mod staking {
         unstake_cooldown_period: i64,
         registry_program_id: Pubkey,
     ) -> Result<()> {
+        // Y2.7: Validate cooldown period is at least 1 day
+        require!(
+            unstake_cooldown_period >= MIN_COOLDOWN_PERIOD,
+            StakingError::CooldownTooShort
+        );
+
         let config = &mut ctx.accounts.global_config;
 
         config.admin_authority = admin_authority;
@@ -37,6 +49,7 @@ pub mod staking {
         config.registry_program_id = registry_program_id;
         config.paused = false;
         config.bump = ctx.bumps.global_config;
+        config.slash_nonce = 0;  // Y2.5: Initialize nonce
 
         msg!(
             "Global config initialized: admin={}, min_stake={}, cooldown={}, registry={}",
@@ -50,6 +63,7 @@ pub mod staking {
     }
 
     /// SECURITY FIX: Update global config (admin only)
+    /// Y2.7: Validates minimum cooldown period when updating
     pub fn update_global_config(
         ctx: Context<UpdateGlobalConfig>,
         new_admin: Option<Pubkey>,
@@ -77,6 +91,11 @@ pub mod staking {
         }
 
         if let Some(cooldown) = new_cooldown {
+            // Y2.7: Validate cooldown period is at least 1 day
+            require!(
+                cooldown >= MIN_COOLDOWN_PERIOD,
+                StakingError::CooldownTooShort
+            );
             config.unstake_cooldown_period = cooldown;
             msg!("Unstake cooldown updated to: {}s", cooldown);
         }
@@ -371,6 +390,7 @@ pub mod staking {
     /// SECURITY FIX: Request slash (timelock pattern - Phase 1)
     /// Creates a pending slash request that can be executed after 24 hours.
     /// This prevents instant 100% slashing and allows for dispute resolution.
+    /// Y2.4: Uses nonce instead of timestamp for deterministic PDA seeds
     ///
     /// Slashing triggers per whitepaper:
     /// 1. Offline48Hours - Node offline for 48+ hours (10% slash)
@@ -383,7 +403,7 @@ pub mod staking {
         violation_type: SlashingViolation,
         evidence_cid: String, // IPFS CID of evidence
     ) -> Result<()> {
-        let config = &ctx.accounts.global_config;
+        let config = &mut ctx.accounts.global_config;
         let stake_account = &ctx.accounts.stake_account;
         let slash_request = &mut ctx.accounts.slash_request;
         let clock = Clock::get()?;
@@ -425,6 +445,12 @@ pub mod staking {
 
         let operator = stake_account.operator;
 
+        // Y2.4: Get current nonce and increment for next request
+        let current_nonce = config.slash_nonce;
+        config.slash_nonce = config.slash_nonce
+            .checked_add(1)
+            .ok_or(StakingError::Overflow)?;
+
         // Initialize the slash request PDA
         slash_request.operator = operator;
         slash_request.amount = slash_amount;
@@ -435,12 +461,13 @@ pub mod staking {
         slash_request.executed = false;
         slash_request.cancelled = false;
         slash_request.bump = ctx.bumps.slash_request;
+        slash_request.slash_nonce = current_nonce;  // Y2.4: Store nonce
 
         let execute_after = clock.unix_timestamp + SLASH_TIMELOCK_PERIOD;
 
         msg!(
-            "Slash requested: {} tokens ({}%) from {} for {:?} - Evidence: {} - Executable after: {}",
-            slash_amount, slash_percentage, operator, violation_type, evidence_cid, execute_after
+            "Slash requested (nonce={}): {} tokens ({}%) from {} for {:?} - Evidence: {} - Executable after: {}",
+            current_nonce, slash_amount, slash_percentage, operator, violation_type, evidence_cid, execute_after
         );
 
         emit!(SlashRequestedEvent {
@@ -696,6 +723,7 @@ pub mod staking {
 /// SECURITY FIX: Global configuration for staking program
 /// Stores admin authority and configurable parameters
 /// Now includes registry_program_id for CPI integration
+/// Y2.5: Added slash_nonce for deterministic SlashRequest PDA seeds
 #[account]
 pub struct GlobalConfig {
     pub admin_authority: Pubkey,        // Admin who can slash and update config (32 bytes)
@@ -705,6 +733,7 @@ pub struct GlobalConfig {
     pub registry_program_id: Pubkey,    // SECURITY FIX: Registry program for CPI (32 bytes)
     pub paused: bool,                   // Emergency pause flag (1 byte)
     pub bump: u8,                       // PDA bump (1 byte)
+    pub slash_nonce: u64,               // Y2.5: Nonce for SlashRequest PDA seeds (8 bytes)
 }
 
 impl GlobalConfig {
@@ -715,7 +744,8 @@ impl GlobalConfig {
         32 +                          // treasury
         32 +                          // registry_program_id
         1 +                           // paused
-        1;                            // bump
+        1 +                           // bump
+        8;                            // slash_nonce (Y2.5)
 }
 
 /// Stake account - tracks operator's staked tokens
@@ -748,6 +778,7 @@ impl StakeAccount {
 /// SECURITY FIX: Slash request account - implements timelock pattern
 /// Stores pending slash requests that can be executed after 24 hours
 /// This prevents instant slashing and allows for dispute resolution
+/// Y2.4: Uses nonce instead of timestamp for PDA seeds
 #[account]
 pub struct SlashRequest {
     pub operator: Pubkey,             // Target operator to slash (32 bytes)
@@ -759,6 +790,7 @@ pub struct SlashRequest {
     pub executed: bool,               // Whether slash has been executed (1 byte)
     pub cancelled: bool,              // Whether slash was cancelled (1 byte)
     pub bump: u8,                     // PDA bump (1 byte)
+    pub slash_nonce: u64,             // Y2.4: Unique nonce for this slash request (8 bytes)
 }
 
 impl SlashRequest {
@@ -774,7 +806,8 @@ impl SlashRequest {
         32 +                          // authority
         1 +                           // executed
         1 +                           // cancelled
-        1;                            // bump
+        1 +                           // bump
+        8;                            // slash_nonce (Y2.4)
 }
 
 /// SECURITY FIX: Initialize global config (one-time setup)
@@ -1041,11 +1074,14 @@ pub struct SlashStake<'info> {
 
 /// SECURITY FIX: Request slash context (Phase 1 of timelock pattern)
 /// Creates a pending slash request PDA with 24-hour execution delay
+/// Y2.4: Uses nonce instead of timestamp for deterministic PDA seeds
 #[derive(Accounts)]
 #[instruction(violation_type: SlashingViolation, evidence_cid: String)]
 pub struct RequestSlash<'info> {
     /// Global config stores authorized oracle (admin_authority)
+    /// Y2.4: Now mutable to increment slash_nonce
     #[account(
+        mut,
         seeds = [b"global_config"],
         bump = global_config.bump
     )]
@@ -1059,12 +1095,12 @@ pub struct RequestSlash<'info> {
     pub stake_account: Account<'info, StakeAccount>,
 
     /// SECURITY FIX: Slash request PDA (initialized here)
-    /// Seeds include operator and timestamp to allow multiple requests
+    /// Y2.4: Seeds use nonce instead of timestamp for deterministic derivation
     #[account(
         init,
         payer = oracle,
         space = SlashRequest::MAX_SIZE,
-        seeds = [b"slash_request", stake_account.operator.as_ref(), &Clock::get()?.unix_timestamp.to_le_bytes()],
+        seeds = [b"slash_request", stake_account.operator.as_ref(), &global_config.slash_nonce.to_le_bytes()],
         bump
     )]
     pub slash_request: Account<'info, SlashRequest>,
@@ -1079,6 +1115,7 @@ pub struct RequestSlash<'info> {
 
 /// SECURITY FIX: Execute slash context (Phase 2 of timelock pattern)
 /// Can only be called 24 hours after request_slash
+/// Y2.4: Uses nonce instead of timestamp for PDA seeds
 #[derive(Accounts)]
 pub struct ExecuteSlash<'info> {
     /// Global config stores treasury for slashed tokens
@@ -1098,9 +1135,10 @@ pub struct ExecuteSlash<'info> {
     pub stake_account: Account<'info, StakeAccount>,
 
     /// Slash request PDA (verified for timelock)
+    /// Y2.4: Uses nonce in seeds instead of timestamp
     #[account(
         mut,
-        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.request_time.to_le_bytes()],
+        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.slash_nonce.to_le_bytes()],
         bump = slash_request.bump
     )]
     pub slash_request: Account<'info, SlashRequest>,
@@ -1145,6 +1183,7 @@ pub struct ExecuteSlash<'info> {
 
 /// SECURITY FIX: Cancel slash context (admin only)
 /// Allows admin to cancel pending slash requests (false positive handling)
+/// Y2.4: Uses nonce instead of timestamp for PDA seeds
 #[derive(Accounts)]
 pub struct CancelSlash<'info> {
     /// Global config stores admin authority
@@ -1155,9 +1194,10 @@ pub struct CancelSlash<'info> {
     pub global_config: Account<'info, GlobalConfig>,
 
     /// Slash request to cancel
+    /// Y2.4: Uses nonce in seeds instead of timestamp
     #[account(
         mut,
-        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.request_time.to_le_bytes()],
+        seeds = [b"slash_request", slash_request.operator.as_ref(), &slash_request.slash_nonce.to_le_bytes()],
         bump = slash_request.bump
     )]
     pub slash_request: Account<'info, SlashRequest>,
@@ -1330,4 +1370,8 @@ pub enum StakingError {
 
     #[msg("Evidence CID exceeds maximum length (128 characters)")]
     EvidenceCidTooLong,
+
+    /// Y2.7: Cooldown period validation
+    #[msg("Cooldown period must be at least 1 day (86400 seconds)")]
+    CooldownTooShort,
 }

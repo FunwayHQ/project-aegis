@@ -73,6 +73,7 @@ pub mod node_registry {
     ///
     /// Creates a PDA account storing node metadata and initial stake amount.
     /// The metadata_url should be an IPFS CID containing detailed node information.
+    /// Y2.6: Uses min_stake_for_registration from RegistryConfig instead of hardcoded constant
     pub fn register_node(
         ctx: Context<RegisterNode>,
         metadata_url: String,
@@ -86,8 +87,9 @@ pub mod node_registry {
             !metadata_url.is_empty(),
             RegistryError::MetadataUrlEmpty
         );
+        // Y2.6: Use config value instead of hardcoded constant
         require!(
-            initial_stake >= MIN_STAKE_FOR_REGISTRATION,
+            initial_stake >= ctx.accounts.registry_config.min_stake_for_registration,
             RegistryError::InsufficientStake
         );
 
@@ -501,8 +503,16 @@ pub struct UpdateRegistryConfig<'info> {
 }
 
 /// Register new node
+/// Y2.6: Updated to include registry_config for min_stake validation
 #[derive(Accounts)]
 pub struct RegisterNode<'info> {
+    /// Y2.6: Registry config for min_stake_for_registration
+    #[account(
+        seeds = [b"registry_config"],
+        bump = registry_config.bump
+    )]
+    pub registry_config: Account<'info, RegistryConfig>,
+
     #[account(
         init,
         payer = operator,

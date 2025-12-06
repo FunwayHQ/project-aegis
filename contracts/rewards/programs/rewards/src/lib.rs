@@ -6,9 +6,14 @@ declare_id!("8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK");
 const REWARD_POOL_SEED: &[u8] = b"reward_pool";
 const OPERATOR_REWARDS_SEED: &[u8] = b"operator_rewards";
 const ORACLE_REGISTRY_SEED: &[u8] = b"oracle_registry";
+/// Y2.3: Seed for nonce tracking account
+const NONCE_TRACKER_SEED: &[u8] = b"nonce_tracker";
 
 /// Minimum stake required (1000 AEGIS with 9 decimals)
 const MIN_STAKE: u64 = 1_000_000_000_000;
+
+/// Y2.3: Maximum nonces to store per operator (sliding window)
+const MAX_STORED_NONCES: usize = 100;
 
 /// Maximum stake multiplier (3x as per whitepaper)
 const MAX_STAKE_MULTIPLIER: u64 = 300; // 3.00x in basis points (100 = 1x)
@@ -158,6 +163,10 @@ pub mod rewards {
 
     /// Record operator performance metrics with Ed25519 signature verification
     /// Per whitepaper: uptime (0.5 weight), latency (0.3 weight), throughput (0.2 weight)
+    ///
+    /// Y2.1: Added epoch validation - epoch must be greater than last_performance_epoch
+    /// Y2.2: Added nonce to signature message to prevent replay attacks
+    /// Y2.3: Nonces are tracked per operator to prevent reuse
     pub fn record_performance(
         ctx: Context<RecordPerformance>,
         uptime_percentage: u8,   // 0-100, weight: 0.5
@@ -165,6 +174,7 @@ pub mod rewards {
         throughput_score: u8,    // 0-100, weight: 0.2
         requests_served: u64,    // For demand multiplier calculation
         epoch: u64,
+        nonce: u64,              // Y2.2: Unique nonce for replay protection
         oracle_pubkey: [u8; 32], // Ed25519 public key of the signing oracle
         _signature: [u8; 64],    // Ed25519 signature (verified via Ed25519 program instruction)
     ) -> Result<()> {
@@ -173,17 +183,32 @@ pub mod rewards {
         require!(latency_score <= 100, RewardsError::InvalidPercentage);
         require!(throughput_score <= 100, RewardsError::InvalidPercentage);
 
+        // Y2.1: Validate epoch is strictly increasing (prevents replay of old epochs)
+        let rewards = &ctx.accounts.operator_rewards;
+        require!(
+            epoch > rewards.last_performance_epoch,
+            RewardsError::EpochNotIncreasing
+        );
+
+        // Y2.3: Check nonce hasn't been used before
+        let nonce_tracker = &mut ctx.accounts.nonce_tracker;
+        require!(
+            !nonce_tracker.used_nonces.contains(&nonce),
+            RewardsError::NonceAlreadyUsed
+        );
+
         // Verify oracle is registered and active
         let registry = &ctx.accounts.oracle_registry;
         let oracle_active = registry.oracles.iter().any(|o| o.pubkey == oracle_pubkey && o.is_active);
         require!(oracle_active, RewardsError::InvalidOracle);
 
         // Verify Ed25519 signature over attestation data
-        // Message format: operator || epoch || uptime || latency || throughput || requests
+        // Y2.2: Message format now includes nonce: operator || epoch || nonce || uptime || latency || throughput || requests
         let operator = ctx.accounts.operator_rewards.operator;
-        let mut message = Vec::with_capacity(32 + 8 + 1 + 1 + 1 + 8);
+        let mut message = Vec::with_capacity(32 + 8 + 8 + 1 + 1 + 1 + 8);
         message.extend_from_slice(operator.as_ref());
         message.extend_from_slice(&epoch.to_le_bytes());
+        message.extend_from_slice(&nonce.to_le_bytes());  // Y2.2: Include nonce in signed message
         message.extend_from_slice(&[uptime_percentage, latency_score, throughput_score]);
         message.extend_from_slice(&requests_served.to_le_bytes());
 
@@ -205,6 +230,13 @@ pub mod rewards {
         // Note: The Ed25519 program will verify the signature automatically
         // We just need to ensure the instruction was included and will be processed
         // The signature, pubkey, and message are embedded in the Ed25519 instruction data
+
+        // Y2.3: Store the used nonce (sliding window - remove oldest if at capacity)
+        if nonce_tracker.used_nonces.len() >= MAX_STORED_NONCES {
+            nonce_tracker.used_nonces.remove(0);
+        }
+        nonce_tracker.used_nonces.push(nonce);
+        nonce_tracker.last_nonce = nonce;
 
         // Update operator rewards with verified metrics
         let rewards = &mut ctx.accounts.operator_rewards;
@@ -229,12 +261,14 @@ pub mod rewards {
             throughput: throughput_score,
             requests: requests_served,
             epoch,
+            nonce,  // Y2.2: Include nonce in event
         });
 
         Ok(())
     }
 
     /// Simplified record_performance for backward compatibility (authority-only, no signature)
+    /// Y2.1: Added epoch validation - epoch must be greater than last_performance_epoch
     pub fn record_performance_authority(
         ctx: Context<RecordPerformanceAuthority>,
         uptime_percentage: u8,
@@ -246,6 +280,13 @@ pub mod rewards {
         require!(uptime_percentage <= 100, RewardsError::InvalidPercentage);
         require!(latency_score <= 100, RewardsError::InvalidPercentage);
         require!(throughput_score <= 100, RewardsError::InvalidPercentage);
+
+        // Y2.1: Validate epoch is strictly increasing
+        let rewards = &ctx.accounts.operator_rewards;
+        require!(
+            epoch > rewards.last_performance_epoch,
+            RewardsError::EpochNotIncreasing
+        );
 
         let rewards = &mut ctx.accounts.operator_rewards;
         rewards.uptime_percentage = uptime_percentage;
@@ -268,8 +309,24 @@ pub mod rewards {
             throughput: throughput_score,
             requests: requests_served,
             epoch,
+            nonce: 0,  // Authority-based recording doesn't use nonces
         });
 
+        Ok(())
+    }
+
+    /// Y2.3: Initialize nonce tracker for an operator
+    /// This account stores used nonces to prevent replay attacks
+    pub fn initialize_nonce_tracker(
+        ctx: Context<InitializeNonceTracker>,
+    ) -> Result<()> {
+        let nonce_tracker = &mut ctx.accounts.nonce_tracker;
+        nonce_tracker.operator = ctx.accounts.operator_rewards.operator;
+        nonce_tracker.used_nonces = Vec::new();
+        nonce_tracker.last_nonce = 0;
+        nonce_tracker.bump = ctx.bumps.nonce_tracker;
+
+        msg!("Nonce tracker initialized for operator: {}", nonce_tracker.operator);
         Ok(())
     }
 
@@ -595,6 +652,24 @@ impl OperatorRewards {
         1;    // bump
 }
 
+/// Y2.3: Nonce Tracker - Stores used nonces per operator to prevent replay attacks
+#[account]
+pub struct NonceTracker {
+    pub operator: Pubkey,              // Associated operator (32)
+    pub used_nonces: Vec<u64>,         // Vector of used nonces (4 + 8 * MAX_STORED_NONCES)
+    pub last_nonce: u64,               // Most recently used nonce (8)
+    pub bump: u8,                      // PDA bump (1)
+}
+
+impl NonceTracker {
+    /// Maximum size assumes MAX_STORED_NONCES (100) nonces stored
+    pub const MAX_SIZE: usize = 8 +   // discriminator
+        32 +                          // operator
+        4 + (8 * MAX_STORED_NONCES) + // used_nonces vector (len + data)
+        8 +                           // last_nonce
+        1;                            // bump
+}
+
 /// Initialize reward pool
 #[derive(Accounts)]
 pub struct InitializePool<'info> {
@@ -634,6 +709,7 @@ pub struct InitializeOperatorRewards<'info> {
 }
 
 /// Record performance with Ed25519 oracle signature verification
+/// Y2.3: Updated to include nonce_tracker for replay protection
 #[derive(Accounts)]
 pub struct RecordPerformance<'info> {
     #[account(mut)]
@@ -651,6 +727,14 @@ pub struct RecordPerformance<'info> {
         bump = operator_rewards.bump
     )]
     pub operator_rewards: Account<'info, OperatorRewards>,
+
+    /// Y2.3: Nonce tracker for replay protection
+    #[account(
+        mut,
+        seeds = [NONCE_TRACKER_SEED, operator_rewards.operator.as_ref()],
+        bump = nonce_tracker.bump
+    )]
+    pub nonce_tracker: Account<'info, NonceTracker>,
 
     /// Instructions sysvar for Ed25519 signature verification
     /// CHECK: This is the instructions sysvar
@@ -676,6 +760,30 @@ pub struct RecordPerformanceAuthority<'info> {
 
     /// Authority that can record performance (must match reward_pool.authority)
     pub authority: Signer<'info>,
+}
+
+/// Y2.3: Initialize nonce tracker for an operator
+#[derive(Accounts)]
+pub struct InitializeNonceTracker<'info> {
+    #[account(
+        seeds = [OPERATOR_REWARDS_SEED, operator_rewards.operator.as_ref()],
+        bump = operator_rewards.bump
+    )]
+    pub operator_rewards: Account<'info, OperatorRewards>,
+
+    #[account(
+        init,
+        payer = payer,
+        space = NonceTracker::MAX_SIZE,
+        seeds = [NONCE_TRACKER_SEED, operator_rewards.operator.as_ref()],
+        bump
+    )]
+    pub nonce_tracker: Account<'info, NonceTracker>,
+
+    #[account(mut)]
+    pub payer: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
 }
 
 /// Initialize oracle registry
@@ -831,6 +939,7 @@ pub struct OperatorRewardsInitializedEvent {
     pub operator: Pubkey,
 }
 
+/// Y2.2: Updated to include nonce for audit trail
 #[event]
 pub struct PerformanceRecordedEvent {
     pub operator: Pubkey,
@@ -839,6 +948,7 @@ pub struct PerformanceRecordedEvent {
     pub throughput: u8,
     pub requests: u64,
     pub epoch: u64,
+    pub nonce: u64,  // Y2.2: Nonce used for this recording
 }
 
 #[event]
@@ -909,4 +1019,10 @@ pub enum RewardsError {
     InvalidOracle,
     #[msg("Invalid Ed25519 signature")]
     InvalidSignature,
+    /// Y2.1: Epoch must be greater than last recorded epoch
+    #[msg("Epoch must be greater than last performance epoch")]
+    EpochNotIncreasing,
+    /// Y2.3: Nonce replay protection
+    #[msg("Nonce has already been used")]
+    NonceAlreadyUsed,
 }
