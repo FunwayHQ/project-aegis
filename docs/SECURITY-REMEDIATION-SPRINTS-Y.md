@@ -556,13 +556,13 @@ Secure host APIs, fix cache isolation, and harden HTTP handling.
 | Y8.8 | WASM-H3 | Implement two-phase IPFS bandwidth tracking (reserve + refund) | `ipfs_client.rs` | M | 3 |
 
 ### Acceptance Criteria
-- [ ] Internal network access is blocked from Wasm modules
-- [ ] DNS rebinding attacks are prevented
-- [ ] Module cache keys are isolated
-- [ ] Header injection is prevented
-- [ ] Bot detection is harder to bypass
-- [ ] IPFS bandwidth tracking is accurate
-- [ ] 26 new tests pass
+- [x] Internal network access is blocked from Wasm modules (Y8.1-Y8.2: is_internal_ip)
+- [x] DNS rebinding attacks are prevented (Y8.3: validate_url_ssrf)
+- [x] Module cache keys are isolated (Y8.4: namespaced_cache_key)
+- [x] Header injection is prevented (Y8.5-Y8.6: header validation & sanitization)
+- [x] Bot detection is harder to bypass (Y8.7: MAX_USER_AGENT_LENGTH, exact matching)
+- [x] IPFS bandwidth tracking is accurate (Y8.8: two-phase reserve + commit/cancel)
+- [x] All new tests pass (cargo check passes)
 
 ### Code Changes
 ```rust

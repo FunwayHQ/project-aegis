@@ -164,6 +164,7 @@ fn get_bandwidth_limit() -> u64 {
 
 /// Bandwidth tracker for rate limiting IPFS downloads
 /// SECURITY FIX (X4.12): Prevents bandwidth exhaustion attacks
+/// Y8.8: Two-phase tracking (reserve + refund) for accurate limiting
 #[derive(Debug)]
 struct BandwidthTracker {
     /// Rolling window of (timestamp, bytes) for bandwidth tracking
@@ -176,6 +177,8 @@ struct BandwidthTracker {
     active_downloads: usize,
     /// Maximum concurrent downloads
     max_concurrent: usize,
+    /// Y8.8: Reserved bandwidth for in-progress downloads (not yet confirmed)
+    reserved_bytes: u64,
 }
 
 impl BandwidthTracker {
@@ -186,6 +189,7 @@ impl BandwidthTracker {
             window_duration: Duration::from_secs(BANDWIDTH_WINDOW_SECS),
             active_downloads: 0,
             max_concurrent: MAX_CONCURRENT_DOWNLOADS,
+            reserved_bytes: 0,
         }
     }
 
@@ -198,6 +202,7 @@ impl BandwidthTracker {
             window_duration: Duration::from_secs(BANDWIDTH_WINDOW_SECS),
             active_downloads: 0,
             max_concurrent: MAX_CONCURRENT_DOWNLOADS,
+            reserved_bytes: 0,
         }
     }
 
@@ -214,15 +219,17 @@ impl BandwidthTracker {
     }
 
     /// Check if a download of given size can proceed
+    /// Y8.8: Now includes reserved bandwidth in the calculation
     fn can_download(&mut self, size_hint: u64) -> bool {
         // Check concurrent download limit
         if self.active_downloads >= self.max_concurrent {
             return false;
         }
 
-        // Check bandwidth limit
+        // Y8.8: Check bandwidth limit including reserved bandwidth
         let current = self.current_usage();
-        current + size_hint <= self.limit_bytes
+        let total_committed = current + self.reserved_bytes;
+        total_committed + size_hint <= self.limit_bytes
     }
 
     /// Record a download
@@ -232,6 +239,45 @@ impl BandwidthTracker {
         if self.window.len() > 10_000 {
             self.cleanup();
         }
+    }
+
+    /// Y8.8: Reserve bandwidth before download starts (phase 1)
+    ///
+    /// This prevents concurrent downloads from exceeding the limit.
+    /// Call `commit_reservation` when download completes, or
+    /// `cancel_reservation` if download fails.
+    fn reserve_bandwidth(&mut self, bytes: u64) -> bool {
+        if !self.can_download(bytes) {
+            return false;
+        }
+        self.reserved_bytes = self.reserved_bytes.saturating_add(bytes);
+        debug!("Y8.8: Reserved {} bytes, total reserved: {}", bytes, self.reserved_bytes);
+        true
+    }
+
+    /// Y8.8: Commit a reservation (phase 2 - success)
+    ///
+    /// Called when download completes successfully.
+    /// `actual_bytes` may be less than reserved (partial download refund).
+    fn commit_reservation(&mut self, reserved: u64, actual_bytes: u64) {
+        // Remove from reserved
+        self.reserved_bytes = self.reserved_bytes.saturating_sub(reserved);
+        // Record actual usage
+        self.record_download(actual_bytes);
+        debug!(
+            "Y8.8: Committed {} bytes (reserved {}), refunded {}",
+            actual_bytes,
+            reserved,
+            reserved.saturating_sub(actual_bytes)
+        );
+    }
+
+    /// Y8.8: Cancel a reservation (phase 2 - failure)
+    ///
+    /// Called when download fails - returns all reserved bandwidth.
+    fn cancel_reservation(&mut self, reserved: u64) {
+        self.reserved_bytes = self.reserved_bytes.saturating_sub(reserved);
+        debug!("Y8.8: Cancelled reservation of {} bytes", reserved);
     }
 
     /// Start a download (increment active count)
@@ -245,9 +291,16 @@ impl BandwidthTracker {
     }
 
     /// Get remaining bandwidth in current window
+    /// Y8.8: Now includes reserved bandwidth
     fn remaining_bandwidth(&mut self) -> u64 {
         let current = self.current_usage();
-        self.limit_bytes.saturating_sub(current)
+        let total_committed = current + self.reserved_bytes;
+        self.limit_bytes.saturating_sub(total_committed)
+    }
+
+    /// Y8.8: Get currently reserved bandwidth
+    fn reserved(&self) -> u64 {
+        self.reserved_bytes
     }
 
     /// Get time until bandwidth resets (oldest entry expires)
@@ -396,42 +449,63 @@ impl IpfsClient {
 
         debug!("Cache MISS for module CID: {}, fetching from IPFS", cid);
 
-        // SECURITY FIX (X4.12): Check bandwidth limits before downloading
-        // Use MAX_MODULE_SIZE as the size hint since we don't know actual size yet
+        // Y8.8: Two-phase bandwidth tracking (reserve + commit/cancel)
+        // Phase 1: Reserve bandwidth before download starts
+        // This prevents concurrent downloads from exceeding the limit
+        let reserved_bytes = MAX_MODULE_SIZE as u64;
         {
             let mut tracker = self.bandwidth_tracker.write().await;
-            if !tracker.can_download(MAX_MODULE_SIZE as u64) {
+            if !tracker.reserve_bandwidth(reserved_bytes) {
                 let remaining = tracker.remaining_bandwidth();
                 let reset_time = tracker.time_until_reset();
                 warn!(
-                    "IPFS bandwidth limit exceeded for CID {}. Remaining: {} bytes, Reset in: {:?}",
-                    cid, remaining, reset_time
+                    "Y8.8: IPFS bandwidth reservation failed for CID {}. Remaining: {} bytes, Reserved: {} bytes, Reset in: {:?}",
+                    cid, remaining, tracker.reserved(), reset_time
                 );
                 anyhow::bail!(
-                    "IPFS bandwidth limit exceeded. Remaining bandwidth: {} bytes. \
+                    "IPFS bandwidth limit exceeded. Remaining bandwidth: {} bytes, Reserved: {} bytes. \
                      Try again in {:?}.",
                     remaining,
+                    tracker.reserved(),
                     reset_time.unwrap_or(Duration::from_secs(60))
                 );
             }
             tracker.start_download();
+            info!(
+                "Y8.8: Reserved {} bytes for CID {}. Total reserved: {} bytes",
+                reserved_bytes, cid, tracker.reserved()
+            );
         }
 
-        // Ensure we end the download tracking even on error
+        // Perform the download
         let result = self.fetch_module_internal(cid).await;
 
-        // Record bandwidth usage and end download
+        // Y8.8 Phase 2: Commit or cancel the reservation
         {
             let mut tracker = self.bandwidth_tracker.write().await;
             tracker.end_download();
-            if let Ok(ref bytes) = result {
-                tracker.record_download(bytes.len() as u64);
-                info!(
-                    "IPFS bandwidth recorded: {} bytes for CID {}. Remaining: {} bytes",
-                    bytes.len(),
-                    cid,
-                    tracker.remaining_bandwidth()
-                );
+
+            match &result {
+                Ok(bytes) => {
+                    // Success: Commit with actual bytes used (may refund unused)
+                    let actual_bytes = bytes.len() as u64;
+                    tracker.commit_reservation(reserved_bytes, actual_bytes);
+                    info!(
+                        "Y8.8: IPFS download complete for CID {}. Used: {} bytes, Refunded: {} bytes, Remaining: {} bytes",
+                        cid,
+                        actual_bytes,
+                        reserved_bytes.saturating_sub(actual_bytes),
+                        tracker.remaining_bandwidth()
+                    );
+                }
+                Err(e) => {
+                    // Failure: Cancel reservation (full refund)
+                    tracker.cancel_reservation(reserved_bytes);
+                    warn!(
+                        "Y8.8: IPFS download failed for CID {}: {}. Refunded {} bytes reservation",
+                        cid, e, reserved_bytes
+                    );
+                }
             }
         }
 
@@ -789,10 +863,12 @@ impl IpfsClient {
     }
 
     /// SECURITY FIX (X4.12): Get bandwidth statistics
+    /// Y8.8: Now includes reserved bandwidth
     pub async fn bandwidth_stats(&self) -> BandwidthStats {
         let mut tracker = self.bandwidth_tracker.write().await;
         BandwidthStats {
             used_bytes: tracker.current_usage(),
+            reserved_bytes: tracker.reserved(),
             limit_bytes: tracker.limit_bytes,
             remaining_bytes: tracker.remaining_bandwidth(),
             active_downloads: tracker.active_downloads,
@@ -803,13 +879,16 @@ impl IpfsClient {
 }
 
 /// SECURITY FIX (X4.12): Statistics about bandwidth usage
+/// Y8.8: Added reserved_bytes for two-phase tracking
 #[derive(Debug, Clone)]
 pub struct BandwidthStats {
-    /// Bytes used in current window
+    /// Bytes used in current window (confirmed downloads)
     pub used_bytes: u64,
+    /// Y8.8: Bytes reserved for in-progress downloads (not yet confirmed)
+    pub reserved_bytes: u64,
     /// Bandwidth limit in bytes per window
     pub limit_bytes: u64,
-    /// Remaining bytes available
+    /// Remaining bytes available (limit - used - reserved)
     pub remaining_bytes: u64,
     /// Number of active downloads
     pub active_downloads: usize,
@@ -1208,9 +1287,129 @@ mod tests {
 
         // Initial state should have no usage
         assert_eq!(stats.used_bytes, 0);
+        assert_eq!(stats.reserved_bytes, 0); // Y8.8: New field
         assert_eq!(stats.remaining_bytes, stats.limit_bytes);
         assert_eq!(stats.active_downloads, 0);
         assert_eq!(stats.max_concurrent_downloads, MAX_CONCURRENT_DOWNLOADS);
+    }
+
+    // ========================================================================
+    // Y8.8: Two-phase bandwidth tracking tests
+    // ========================================================================
+
+    #[test]
+    fn test_y88_reserve_bandwidth() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        // Should be able to reserve bandwidth
+        assert!(tracker.reserve_bandwidth(10 * 1024 * 1024)); // 10MB
+        assert_eq!(tracker.reserved(), 10 * 1024 * 1024);
+
+        // Can reserve more
+        assert!(tracker.reserve_bandwidth(20 * 1024 * 1024)); // 20MB more
+        assert_eq!(tracker.reserved(), 30 * 1024 * 1024);
+
+        // Remaining should account for reserved
+        assert_eq!(tracker.remaining_bandwidth(), 70 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_y88_reserve_exceeds_limit() {
+        let mut tracker = BandwidthTracker::with_limit(50 * 1024 * 1024); // 50MB
+
+        // First reservation should succeed
+        assert!(tracker.reserve_bandwidth(40 * 1024 * 1024)); // 40MB
+
+        // Second reservation would exceed limit
+        assert!(!tracker.reserve_bandwidth(20 * 1024 * 1024)); // 20MB more = 60MB > 50MB limit
+
+        // Reserved should still be just the first amount
+        assert_eq!(tracker.reserved(), 40 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_y88_commit_reservation() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        // Reserve 10MB
+        assert!(tracker.reserve_bandwidth(10 * 1024 * 1024));
+        assert_eq!(tracker.reserved(), 10 * 1024 * 1024);
+
+        // Commit with actual 5MB used (partial refund)
+        tracker.commit_reservation(10 * 1024 * 1024, 5 * 1024 * 1024);
+
+        // Reserved should be 0, used should be 5MB
+        assert_eq!(tracker.reserved(), 0);
+        assert_eq!(tracker.current_usage(), 5 * 1024 * 1024);
+        assert_eq!(tracker.remaining_bandwidth(), 95 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_y88_cancel_reservation() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        // Reserve 30MB
+        assert!(tracker.reserve_bandwidth(30 * 1024 * 1024));
+        assert_eq!(tracker.reserved(), 30 * 1024 * 1024);
+        assert_eq!(tracker.remaining_bandwidth(), 70 * 1024 * 1024);
+
+        // Cancel (full refund - download failed)
+        tracker.cancel_reservation(30 * 1024 * 1024);
+
+        // Reserved should be 0, no usage recorded
+        assert_eq!(tracker.reserved(), 0);
+        assert_eq!(tracker.current_usage(), 0);
+        assert_eq!(tracker.remaining_bandwidth(), 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_y88_concurrent_reservations() {
+        let mut tracker = BandwidthTracker::with_limit(100 * 1024 * 1024); // 100MB
+
+        // Multiple concurrent reservations
+        assert!(tracker.reserve_bandwidth(20 * 1024 * 1024)); // 20MB
+        tracker.start_download();
+        assert!(tracker.reserve_bandwidth(30 * 1024 * 1024)); // 30MB
+        tracker.start_download();
+        assert!(tracker.reserve_bandwidth(40 * 1024 * 1024)); // 40MB
+        tracker.start_download();
+
+        // Total reserved: 90MB
+        assert_eq!(tracker.reserved(), 90 * 1024 * 1024);
+        assert_eq!(tracker.remaining_bandwidth(), 10 * 1024 * 1024);
+
+        // Cannot reserve more than remaining
+        assert!(!tracker.reserve_bandwidth(20 * 1024 * 1024)); // 20MB > 10MB remaining
+
+        // Complete first download with actual 15MB
+        tracker.end_download();
+        tracker.commit_reservation(20 * 1024 * 1024, 15 * 1024 * 1024);
+
+        // Reserved: 70MB, Used: 15MB
+        assert_eq!(tracker.reserved(), 70 * 1024 * 1024);
+        assert_eq!(tracker.current_usage(), 15 * 1024 * 1024);
+        assert_eq!(tracker.remaining_bandwidth(), 15 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_y88_prevents_bandwidth_overcommit() {
+        // SECURITY TEST: Ensure two-phase tracking prevents overcommitting bandwidth
+        let mut tracker = BandwidthTracker::with_limit(50 * 1024 * 1024); // 50MB
+
+        // Simulate 5 concurrent downloads each reserving 10MB
+        for i in 0..5 {
+            assert!(tracker.reserve_bandwidth(10 * 1024 * 1024),
+                "Reservation {} should succeed", i);
+            tracker.start_download();
+        }
+
+        // All bandwidth reserved (50MB)
+        assert_eq!(tracker.reserved(), 50 * 1024 * 1024);
+        assert_eq!(tracker.remaining_bandwidth(), 0);
+
+        // 6th download cannot even start (cannot reserve bandwidth)
+        assert!(!tracker.reserve_bandwidth(10 * 1024 * 1024),
+            "Should not allow 6th reservation - bandwidth exhausted");
     }
 
     // ========================================================================

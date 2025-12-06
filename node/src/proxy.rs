@@ -6,6 +6,92 @@ use std::net::SocketAddr;
 use std::time::Instant;
 use tracing::{error, info, warn};
 
+// =============================================================================
+// Y8.6: Header Value Sanitization
+// =============================================================================
+
+/// Maximum length for header values (RFC 7230 recommends practical limits)
+pub const MAX_HEADER_VALUE_LENGTH: usize = 8192;
+
+/// Y8.6: Sanitize header value to prevent HTTP header injection attacks
+///
+/// This function removes or replaces dangerous characters that could be used
+/// for HTTP response splitting or header injection attacks:
+/// - Removes CR (\\r) and LF (\\n) characters that could split headers
+/// - Removes null bytes (\\0) that could cause truncation
+/// - Truncates excessively long values to prevent DoS
+///
+/// Returns the sanitized header value, safe for use in HTTP responses.
+///
+/// # Examples
+/// ```
+/// use aegis_node::proxy::sanitize_header_value;
+///
+/// // Normal values pass through unchanged
+/// assert_eq!(sanitize_header_value("text/html"), "text/html");
+///
+/// // Dangerous characters are removed
+/// assert_eq!(sanitize_header_value("value\r\nX-Injected: evil"), "valueX-Injected: evil");
+/// ```
+pub fn sanitize_header_value(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .filter(|c| *c != '\r' && *c != '\n' && *c != '\0')
+        .take(MAX_HEADER_VALUE_LENGTH)
+        .collect();
+
+    if sanitized.len() != value.len() {
+        warn!(
+            "Y8.6: Header value sanitized (removed {} chars, original len: {})",
+            value.len() - sanitized.len(),
+            value.len()
+        );
+    }
+
+    sanitized
+}
+
+/// Y8.6: Check if header value is safe (contains no injection characters)
+///
+/// Returns true if the header value is safe, false if it contains
+/// CR, LF, or null characters that could be used for header injection.
+pub fn is_header_value_safe(value: &str) -> bool {
+    !value.contains('\r') && !value.contains('\n') && !value.contains('\0')
+}
+
+/// Y8.6: Validate and sanitize a header name/value pair
+///
+/// Returns Some((name, value)) with sanitized value if valid,
+/// or None if the header should be rejected entirely.
+pub fn validate_header(name: &str, value: &str) -> Option<(String, String)> {
+    // Reject empty names
+    if name.is_empty() {
+        return None;
+    }
+
+    // Reject names that are too long
+    if name.len() > 256 {
+        warn!("Y8.6: Header name too long ({}): {}", name.len(), &name[..50]);
+        return None;
+    }
+
+    // Validate header name characters (RFC 7230 token chars)
+    let name_valid = name.chars().all(|c| {
+        matches!(c, '!' | '#'..='\'' | '*' | '+' | '-' | '.' | '0'..='9' |
+                 'A'..='Z' | '^'..='z' | '|' | '~')
+    });
+
+    if !name_valid {
+        warn!("Y8.6: Invalid header name characters: {}", name);
+        return None;
+    }
+
+    // Sanitize the value
+    let sanitized_value = sanitize_header_value(value);
+
+    Some((name.to_string(), sanitized_value))
+}
+
 /// Proxy configuration
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ProxyConfig {

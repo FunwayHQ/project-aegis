@@ -250,6 +250,188 @@ fn is_header_name_safe(name: &str) -> bool {
         })
 }
 
+// =============================================================================
+// Y8.1-Y8.3: SSRF Protection
+// =============================================================================
+//
+// These functions prevent Server-Side Request Forgery (SSRF) attacks by:
+// 1. Blocking requests to internal/private IP ranges
+// 2. Validating resolved IPs against blocklist (DNS rebinding protection)
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+
+/// Y8.1-Y8.2: Check if an IP address is internal/private
+///
+/// Returns true if the IP is:
+/// - Loopback (127.x.x.x, ::1)
+/// - Private (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
+/// - Link-local (169.254.x.x, fe80::)
+/// - Reserved for documentation/testing
+fn is_internal_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_internal_ipv4(v4),
+        IpAddr::V6(v6) => is_internal_ipv6(v6),
+    }
+}
+
+/// Y8.2: Check if IPv4 address is internal
+fn is_internal_ipv4(ip: &Ipv4Addr) -> bool {
+    // Loopback: 127.0.0.0/8
+    if ip.is_loopback() {
+        return true;
+    }
+
+    // Private: 10.0.0.0/8
+    if ip.octets()[0] == 10 {
+        return true;
+    }
+
+    // Private: 172.16.0.0/12 (172.16.x.x - 172.31.x.x)
+    if ip.octets()[0] == 172 && (ip.octets()[1] >= 16 && ip.octets()[1] <= 31) {
+        return true;
+    }
+
+    // Private: 192.168.0.0/16
+    if ip.octets()[0] == 192 && ip.octets()[1] == 168 {
+        return true;
+    }
+
+    // Link-local: 169.254.0.0/16
+    if ip.octets()[0] == 169 && ip.octets()[1] == 254 {
+        return true;
+    }
+
+    // Broadcast: 255.255.255.255
+    if ip.is_broadcast() {
+        return true;
+    }
+
+    // Documentation: 192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24
+    if (ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 2)
+        || (ip.octets()[0] == 198 && ip.octets()[1] == 51 && ip.octets()[2] == 100)
+        || (ip.octets()[0] == 203 && ip.octets()[1] == 0 && ip.octets()[2] == 113)
+    {
+        return true;
+    }
+
+    // Unspecified: 0.0.0.0
+    if ip.is_unspecified() {
+        return true;
+    }
+
+    // Cloud metadata endpoints (common)
+    // 169.254.169.254 (AWS, GCP, Azure metadata)
+    if ip.octets() == [169, 254, 169, 254] {
+        return true;
+    }
+
+    false
+}
+
+/// Y8.2: Check if IPv6 address is internal
+fn is_internal_ipv6(ip: &Ipv6Addr) -> bool {
+    // Loopback: ::1
+    if ip.is_loopback() {
+        return true;
+    }
+
+    // Unspecified: ::
+    if ip.is_unspecified() {
+        return true;
+    }
+
+    // IPv4-mapped IPv6: ::ffff:x.x.x.x
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return is_internal_ipv4(&v4);
+    }
+
+    // Link-local: fe80::/10
+    let segments = ip.segments();
+    if (segments[0] & 0xffc0) == 0xfe80 {
+        return true;
+    }
+
+    // Unique Local Address (ULA): fc00::/7
+    if (segments[0] & 0xfe00) == 0xfc00 {
+        return true;
+    }
+
+    // Site-local (deprecated): fec0::/10
+    if (segments[0] & 0xffc0) == 0xfec0 {
+        return true;
+    }
+
+    false
+}
+
+/// Y8.3: Validate URL and resolve DNS with SSRF protection
+///
+/// This function performs the following checks:
+/// 1. Parses the URL and extracts the hostname
+/// 2. Resolves the hostname to IP addresses
+/// 3. Checks all resolved IPs against the internal IP blocklist
+/// 4. Returns Ok(()) only if all resolved IPs are safe
+///
+/// This provides DNS rebinding protection by verifying the resolved IP
+/// at the time of the request.
+fn validate_url_ssrf(url: &str) -> Result<(), String> {
+    // Parse URL to extract host
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(e) => return Err(format!("Invalid URL: {}", e)),
+    };
+
+    // Get host (must exist for HTTP/HTTPS)
+    let host = match parsed.host_str() {
+        Some(h) => h,
+        None => return Err("URL has no host".to_string()),
+    };
+
+    // Get port (default to 443 for HTTPS)
+    let port = parsed.port().unwrap_or(443);
+
+    // Check if host is an IP address directly
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_internal_ip(&ip) {
+            return Err(format!("SSRF blocked: {} is an internal IP", ip));
+        }
+        return Ok(());
+    }
+
+    // Resolve hostname to IP addresses
+    let socket_addr = format!("{}:{}", host, port);
+    let addrs = match socket_addr.to_socket_addrs() {
+        Ok(a) => a,
+        Err(e) => return Err(format!("DNS resolution failed: {}", e)),
+    };
+
+    // Check all resolved IPs
+    for addr in addrs {
+        if is_internal_ip(&addr.ip()) {
+            warn!(
+                "SSRF blocked: {} resolved to internal IP {}",
+                host,
+                addr.ip()
+            );
+            return Err(format!(
+                "SSRF blocked: {} resolved to internal IP {}",
+                host,
+                addr.ip()
+            ));
+        }
+    }
+
+    Ok(())
+}
+
+/// Y8.4: Generate namespaced cache key for module isolation
+///
+/// Prefixes the user-provided key with the module ID to prevent
+/// cross-module cache pollution attacks.
+fn namespaced_cache_key(module_id: &str, key: &str) -> String {
+    format!("aegis:wasm:{}:{}", module_id, key)
+}
+
 /// Wasm module type
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WasmModuleType {
@@ -315,6 +497,8 @@ pub struct EdgeFunctionStoreData {
     pub shared_buffer: Arc<RwLock<Vec<u8>>>,
     /// Sprint 15: Execution context for request/response manipulation
     pub execution_context: Arc<RwLock<WasmExecutionContext>>,
+    /// Y8.4: Module ID for cache key namespacing (SSRF and cache isolation)
+    pub module_id: String,
 }
 
 /// Sprint 15: Result from edge function execution with request/response context
@@ -881,6 +1065,7 @@ impl WasmRuntime {
         let start = Instant::now();
 
         // Create store data with cache, HTTP client, and execution context
+        // Y8.4: Include module_id for cache key namespacing
         let store_data = EdgeFunctionStoreData {
             cache: cache_client,
             http_client: reqwest::Client::builder()
@@ -888,6 +1073,7 @@ impl WasmRuntime {
                 .build()?,
             shared_buffer: Arc::new(RwLock::new(Vec::new())),
             execution_context: Arc::new(RwLock::new(context)),
+            module_id: module_id.to_string(),
         };
 
         // Create store with resource limits
@@ -1021,10 +1207,12 @@ impl WasmRuntime {
                     }
                 };
 
-                debug!("cache_get called for key: {}", key);
+                // Y8.4: Namespace cache key by module ID for isolation
+                let data = caller.data_mut();
+                let namespaced_key = namespaced_cache_key(&data.module_id, &key);
+                debug!("cache_get called for key: {} (namespaced: {})", key, namespaced_key);
 
                 // Access cache client from store data
-                let data = caller.data_mut();
                 let cache_arc = match &data.cache {
                     Some(c) => c.clone(),
                     None => {
@@ -1038,7 +1226,7 @@ impl WasmRuntime {
                 let result = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
                         let mut cache = cache_arc.lock().await;
-                        cache.get(&key).await
+                        cache.get(&namespaced_key).await
                     })
                 });
 
@@ -1123,10 +1311,12 @@ impl WasmRuntime {
                     }
                 };
 
-                debug!("cache_set called for key: {} (ttl: {}s)", key, ttl);
+                // Y8.4: Namespace cache key by module ID for isolation
+                let data = caller.data_mut();
+                let namespaced_key = namespaced_cache_key(&data.module_id, &key);
+                debug!("cache_set called for key: {} (namespaced: {}, ttl: {}s)", key, namespaced_key, ttl);
 
                 // Access cache client from store data
-                let data = caller.data_mut();
                 let cache_arc = match &data.cache {
                     Some(c) => c.clone(),
                     None => {
@@ -1140,13 +1330,13 @@ impl WasmRuntime {
                 let result = tokio::task::block_in_place(|| {
                     tokio::runtime::Handle::current().block_on(async {
                         let mut cache = cache_arc.lock().await;
-                        cache.set(&key, &value_bytes, Some(ttl as u64)).await
+                        cache.set(&namespaced_key, &value_bytes, Some(ttl as u64)).await
                     })
                 });
 
                 match result {
                     Ok(_) => {
-                        debug!("Successfully cached key: {}", key);
+                        debug!("Successfully cached key: {}", namespaced_key);
                         0
                     }
                     Err(e) => {
@@ -1191,6 +1381,12 @@ impl WasmRuntime {
                 // Security fix: HTTPS-only validation
                 if !url.starts_with("https://") {
                     error!("Invalid URL scheme (HTTPS required): {}", url);
+                    return -1;
+                }
+
+                // Y8.1-Y8.3: SSRF protection - validate URL and resolved IPs
+                if let Err(e) = validate_url_ssrf(&url) {
+                    error!("SSRF validation failed for URL {}: {}", url, e);
                     return -1;
                 }
 
@@ -1313,6 +1509,12 @@ impl WasmRuntime {
                 // Security fix: HTTPS-only validation
                 if !url.starts_with("https://") {
                     error!("Invalid URL scheme (HTTPS required): {}", url);
+                    return -1;
+                }
+
+                // Y8.1-Y8.3: SSRF protection - validate URL and resolved IPs
+                if let Err(e) = validate_url_ssrf(&url) {
+                    error!("SSRF validation failed for URL {}: {}", url, e);
                     return -1;
                 }
 
@@ -1442,6 +1644,12 @@ impl WasmRuntime {
                     return -1;
                 }
 
+                // Y8.1-Y8.3: SSRF protection - validate URL and resolved IPs
+                if let Err(e) = validate_url_ssrf(&url) {
+                    error!("SSRF validation failed for URL {}: {}", url, e);
+                    return -1;
+                }
+
                 // Validate content-type
                 if content_type.is_empty() {
                     error!("Content-Type is required for PUT requests");
@@ -1536,6 +1744,12 @@ impl WasmRuntime {
                 // Security fix: HTTPS-only validation
                 if !url.starts_with("https://") {
                     error!("Invalid URL scheme (HTTPS required): {}", url);
+                    return -1;
+                }
+
+                // Y8.1-Y8.3: SSRF protection - validate URL and resolved IPs
+                if let Err(e) = validate_url_ssrf(&url) {
+                    error!("SSRF validation failed for URL {}: {}", url, e);
                     return -1;
                 }
 
@@ -1843,6 +2057,12 @@ impl WasmRuntime {
                     }
                 };
 
+                // Y8.5: Validate header name format (RFC 7230)
+                if !is_header_name_safe(&header_name) {
+                    error!("Invalid header name format (RFC 7230 violation): {}", header_name);
+                    return -1;
+                }
+
                 // Security fix: Validate header value for CRLF injection
                 if !is_header_value_safe(&header_value) {
                     error!("Header value contains CRLF characters (injection attempt): {}", header_name);
@@ -1909,6 +2129,12 @@ impl WasmRuntime {
                         return -1;
                     }
                 };
+
+                // Y8.5: Validate header name format (RFC 7230)
+                if !is_header_name_safe(&header_name) {
+                    error!("Invalid header name format (RFC 7230 violation): {}", header_name);
+                    return -1;
+                }
 
                 // Security fix: Validate header value for CRLF injection
                 if !is_header_value_safe(&header_value) {
