@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use crdts::{CmRDT, PNCounter, CvRDT};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use tracing::{debug, info};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tracing::{debug, info, warn};
 
 /// Actor ID type for CRDT identification
 pub type ActorId = u64;
@@ -222,6 +224,471 @@ impl DistributedCounter {
     }
 }
 
+// =============================================================================
+// Y6.5: Byzantine Tolerance Validation for CRDT Operations
+// =============================================================================
+
+/// Maximum allowed increment value per operation
+/// Prevents Byzantine actors from artificially inflating counters
+const MAX_INCREMENT_VALUE: u64 = 10_000;
+
+/// Maximum allowed operations per actor per second
+const MAX_OPS_PER_SECOND: u32 = 100;
+
+/// Byzantine behavior detection result
+#[derive(Debug, Clone, PartialEq)]
+pub enum ByzantineCheck {
+    /// Operation is valid
+    Valid,
+    /// Operation exceeds maximum value
+    ExcessiveValue { value: u64, max: u64 },
+    /// Actor is sending too many operations
+    RateLimitExceeded { actor: ActorId, ops_per_sec: u32 },
+    /// Operation appears to be a replay
+    PossibleReplay { actor: ActorId, duplicate_count: u32 },
+    /// Actor has suspicious pattern
+    SuspiciousPattern { actor: ActorId, reason: String },
+}
+
+/// Y6.5: Byzantine-tolerant CRDT operation validator
+///
+/// Validates incoming CRDT operations to detect and reject
+/// potentially Byzantine (malicious or faulty) behavior.
+#[derive(Debug)]
+pub struct ByzantineValidator {
+    /// Maximum allowed increment value
+    max_value: u64,
+    /// Maximum operations per second per actor
+    max_ops_per_sec: u32,
+    /// Track recent operations per actor for rate limiting
+    actor_ops: HashMap<ActorId, Vec<Instant>>,
+    /// Track operation hashes for replay detection
+    seen_ops: HashMap<u64, u32>,
+}
+
+impl ByzantineValidator {
+    /// Create a new validator with default limits
+    pub fn new() -> Self {
+        Self {
+            max_value: MAX_INCREMENT_VALUE,
+            max_ops_per_sec: MAX_OPS_PER_SECOND,
+            actor_ops: HashMap::new(),
+            seen_ops: HashMap::new(),
+        }
+    }
+
+    /// Create a validator with custom limits
+    pub fn with_limits(max_value: u64, max_ops_per_sec: u32) -> Self {
+        Self {
+            max_value,
+            max_ops_per_sec,
+            actor_ops: HashMap::new(),
+            seen_ops: HashMap::new(),
+        }
+    }
+
+    /// Y6.5: Validate a counter operation
+    pub fn validate_operation(&mut self, op: &CounterOp) -> ByzantineCheck {
+        match op {
+            CounterOp::Increment { actor, value } => {
+                // Check value bounds
+                if *value > self.max_value {
+                    warn!(
+                        "Y6.5: Byzantine check FAILED - excessive value {} from actor {} (max: {})",
+                        value, actor, self.max_value
+                    );
+                    return ByzantineCheck::ExcessiveValue {
+                        value: *value,
+                        max: self.max_value,
+                    };
+                }
+
+                // Check rate limit
+                if let Some(check) = self.check_rate_limit(*actor) {
+                    return check;
+                }
+
+                // Check for replay
+                if let Some(check) = self.check_replay(op, *actor) {
+                    return check;
+                }
+
+                ByzantineCheck::Valid
+            }
+            CounterOp::Decrement { actor, value } => {
+                // Check value bounds
+                if *value > self.max_value {
+                    return ByzantineCheck::ExcessiveValue {
+                        value: *value,
+                        max: self.max_value,
+                    };
+                }
+
+                // Check rate limit
+                if let Some(check) = self.check_rate_limit(*actor) {
+                    return check;
+                }
+
+                ByzantineCheck::Valid
+            }
+            CounterOp::FullState { state: _ } => {
+                // Full state syncs are validated by signature, not here
+                ByzantineCheck::Valid
+            }
+        }
+    }
+
+    /// Check rate limit for an actor
+    fn check_rate_limit(&mut self, actor: ActorId) -> Option<ByzantineCheck> {
+        let now = Instant::now();
+        let ops = self.actor_ops.entry(actor).or_insert_with(Vec::new);
+
+        // Remove old entries (older than 1 second)
+        ops.retain(|t| now.duration_since(*t).as_secs() < 1);
+
+        // Check if over limit
+        if ops.len() as u32 >= self.max_ops_per_sec {
+            warn!(
+                "Y6.5: Byzantine check FAILED - rate limit exceeded for actor {} ({} ops/sec)",
+                actor,
+                ops.len()
+            );
+            return Some(ByzantineCheck::RateLimitExceeded {
+                actor,
+                ops_per_sec: ops.len() as u32,
+            });
+        }
+
+        // Record this operation
+        ops.push(now);
+        None
+    }
+
+    /// Check for potential replay attack
+    fn check_replay(&mut self, op: &CounterOp, actor: ActorId) -> Option<ByzantineCheck> {
+        // Simple hash of the operation
+        let hash = Self::hash_op(op);
+
+        let count = self.seen_ops.entry(hash).or_insert(0);
+        *count += 1;
+
+        // If we've seen this exact operation many times, it's suspicious
+        if *count > 5 {
+            warn!(
+                "Y6.5: Byzantine check WARNING - possible replay from actor {} (count: {})",
+                actor, count
+            );
+            return Some(ByzantineCheck::PossibleReplay {
+                actor,
+                duplicate_count: *count,
+            });
+        }
+
+        None
+    }
+
+    /// Simple hash of an operation for deduplication
+    fn hash_op(op: &CounterOp) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let mut hasher = DefaultHasher::new();
+        match op {
+            CounterOp::Increment { actor, value } => {
+                "inc".hash(&mut hasher);
+                actor.hash(&mut hasher);
+                value.hash(&mut hasher);
+            }
+            CounterOp::Decrement { actor, value } => {
+                "dec".hash(&mut hasher);
+                actor.hash(&mut hasher);
+                value.hash(&mut hasher);
+            }
+            CounterOp::FullState { state } => {
+                "full".hash(&mut hasher);
+                state.hash(&mut hasher);
+            }
+        }
+        hasher.finish()
+    }
+
+    /// Cleanup old tracking data
+    pub fn cleanup(&mut self) {
+        let now = Instant::now();
+
+        // Remove actors with no recent operations
+        self.actor_ops.retain(|_, ops| {
+            ops.retain(|t| now.duration_since(*t).as_secs() < 60);
+            !ops.is_empty()
+        });
+
+        // Limit seen_ops size
+        if self.seen_ops.len() > 10_000 {
+            // Keep only entries with high counts (potential attackers)
+            self.seen_ops.retain(|_, count| *count > 2);
+        }
+    }
+}
+
+impl Default for ByzantineValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// =============================================================================
+// Y6.6: Suspicious Actor Tracking
+// =============================================================================
+
+/// Maximum number of suspicious actors to track
+const MAX_TRACKED_ACTORS: usize = 1000;
+
+/// Threshold for marking an actor as suspicious
+const SUSPICIOUS_THRESHOLD: u32 = 10;
+
+/// Threshold for blocking an actor
+const BLOCK_THRESHOLD: u32 = 50;
+
+/// Suspicious behavior category
+#[derive(Debug, Clone, PartialEq)]
+pub enum SuspiciousBehavior {
+    /// Large value jumps
+    LargeValueJump { from: u64, to: u64 },
+    /// Rapid fire operations
+    RapidOperations { count: u32, window_secs: u32 },
+    /// Inconsistent timestamps
+    InconsistentTimestamp { expected: u64, received: u64 },
+    /// Conflicting operations
+    ConflictingOperation { reason: String },
+    /// Failed Byzantine check
+    ByzantineViolation { check: ByzantineCheck },
+}
+
+/// Record of an actor's suspicious activity
+#[derive(Debug, Clone)]
+pub struct ActorRecord {
+    /// Actor ID
+    pub actor_id: ActorId,
+    /// Suspicious behavior count
+    pub suspicious_count: u32,
+    /// Last known value
+    pub last_value: u64,
+    /// Last operation timestamp
+    pub last_timestamp: u64,
+    /// Recent behaviors
+    pub behaviors: Vec<(u64, SuspiciousBehavior)>,
+    /// Whether actor is blocked
+    pub is_blocked: bool,
+}
+
+impl ActorRecord {
+    fn new(actor_id: ActorId) -> Self {
+        Self {
+            actor_id,
+            suspicious_count: 0,
+            last_value: 0,
+            last_timestamp: 0,
+            behaviors: Vec::new(),
+            is_blocked: false,
+        }
+    }
+}
+
+/// Y6.6: Suspicious actor tracker
+///
+/// Tracks actors exhibiting suspicious patterns and can recommend
+/// blocking or additional verification.
+#[derive(Debug)]
+pub struct SuspiciousActorTracker {
+    /// Actor records
+    actors: HashMap<ActorId, ActorRecord>,
+    /// Suspicious threshold
+    suspicious_threshold: u32,
+    /// Block threshold
+    block_threshold: u32,
+}
+
+impl SuspiciousActorTracker {
+    /// Create a new tracker
+    pub fn new() -> Self {
+        Self {
+            actors: HashMap::new(),
+            suspicious_threshold: SUSPICIOUS_THRESHOLD,
+            block_threshold: BLOCK_THRESHOLD,
+        }
+    }
+
+    /// Create with custom thresholds
+    pub fn with_thresholds(suspicious_threshold: u32, block_threshold: u32) -> Self {
+        Self {
+            actors: HashMap::new(),
+            suspicious_threshold,
+            block_threshold,
+        }
+    }
+
+    /// Record a suspicious behavior for an actor
+    pub fn record_behavior(&mut self, actor_id: ActorId, behavior: SuspiciousBehavior) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        let record = self.actors.entry(actor_id).or_insert_with(|| ActorRecord::new(actor_id));
+        record.suspicious_count += 1;
+        record.behaviors.push((now, behavior.clone()));
+
+        // Trim old behaviors (keep last 100)
+        if record.behaviors.len() > 100 {
+            record.behaviors.drain(0..50);
+        }
+
+        // Check if should be blocked
+        if record.suspicious_count >= self.block_threshold && !record.is_blocked {
+            record.is_blocked = true;
+            warn!(
+                "Y6.6: Actor {} BLOCKED after {} suspicious behaviors",
+                actor_id, record.suspicious_count
+            );
+        } else if record.suspicious_count >= self.suspicious_threshold {
+            warn!(
+                "Y6.6: Actor {} marked SUSPICIOUS ({} behaviors)",
+                actor_id, record.suspicious_count
+            );
+        }
+
+        // Limit total tracked actors
+        if self.actors.len() > MAX_TRACKED_ACTORS {
+            self.prune_old_records();
+        }
+    }
+
+    /// Record a Byzantine violation
+    pub fn record_byzantine_violation(&mut self, actor_id: ActorId, check: ByzantineCheck) {
+        self.record_behavior(
+            actor_id,
+            SuspiciousBehavior::ByzantineViolation { check },
+        );
+    }
+
+    /// Check if an actor is blocked
+    pub fn is_blocked(&self, actor_id: ActorId) -> bool {
+        self.actors
+            .get(&actor_id)
+            .map(|r| r.is_blocked)
+            .unwrap_or(false)
+    }
+
+    /// Check if an actor is suspicious (but not blocked)
+    pub fn is_suspicious(&self, actor_id: ActorId) -> bool {
+        self.actors.get(&actor_id).map_or(false, |r| {
+            r.suspicious_count >= self.suspicious_threshold && !r.is_blocked
+        })
+    }
+
+    /// Get the suspicious count for an actor
+    pub fn get_suspicious_count(&self, actor_id: ActorId) -> u32 {
+        self.actors
+            .get(&actor_id)
+            .map(|r| r.suspicious_count)
+            .unwrap_or(0)
+    }
+
+    /// Track a value update for an actor
+    pub fn track_value_update(&mut self, actor_id: ActorId, new_value: u64, timestamp: u64) {
+        // First, get existing values and determine what behaviors to record
+        let behaviors_to_record: Vec<SuspiciousBehavior> = {
+            let record = self.actors.entry(actor_id).or_insert_with(|| ActorRecord::new(actor_id));
+            let mut behaviors = Vec::new();
+
+            // Check for suspicious large value jumps
+            if record.last_value > 0 {
+                let diff = if new_value > record.last_value {
+                    new_value - record.last_value
+                } else {
+                    record.last_value - new_value
+                };
+
+                // If jump is > 100x the previous value, it's suspicious
+                if diff > record.last_value * 100 && diff > 1000 {
+                    behaviors.push(SuspiciousBehavior::LargeValueJump {
+                        from: record.last_value,
+                        to: new_value,
+                    });
+                }
+            }
+
+            // Check for timestamp issues
+            if timestamp < record.last_timestamp && record.last_timestamp > 0 {
+                behaviors.push(SuspiciousBehavior::InconsistentTimestamp {
+                    expected: record.last_timestamp,
+                    received: timestamp,
+                });
+            }
+
+            // Update record values
+            record.last_value = new_value;
+            record.last_timestamp = timestamp;
+
+            behaviors
+        };
+
+        // Now record any suspicious behaviors (after the borrow is released)
+        for behavior in behaviors_to_record {
+            self.record_behavior(actor_id, behavior);
+        }
+    }
+
+    /// Unblock an actor (e.g., after manual review)
+    pub fn unblock(&mut self, actor_id: ActorId) {
+        if let Some(record) = self.actors.get_mut(&actor_id) {
+            record.is_blocked = false;
+            record.suspicious_count = 0;
+            record.behaviors.clear();
+            info!("Y6.6: Actor {} UNBLOCKED", actor_id);
+        }
+    }
+
+    /// Get all blocked actors
+    pub fn get_blocked_actors(&self) -> Vec<ActorId> {
+        self.actors
+            .iter()
+            .filter(|(_, r)| r.is_blocked)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Get all suspicious actors
+    pub fn get_suspicious_actors(&self) -> Vec<ActorId> {
+        self.actors
+            .iter()
+            .filter(|(_, r)| r.suspicious_count >= self.suspicious_threshold && !r.is_blocked)
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
+    /// Prune old records to limit memory usage
+    fn prune_old_records(&mut self) {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Remove actors with no recent activity and low suspicious count
+        self.actors.retain(|_, r| {
+            let age = now.saturating_sub(r.last_timestamp);
+            // Keep if: blocked, high suspicious count, or recent activity
+            r.is_blocked || r.suspicious_count > 5 || age < 3600
+        });
+    }
+}
+
+impl Default for SuspiciousActorTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,5 +880,215 @@ mod tests {
 
         // Should be sum of 1+2+3+...+10 = 55
         assert_eq!(counters[0].value().unwrap(), 55);
+    }
+
+    // ========================================
+    // Y6.5: Byzantine Tolerance Tests
+    // ========================================
+
+    #[test]
+    fn test_y65_byzantine_validator_new() {
+        let validator = ByzantineValidator::new();
+        assert_eq!(validator.max_value, MAX_INCREMENT_VALUE);
+        assert_eq!(validator.max_ops_per_sec, MAX_OPS_PER_SECOND);
+    }
+
+    #[test]
+    fn test_y65_byzantine_validator_valid_operation() {
+        let mut validator = ByzantineValidator::new();
+        let op = CounterOp::Increment {
+            actor: 1,
+            value: 100,
+        };
+
+        let result = validator.validate_operation(&op);
+        assert_eq!(result, ByzantineCheck::Valid);
+    }
+
+    #[test]
+    fn test_y65_byzantine_validator_excessive_value() {
+        let mut validator = ByzantineValidator::with_limits(1000, 100);
+        let op = CounterOp::Increment {
+            actor: 1,
+            value: 5000, // Exceeds limit of 1000
+        };
+
+        let result = validator.validate_operation(&op);
+        match result {
+            ByzantineCheck::ExcessiveValue { value, max } => {
+                assert_eq!(value, 5000);
+                assert_eq!(max, 1000);
+            }
+            _ => panic!("Expected ExcessiveValue"),
+        }
+    }
+
+    #[test]
+    fn test_y65_byzantine_validator_rate_limit() {
+        let mut validator = ByzantineValidator::with_limits(10000, 5);
+
+        // First 5 should succeed
+        for i in 0..5 {
+            let op = CounterOp::Increment { actor: 1, value: i };
+            let result = validator.validate_operation(&op);
+            assert_eq!(result, ByzantineCheck::Valid, "Operation {} should succeed", i);
+        }
+
+        // 6th should be rate limited
+        let op = CounterOp::Increment { actor: 1, value: 5 };
+        let result = validator.validate_operation(&op);
+        match result {
+            ByzantineCheck::RateLimitExceeded { actor, ops_per_sec } => {
+                assert_eq!(actor, 1);
+                assert_eq!(ops_per_sec, 5);
+            }
+            _ => panic!("Expected RateLimitExceeded, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn test_y65_byzantine_validator_different_actors() {
+        let mut validator = ByzantineValidator::with_limits(10000, 2);
+
+        // Actor 1
+        for _ in 0..2 {
+            let op = CounterOp::Increment { actor: 1, value: 1 };
+            validator.validate_operation(&op);
+        }
+
+        // Actor 2 should still have their own limit
+        let op = CounterOp::Increment { actor: 2, value: 1 };
+        let result = validator.validate_operation(&op);
+        assert_eq!(result, ByzantineCheck::Valid);
+    }
+
+    #[test]
+    fn test_y65_byzantine_validator_full_state_always_valid() {
+        let mut validator = ByzantineValidator::new();
+        let op = CounterOp::FullState {
+            state: vec![1, 2, 3, 4, 5],
+        };
+
+        let result = validator.validate_operation(&op);
+        assert_eq!(result, ByzantineCheck::Valid);
+    }
+
+    // ========================================
+    // Y6.6: Suspicious Actor Tracking Tests
+    // ========================================
+
+    #[test]
+    fn test_y66_suspicious_tracker_new() {
+        let tracker = SuspiciousActorTracker::new();
+        assert!(!tracker.is_blocked(1));
+        assert!(!tracker.is_suspicious(1));
+        assert_eq!(tracker.get_suspicious_count(1), 0);
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_record_behavior() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(3, 5);
+
+        // Record some behaviors
+        tracker.record_behavior(1, SuspiciousBehavior::LargeValueJump { from: 10, to: 1000 });
+        assert_eq!(tracker.get_suspicious_count(1), 1);
+        assert!(!tracker.is_suspicious(1));
+
+        tracker.record_behavior(1, SuspiciousBehavior::LargeValueJump { from: 10, to: 2000 });
+        tracker.record_behavior(1, SuspiciousBehavior::LargeValueJump { from: 10, to: 3000 });
+        assert!(tracker.is_suspicious(1));
+        assert!(!tracker.is_blocked(1));
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_block_actor() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(2, 4);
+
+        // Record enough behaviors to trigger blocking
+        for i in 0..5 {
+            tracker.record_behavior(
+                1,
+                SuspiciousBehavior::InconsistentTimestamp {
+                    expected: 100,
+                    received: 50 + i,
+                },
+            );
+        }
+
+        assert!(tracker.is_blocked(1));
+        assert!(!tracker.is_suspicious(1)); // Blocked, not just suspicious
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_unblock() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(1, 2);
+
+        // Block the actor
+        for _ in 0..3 {
+            tracker.record_behavior(1, SuspiciousBehavior::LargeValueJump { from: 1, to: 1000 });
+        }
+        assert!(tracker.is_blocked(1));
+
+        // Unblock
+        tracker.unblock(1);
+        assert!(!tracker.is_blocked(1));
+        assert_eq!(tracker.get_suspicious_count(1), 0);
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_get_blocked_actors() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(1, 2);
+
+        // Block actors 1 and 2
+        for _ in 0..3 {
+            tracker.record_behavior(1, SuspiciousBehavior::LargeValueJump { from: 1, to: 1000 });
+            tracker.record_behavior(2, SuspiciousBehavior::LargeValueJump { from: 1, to: 2000 });
+        }
+
+        let blocked = tracker.get_blocked_actors();
+        assert_eq!(blocked.len(), 2);
+        assert!(blocked.contains(&1));
+        assert!(blocked.contains(&2));
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_track_value_update() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(1, 5);
+
+        // Normal update
+        tracker.track_value_update(1, 100, 1000);
+        assert_eq!(tracker.get_suspicious_count(1), 0);
+
+        // Large value jump (> 100x)
+        tracker.track_value_update(1, 1_000_000, 2000);
+        assert!(tracker.get_suspicious_count(1) >= 1);
+    }
+
+    #[test]
+    fn test_y66_suspicious_tracker_timestamp_regression() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(1, 5);
+
+        // First update
+        tracker.track_value_update(1, 100, 1000);
+
+        // Second update with older timestamp (regression)
+        tracker.track_value_update(1, 200, 500);
+
+        assert!(tracker.get_suspicious_count(1) >= 1);
+    }
+
+    #[test]
+    fn test_y66_record_byzantine_violation() {
+        let mut tracker = SuspiciousActorTracker::with_thresholds(1, 5);
+
+        tracker.record_byzantine_violation(
+            1,
+            ByzantineCheck::ExcessiveValue {
+                value: 100000,
+                max: 10000,
+            },
+        );
+
+        assert!(tracker.is_suspicious(1));
     }
 }

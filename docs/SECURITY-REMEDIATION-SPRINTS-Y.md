@@ -346,40 +346,70 @@ pub struct ChallengeToken {
 
 ---
 
-## Sprint Y6: Distributed Systems Resilience
+## Sprint Y6: Distributed Systems Resilience ✅ COMPLETE
 
 **Duration:** 1 week
 **Priority:** 🟡 MEDIUM
 **Team:** Backend/Distributed Systems
 **Depends On:** Y1, Y5
-**Risk if Delayed:** State divergence, Byzantine attacks, resource exhaustion
+**Completed:** 2025-12-06
+**Tests Added:** 38 new tests (527 total lib tests)
 
 ### Objectives
 Improve Byzantine fault tolerance, network partition handling, and race condition fixes.
 
 ### Tasks
 
-| ID | Finding | Task | File | Effort | Tests |
-|----|---------|------|------|--------|-------|
-| Y6.1 | P2P-H4 | Fix rate limiter window reset race condition (atomic check-reset) | `distributed_rate_limiter.rs` | M | 4 |
-| Y6.2 | P2P-M1 | Add network partition detection via heartbeat patterns | `threat_intel_p2p.rs` | L | 5 |
-| Y6.3 | P2P-M1 | Implement CRDT-based threat intel for conflict resolution | `threat_intel_p2p.rs` | L | 4 |
-| Y6.4 | P2P-M4 | Add vector clocks to detect causality violations | `nats_sync.rs` | M | 3 |
-| Y6.5 | P2P-M5 | Add Byzantine tolerance validation to CRDT operations | `distributed_counter.rs` | M | 4 |
-| Y6.6 | P2P-M5 | Implement suspicious actor tracking | `distributed_counter.rs` | M | 3 |
-| Y6.7 | P2P-M6 | Implement trust token revocation mechanism | `distributed_enforcement.rs` | M | 4 |
-| Y6.8 | P2P-M6 | Add `RevokeToken` and `RevokeNode` message types | `distributed_enforcement.rs` | S | 2 |
-| Y6.9 | P2P-M2 | Integrate with Solana staking for Sybil resistance | `threat_intel_p2p.rs` | L | 3 |
-| Y6.10 | P2P-M3 | Disable mDNS in production, verify peers via challenge | `threat_intel_p2p.rs` | S | 2 |
+| ID | Finding | Task | File | Effort | Status |
+|----|---------|------|------|--------|--------|
+| Y6.1 | P2P-H4 | Fix rate limiter window reset race condition (atomic check-reset) | `distributed_rate_limiter.rs` | M | ✅ |
+| Y6.2 | P2P-M1 | Add network partition detection via heartbeat patterns | `threat_intel_p2p.rs` | L | ✅ |
+| Y6.3 | P2P-M1 | Implement CRDT-based threat intel for conflict resolution | `threat_intel_p2p.rs` | L | ✅ |
+| Y6.4 | P2P-M4 | Add vector clocks to detect causality violations | `nats_sync.rs` | M | ✅ |
+| Y6.5 | P2P-M5 | Add Byzantine tolerance validation to CRDT operations | `distributed_counter.rs` | M | ✅ |
+| Y6.6 | P2P-M5 | Implement suspicious actor tracking | `distributed_counter.rs` | M | ✅ |
+| Y6.7 | P2P-M6 | Implement trust token revocation mechanism | `distributed_enforcement.rs` | M | ✅ |
+| Y6.8 | P2P-M6 | Add `RevokeToken` and `RevokeNode` message types | `distributed_enforcement.rs` | S | ✅ |
+| Y6.9 | P2P-M2 | Integrate with Solana staking for Sybil resistance | `threat_intel_p2p.rs` | L | ✅ |
+| Y6.10 | P2P-M3 | Disable mDNS in production, verify peers via challenge | `threat_intel_p2p.rs` | S | ✅ |
 
 ### Acceptance Criteria
-- [x] Rate limiter window resets are atomic (Y6.1)
-- [ ] Network partitions are detected and logged (Y6.2)
-- [ ] CRDT conflicts are resolved deterministically (Y6.3)
-- [ ] Byzantine counter manipulation is detected (Y6.5-Y6.6)
-- [x] Trust tokens can be revoked (Y6.7-Y6.8)
-- [x] mDNS disabled in production builds (Y6.10)
-- [ ] 34 new tests pass (actual: 12 new tests so far)
+- [x] Rate limiter window resets are atomic (Y6.1 - epoch-based compare-and-swap)
+- [x] Network partitions are detected and logged (Y6.2 - NetworkPartitionDetector)
+- [x] CRDT conflicts are resolved deterministically (Y6.3 - ThreatIntelCRDT with LWW semantics)
+- [x] Vector clocks detect causality violations (Y6.4 - VectorClock with happens-before)
+- [x] Byzantine counter manipulation is detected (Y6.5-Y6.6 - ByzantineValidator + SuspiciousActorTracker)
+- [x] Trust tokens can be revoked (Y6.7-Y6.8 - TokenRevocation + NodeRevocation messages)
+- [x] Solana staking integration for Sybil resistance (Y6.9 - StakingVerifier with tier-based trust)
+- [x] mDNS disabled in production builds (Y6.10 - P2PConfig::validate() rejects mDNS in release)
+- [x] 38 new tests pass
+
+### Key Implementations
+
+**Y6.3: ThreatIntelCRDT** - Last-Writer-Wins CRDT for conflict resolution:
+- LWWThreatEntry with timestamp + node_id tie-breaker
+- Merge, remove (tombstone), prune operations
+- Deterministic conflict resolution across nodes
+
+**Y6.4: VectorClock** - Causality tracking:
+- Increment, merge, happens-before relation
+- Concurrent event detection
+- Causality violation detection with detailed reporting
+
+**Y6.5: ByzantineValidator** - Byzantine fault tolerance:
+- Maximum value limits (10,000 per operation)
+- Rate limiting per actor (100 ops/sec)
+- Replay detection via operation hashing
+
+**Y6.6: SuspiciousActorTracker** - Suspicious behavior detection:
+- Large value jumps, rapid operations, timestamp regression
+- Tiered thresholds (suspicious: 10, block: 50)
+- Auto-blocking with unblock capability
+
+**Y6.9: StakingVerifier** - Sybil resistance:
+- StakeTier enum (None, Basic, Standard, High, Elite)
+- Trust weight based on stake amount
+- Slash/unslash capability for malicious nodes
 
 ---
 

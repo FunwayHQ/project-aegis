@@ -638,6 +638,690 @@ const MAX_SEEN_MESSAGE_IDS: usize = 100_000;
 /// Cleanup interval - remove old entries when cache exceeds this threshold
 const SEEN_MESSAGE_IDS_CLEANUP_THRESHOLD: usize = 90_000;
 
+// =============================================================================
+// Y6.2: Network Partition Detection
+// =============================================================================
+
+/// Heartbeat interval for partition detection (seconds)
+const HEARTBEAT_INTERVAL_SECS: u64 = 30;
+
+/// Timeout before a peer is considered potentially partitioned (seconds)
+const PARTITION_TIMEOUT_SECS: u64 = 90;
+
+/// Threshold of missing peers to declare a potential partition
+const PARTITION_PEER_THRESHOLD: f32 = 0.5;
+
+/// Network partition detector based on heartbeat patterns
+///
+/// Tracks peer heartbeats and detects when a significant portion of
+/// peers stop responding, indicating a potential network partition.
+#[derive(Debug)]
+pub struct NetworkPartitionDetector {
+    /// Last heartbeat time per peer (Unix timestamp)
+    peer_heartbeats: HashMap<String, u64>,
+    /// Peers we expect to hear from (known peers)
+    expected_peers: HashSet<String>,
+    /// Current partition state
+    partition_detected: bool,
+    /// Last time we checked for partitions
+    last_check: u64,
+}
+
+impl NetworkPartitionDetector {
+    pub fn new() -> Self {
+        Self {
+            peer_heartbeats: HashMap::new(),
+            expected_peers: HashSet::new(),
+            partition_detected: false,
+            last_check: 0,
+        }
+    }
+
+    /// Register a peer as expected (should send heartbeats)
+    pub fn register_peer(&mut self, peer_id: &str) {
+        self.expected_peers.insert(peer_id.to_string());
+    }
+
+    /// Remove a peer from expected peers (graceful disconnect)
+    pub fn unregister_peer(&mut self, peer_id: &str) {
+        self.expected_peers.remove(peer_id);
+        self.peer_heartbeats.remove(peer_id);
+    }
+
+    /// Record a heartbeat from a peer
+    pub fn record_heartbeat(&mut self, peer_id: &str) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.peer_heartbeats.insert(peer_id.to_string(), now);
+    }
+
+    /// Check for network partitions
+    ///
+    /// Returns `Some(PartitionEvent)` if a partition state change is detected
+    pub fn check_partition(&mut self) -> Option<PartitionEvent> {
+        if self.expected_peers.is_empty() {
+            return None;
+        }
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Count how many peers are missing heartbeats
+        let mut missing_count = 0;
+        let mut stale_peers = Vec::new();
+
+        for peer_id in &self.expected_peers {
+            match self.peer_heartbeats.get(peer_id) {
+                Some(&last_heartbeat) => {
+                    if now - last_heartbeat > PARTITION_TIMEOUT_SECS {
+                        missing_count += 1;
+                        stale_peers.push(peer_id.clone());
+                    }
+                }
+                None => {
+                    missing_count += 1;
+                    stale_peers.push(peer_id.clone());
+                }
+            }
+        }
+
+        let missing_ratio = missing_count as f32 / self.expected_peers.len() as f32;
+        let was_partitioned = self.partition_detected;
+        self.partition_detected = missing_ratio >= PARTITION_PEER_THRESHOLD;
+        self.last_check = now;
+
+        // Detect state changes
+        match (was_partitioned, self.partition_detected) {
+            (false, true) => Some(PartitionEvent::PartitionDetected {
+                missing_peers: stale_peers,
+                missing_ratio,
+            }),
+            (true, false) => Some(PartitionEvent::PartitionResolved {
+                reconnected_count: self.expected_peers.len() - missing_count,
+            }),
+            _ => None,
+        }
+    }
+
+    /// Get current partition status
+    pub fn is_partitioned(&self) -> bool {
+        self.partition_detected
+    }
+
+    /// Get count of responsive peers
+    pub fn responsive_peer_count(&self) -> usize {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        self.peer_heartbeats
+            .values()
+            .filter(|&&t| now - t <= PARTITION_TIMEOUT_SECS)
+            .count()
+    }
+
+    /// Get count of expected peers
+    pub fn expected_peer_count(&self) -> usize {
+        self.expected_peers.len()
+    }
+}
+
+impl Default for NetworkPartitionDetector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Partition detection events
+#[derive(Debug, Clone)]
+pub enum PartitionEvent {
+    /// Partition detected - significant peers are unreachable
+    PartitionDetected {
+        missing_peers: Vec<String>,
+        missing_ratio: f32,
+    },
+    /// Partition resolved - peers are reconnecting
+    PartitionResolved {
+        reconnected_count: usize,
+    },
+}
+
+// =============================================================================
+// Y6.3: CRDT-based Threat Intelligence Conflict Resolution
+// =============================================================================
+
+/// Maximum age for threat intel entries (24 hours)
+const THREAT_INTEL_MAX_AGE_SECS: u64 = 86400;
+
+/// CRDT-based threat intelligence store
+///
+/// Uses Last-Writer-Wins (LWW) semantics with logical timestamps to resolve
+/// conflicts deterministically across distributed nodes.
+#[derive(Debug)]
+pub struct ThreatIntelCRDT {
+    /// Threat entries keyed by IP address
+    /// Each entry is an LWW-Register containing (timestamp, threat_info)
+    entries: HashMap<String, LWWThreatEntry>,
+    /// Local node ID for conflict resolution (higher ID wins ties)
+    local_node_id: String,
+}
+
+/// LWW (Last-Writer-Wins) threat entry
+#[derive(Debug, Clone)]
+pub struct LWWThreatEntry {
+    /// Logical timestamp (wall clock + node ID for tie-breaking)
+    pub timestamp: u64,
+    /// Node ID that created this entry (for tie-breaking)
+    pub node_id: String,
+    /// The threat information
+    pub threat: ThreatIntelligence,
+    /// Whether the threat is active (false = tombstone for deletion)
+    pub is_active: bool,
+}
+
+impl LWWThreatEntry {
+    /// Compare two entries for LWW ordering
+    /// Returns true if `other` should replace `self`
+    fn should_be_replaced_by(&self, other: &LWWThreatEntry) -> bool {
+        // Higher timestamp wins
+        if other.timestamp > self.timestamp {
+            return true;
+        }
+        // If timestamps are equal, higher node_id wins (deterministic tie-breaker)
+        if other.timestamp == self.timestamp && other.node_id > self.node_id {
+            return true;
+        }
+        false
+    }
+}
+
+/// Result of merging threat intel
+#[derive(Debug, Clone, PartialEq)]
+pub enum MergeResult {
+    /// Entry was added (new IP)
+    Added,
+    /// Entry was updated (newer timestamp)
+    Updated,
+    /// Entry was ignored (older timestamp)
+    Ignored,
+    /// Entry was rejected (invalid)
+    Rejected(String),
+}
+
+impl ThreatIntelCRDT {
+    /// Create a new CRDT-based threat intel store
+    pub fn new(local_node_id: String) -> Self {
+        Self {
+            entries: HashMap::new(),
+            local_node_id,
+        }
+    }
+
+    /// Add or update a threat entry using LWW semantics
+    ///
+    /// # Y6.3: Conflict Resolution
+    /// - If no existing entry: add new entry
+    /// - If existing entry with older timestamp: update
+    /// - If existing entry with newer timestamp: ignore (idempotent)
+    /// - If same timestamp: use node_id as tie-breaker (higher wins)
+    pub fn merge(&mut self, threat: ThreatIntelligence, node_id: String, timestamp: u64) -> MergeResult {
+        // Validate threat data
+        if let Err(e) = threat.validate() {
+            return MergeResult::Rejected(format!("Invalid threat data: {}", e));
+        }
+
+        let ip = threat.ip.clone();
+        let new_entry = LWWThreatEntry {
+            timestamp,
+            node_id,
+            threat,
+            is_active: true,
+        };
+
+        // Check if existing entry should be replaced
+        let should_update = match self.entries.get(&ip) {
+            None => true, // No existing entry, add new
+            Some(existing) => existing.should_be_replaced_by(&new_entry),
+        };
+
+        if should_update {
+            let was_new = !self.entries.contains_key(&ip);
+            self.entries.insert(ip.clone(), new_entry);
+            if was_new {
+                debug!("Y6.3: Added new threat entry for IP: {}", ip);
+                MergeResult::Added
+            } else {
+                debug!("Y6.3: Updated threat entry for IP: {} (ts: {})", ip, timestamp);
+                MergeResult::Updated
+            }
+        } else {
+            debug!("Y6.3: Ignored older threat entry for IP: {} (ts: {})", ip, timestamp);
+            MergeResult::Ignored
+        }
+    }
+
+    /// Mark a threat as inactive (tombstone for deletion)
+    pub fn remove(&mut self, ip: &str, node_id: String, timestamp: u64) -> MergeResult {
+        let ip_str = ip.to_string();
+
+        // First check if we should update and clone what we need
+        let update_info = self.entries.get(&ip_str).map(|existing| {
+            let threat_clone = existing.threat.clone();
+            let should_replace = existing.should_be_replaced_by(&LWWThreatEntry {
+                timestamp,
+                node_id: node_id.clone(),
+                threat: threat_clone.clone(),
+                is_active: false,
+            });
+            (threat_clone, should_replace)
+        });
+
+        match update_info {
+            Some((threat, true)) => {
+                let tombstone = LWWThreatEntry {
+                    timestamp,
+                    node_id,
+                    threat,
+                    is_active: false,
+                };
+                self.entries.insert(ip_str, tombstone);
+                debug!("Y6.3: Marked threat as inactive for IP: {}", ip);
+                MergeResult::Updated
+            }
+            Some((_, false)) => MergeResult::Ignored,
+            None => MergeResult::Ignored,
+        }
+    }
+
+    /// Get an active threat entry by IP
+    pub fn get(&self, ip: &str) -> Option<&ThreatIntelligence> {
+        self.entries
+            .get(ip)
+            .filter(|e| e.is_active)
+            .map(|e| &e.threat)
+    }
+
+    /// Get all active threats
+    pub fn get_active_threats(&self) -> Vec<&ThreatIntelligence> {
+        self.entries
+            .values()
+            .filter(|e| e.is_active)
+            .map(|e| &e.threat)
+            .collect()
+    }
+
+    /// Prune expired entries
+    pub fn prune_expired(&mut self) -> usize {
+        let now = current_timestamp();
+        let before = self.entries.len();
+
+        self.entries.retain(|_, entry| {
+            let age = now.saturating_sub(entry.timestamp);
+            age < THREAT_INTEL_MAX_AGE_SECS
+        });
+
+        let pruned = before - self.entries.len();
+        if pruned > 0 {
+            debug!("Y6.3: Pruned {} expired threat entries", pruned);
+        }
+        pruned
+    }
+
+    /// Get entry count
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Serialize state for replication
+    pub fn serialize_state(&self) -> Result<Vec<u8>> {
+        let entries: Vec<(&String, &LWWThreatEntry)> = self.entries.iter().collect();
+        bincode::serialize(&entries).context("Failed to serialize CRDT state")
+    }
+
+    /// Merge serialized state from another node
+    pub fn merge_state(&mut self, data: &[u8]) -> Result<(usize, usize, usize)> {
+        let entries: Vec<(String, LWWThreatEntry)> =
+            bincode::deserialize(data).context("Failed to deserialize CRDT state")?;
+
+        let mut added = 0;
+        let mut updated = 0;
+        let mut ignored = 0;
+
+        for (ip, entry) in entries {
+            match self.merge(entry.threat.clone(), entry.node_id.clone(), entry.timestamp) {
+                MergeResult::Added => added += 1,
+                MergeResult::Updated => updated += 1,
+                MergeResult::Ignored => ignored += 1,
+                MergeResult::Rejected(_) => ignored += 1,
+            }
+        }
+
+        Ok((added, updated, ignored))
+    }
+}
+
+// Need to derive Serialize/Deserialize for LWWThreatEntry for bincode
+impl Serialize for LWWThreatEntry {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("LWWThreatEntry", 4)?;
+        state.serialize_field("timestamp", &self.timestamp)?;
+        state.serialize_field("node_id", &self.node_id)?;
+        state.serialize_field("threat", &self.threat)?;
+        state.serialize_field("is_active", &self.is_active)?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for LWWThreatEntry {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Helper {
+            timestamp: u64,
+            node_id: String,
+            threat: ThreatIntelligence,
+            is_active: bool,
+        }
+
+        let helper = Helper::deserialize(deserializer)?;
+        Ok(LWWThreatEntry {
+            timestamp: helper.timestamp,
+            node_id: helper.node_id,
+            threat: helper.threat,
+            is_active: helper.is_active,
+        })
+    }
+}
+
+// =============================================================================
+// Y6.9: Solana Staking Integration for Sybil Resistance
+// =============================================================================
+
+/// Minimum stake required to participate in P2P network (in lamports)
+/// 1 SOL = 1_000_000_000 lamports
+const MIN_STAKE_LAMPORTS: u64 = 100_000_000; // 0.1 SOL minimum
+
+/// Stake tier thresholds and their trust weights
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StakeTier {
+    /// No stake - excluded from network
+    None,
+    /// Minimum stake (0.1 - 1 SOL) - basic participation
+    Basic,
+    /// Standard stake (1 - 10 SOL) - trusted node
+    Standard,
+    /// High stake (10 - 100 SOL) - highly trusted
+    High,
+    /// Elite stake (100+ SOL) - elite node with governance rights
+    Elite,
+}
+
+impl StakeTier {
+    /// Get trust weight for this tier (higher = more trusted)
+    pub fn trust_weight(&self) -> u8 {
+        match self {
+            StakeTier::None => 0,
+            StakeTier::Basic => 1,
+            StakeTier::Standard => 3,
+            StakeTier::High => 5,
+            StakeTier::Elite => 10,
+        }
+    }
+
+    /// Determine tier from stake amount in lamports
+    pub fn from_stake(lamports: u64) -> Self {
+        let sol = lamports / 1_000_000_000;
+        if lamports < MIN_STAKE_LAMPORTS {
+            StakeTier::None
+        } else if sol < 1 {
+            StakeTier::Basic
+        } else if sol < 10 {
+            StakeTier::Standard
+        } else if sol < 100 {
+            StakeTier::High
+        } else {
+            StakeTier::Elite
+        }
+    }
+}
+
+/// Cached stake information for a node
+#[derive(Debug, Clone)]
+pub struct NodeStakeInfo {
+    /// Node's Solana wallet address
+    pub wallet: String,
+    /// Stake amount in lamports
+    pub stake_lamports: u64,
+    /// Stake tier
+    pub tier: StakeTier,
+    /// When stake was last verified
+    pub verified_at: u64,
+    /// Whether the node is slashed
+    pub is_slashed: bool,
+}
+
+/// Y6.9: Staking verifier for Sybil resistance
+///
+/// Verifies that P2P nodes have staked $AEGIS tokens to participate
+/// in the threat intelligence network. This prevents Sybil attacks
+/// where an attacker creates many fake nodes.
+#[derive(Debug)]
+pub struct StakingVerifier {
+    /// Cached stake information per node
+    stakes: HashMap<String, NodeStakeInfo>,
+    /// Minimum stake required (lamports)
+    min_stake: u64,
+    /// How long stake verification is valid (seconds)
+    verification_ttl: u64,
+    /// Solana RPC endpoint
+    rpc_endpoint: String,
+    /// Whether staking verification is enabled
+    enabled: bool,
+}
+
+impl StakingVerifier {
+    /// Create a new staking verifier
+    pub fn new(rpc_endpoint: String) -> Self {
+        Self {
+            stakes: HashMap::new(),
+            min_stake: MIN_STAKE_LAMPORTS,
+            verification_ttl: 3600, // 1 hour TTL
+            rpc_endpoint,
+            enabled: true,
+        }
+    }
+
+    /// Create a disabled staking verifier (for testing)
+    pub fn disabled() -> Self {
+        Self {
+            stakes: HashMap::new(),
+            min_stake: 0,
+            verification_ttl: 3600,
+            rpc_endpoint: String::new(),
+            enabled: false,
+        }
+    }
+
+    /// Check if staking verification is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Get minimum stake requirement
+    pub fn min_stake(&self) -> u64 {
+        self.min_stake
+    }
+
+    /// Set minimum stake requirement
+    pub fn set_min_stake(&mut self, lamports: u64) {
+        self.min_stake = lamports;
+    }
+
+    /// Check if a node has sufficient stake to participate
+    pub fn has_sufficient_stake(&self, node_id: &str) -> bool {
+        if !self.enabled {
+            return true; // Staking disabled, allow all
+        }
+
+        match self.stakes.get(node_id) {
+            Some(info) => {
+                let now = current_timestamp();
+                let age = now.saturating_sub(info.verified_at);
+
+                // Check if verification is still valid
+                if age > self.verification_ttl {
+                    warn!("Y6.9: Stake verification expired for node {}", node_id);
+                    return false;
+                }
+
+                // Check if node is slashed
+                if info.is_slashed {
+                    warn!("Y6.9: Node {} is slashed", node_id);
+                    return false;
+                }
+
+                // Check stake amount
+                info.stake_lamports >= self.min_stake
+            }
+            None => {
+                debug!("Y6.9: No stake info for node {}", node_id);
+                false
+            }
+        }
+    }
+
+    /// Get stake tier for a node
+    pub fn get_stake_tier(&self, node_id: &str) -> StakeTier {
+        self.stakes
+            .get(node_id)
+            .map(|info| info.tier)
+            .unwrap_or(StakeTier::None)
+    }
+
+    /// Get trust weight for a node (based on stake tier)
+    pub fn get_trust_weight(&self, node_id: &str) -> u8 {
+        self.get_stake_tier(node_id).trust_weight()
+    }
+
+    /// Register verified stake for a node
+    ///
+    /// In production, this would be called after verifying stake on-chain.
+    /// For now, this is a manual registration method.
+    pub fn register_stake(&mut self, node_id: String, wallet: String, stake_lamports: u64) {
+        let tier = StakeTier::from_stake(stake_lamports);
+        let now = current_timestamp();
+
+        let info = NodeStakeInfo {
+            wallet,
+            stake_lamports,
+            tier,
+            verified_at: now,
+            is_slashed: false,
+        };
+
+        info!(
+            "Y6.9: Registered stake for node {}: {} lamports ({:?})",
+            node_id, stake_lamports, tier
+        );
+
+        self.stakes.insert(node_id, info);
+    }
+
+    /// Update stake verification timestamp (after on-chain verification)
+    pub fn refresh_verification(&mut self, node_id: &str) {
+        if let Some(info) = self.stakes.get_mut(node_id) {
+            info.verified_at = current_timestamp();
+            debug!("Y6.9: Refreshed stake verification for node {}", node_id);
+        }
+    }
+
+    /// Mark a node as slashed (due to malicious behavior)
+    pub fn slash_node(&mut self, node_id: &str, reason: &str) {
+        if let Some(info) = self.stakes.get_mut(node_id) {
+            info.is_slashed = true;
+            warn!(
+                "Y6.9: Node {} SLASHED for: {}. Stake: {} lamports",
+                node_id, reason, info.stake_lamports
+            );
+        }
+    }
+
+    /// Remove slashed status from a node
+    pub fn unslash_node(&mut self, node_id: &str) {
+        if let Some(info) = self.stakes.get_mut(node_id) {
+            info.is_slashed = false;
+            info!("Y6.9: Node {} un-slashed", node_id);
+        }
+    }
+
+    /// Get stake info for a node
+    pub fn get_stake_info(&self, node_id: &str) -> Option<&NodeStakeInfo> {
+        self.stakes.get(node_id)
+    }
+
+    /// Get all nodes with sufficient stake
+    pub fn get_staked_nodes(&self) -> Vec<&str> {
+        self.stakes
+            .iter()
+            .filter(|(_, info)| info.stake_lamports >= self.min_stake && !info.is_slashed)
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+
+    /// Get nodes by stake tier
+    pub fn get_nodes_by_tier(&self, tier: StakeTier) -> Vec<&str> {
+        self.stakes
+            .iter()
+            .filter(|(_, info)| info.tier == tier && !info.is_slashed)
+            .map(|(id, _)| id.as_str())
+            .collect()
+    }
+
+    /// Get the RPC endpoint
+    pub fn rpc_endpoint(&self) -> &str {
+        &self.rpc_endpoint
+    }
+
+    /// Prune expired stake verifications
+    pub fn prune_expired(&mut self) -> usize {
+        let now = current_timestamp();
+        let before = self.stakes.len();
+
+        self.stakes.retain(|_, info| {
+            let age = now.saturating_sub(info.verified_at);
+            age < self.verification_ttl * 2 // Keep for 2x TTL before pruning
+        });
+
+        let pruned = before - self.stakes.len();
+        if pruned > 0 {
+            debug!("Y6.9: Pruned {} expired stake verifications", pruned);
+        }
+        pruned
+    }
+}
+
+impl Default for StakingVerifier {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
 /// P2P Threat Intelligence Network
 pub struct ThreatIntelP2P {
     swarm: Swarm<ThreatIntelBehaviour>,
@@ -1769,5 +2453,415 @@ mod tests {
 
         // In debug builds, this should pass (mDNS allowed)
         assert!(config.validate().is_ok());
+    }
+
+    // ========================================
+    // Y6.2: Network Partition Detection Tests
+    // ========================================
+
+    #[test]
+    fn test_y62_partition_detector_new() {
+        let detector = NetworkPartitionDetector::new();
+        assert!(!detector.is_partitioned());
+        assert_eq!(detector.expected_peer_count(), 0);
+        assert_eq!(detector.responsive_peer_count(), 0);
+    }
+
+    #[test]
+    fn test_y62_register_and_unregister_peer() {
+        let mut detector = NetworkPartitionDetector::new();
+
+        detector.register_peer("peer-1");
+        detector.register_peer("peer-2");
+        assert_eq!(detector.expected_peer_count(), 2);
+
+        detector.unregister_peer("peer-1");
+        assert_eq!(detector.expected_peer_count(), 1);
+    }
+
+    #[test]
+    fn test_y62_record_heartbeat() {
+        let mut detector = NetworkPartitionDetector::new();
+
+        detector.register_peer("peer-1");
+        detector.record_heartbeat("peer-1");
+
+        // Should count as responsive
+        assert_eq!(detector.responsive_peer_count(), 1);
+    }
+
+    #[test]
+    fn test_y62_partition_detected_all_missing() {
+        let mut detector = NetworkPartitionDetector::new();
+
+        // Register peers but don't send heartbeats
+        detector.register_peer("peer-1");
+        detector.register_peer("peer-2");
+        detector.register_peer("peer-3");
+        detector.register_peer("peer-4");
+
+        // Check partition - all peers are missing
+        let event = detector.check_partition();
+        assert!(event.is_some());
+
+        match event.unwrap() {
+            PartitionEvent::PartitionDetected { missing_peers, missing_ratio } => {
+                assert_eq!(missing_peers.len(), 4);
+                assert!((missing_ratio - 1.0).abs() < 0.01);
+            }
+            _ => panic!("Expected PartitionDetected"),
+        }
+
+        assert!(detector.is_partitioned());
+    }
+
+    #[test]
+    fn test_y62_no_partition_when_peers_responsive() {
+        let mut detector = NetworkPartitionDetector::new();
+
+        // Register and heartbeat all peers
+        for i in 0..4 {
+            let peer = format!("peer-{}", i);
+            detector.register_peer(&peer);
+            detector.record_heartbeat(&peer);
+        }
+
+        // No partition should be detected
+        let event = detector.check_partition();
+        assert!(event.is_none());
+        assert!(!detector.is_partitioned());
+    }
+
+    #[test]
+    fn test_y62_partition_resolved() {
+        let mut detector = NetworkPartitionDetector::new();
+
+        // Force partition state
+        detector.register_peer("peer-1");
+        detector.register_peer("peer-2");
+        let _ = detector.check_partition(); // Will detect partition (no heartbeats)
+        assert!(detector.is_partitioned());
+
+        // Now all peers send heartbeats
+        detector.record_heartbeat("peer-1");
+        detector.record_heartbeat("peer-2");
+
+        // Check again - should be resolved
+        let event = detector.check_partition();
+        assert!(event.is_some());
+
+        match event.unwrap() {
+            PartitionEvent::PartitionResolved { reconnected_count } => {
+                assert_eq!(reconnected_count, 2);
+            }
+            _ => panic!("Expected PartitionResolved"),
+        }
+
+        assert!(!detector.is_partitioned());
+    }
+
+    // ========================================
+    // Y6.3: CRDT-based Threat Intel Tests
+    // ========================================
+
+    #[test]
+    fn test_y63_crdt_new() {
+        let crdt = ThreatIntelCRDT::new("node-1".to_string());
+        assert!(crdt.is_empty());
+        assert_eq!(crdt.len(), 0);
+    }
+
+    #[test]
+    fn test_y63_crdt_add_threat() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let threat = ThreatIntelligence::new(
+            "192.168.1.100".to_string(),
+            "syn_flood".to_string(),
+            8,
+            300,
+            "node-1".to_string(),
+        );
+
+        let result = crdt.merge(threat.clone(), "node-1".to_string(), current_timestamp());
+        assert_eq!(result, MergeResult::Added);
+        assert_eq!(crdt.len(), 1);
+        assert!(crdt.get("192.168.1.100").is_some());
+    }
+
+    #[test]
+    fn test_y63_crdt_lww_newer_wins() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let ts = current_timestamp();
+
+        // Add older entry
+        let threat1 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "ddos".to_string(),
+            5,
+            300,
+            "node-1".to_string(),
+        );
+        crdt.merge(threat1, "node-1".to_string(), ts);
+
+        // Add newer entry for same IP
+        let threat2 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "brute_force".to_string(),
+            9,
+            600,
+            "node-2".to_string(),
+        );
+        let result = crdt.merge(threat2.clone(), "node-2".to_string(), ts + 1000);
+        assert_eq!(result, MergeResult::Updated);
+
+        // Should have the newer threat
+        let stored = crdt.get("10.0.0.1").unwrap();
+        assert_eq!(stored.threat_type, "brute_force");
+        assert_eq!(stored.severity, 9);
+    }
+
+    #[test]
+    fn test_y63_crdt_lww_older_ignored() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let ts = current_timestamp();
+
+        // Add newer entry first
+        let threat1 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "ddos".to_string(),
+            9,
+            600,
+            "node-1".to_string(),
+        );
+        crdt.merge(threat1.clone(), "node-1".to_string(), ts + 1000);
+
+        // Try to add older entry
+        let threat2 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "brute_force".to_string(),
+            5,
+            300,
+            "node-2".to_string(),
+        );
+        let result = crdt.merge(threat2, "node-2".to_string(), ts);
+        assert_eq!(result, MergeResult::Ignored);
+
+        // Should still have the original threat
+        let stored = crdt.get("10.0.0.1").unwrap();
+        assert_eq!(stored.threat_type, "ddos");
+    }
+
+    #[test]
+    fn test_y63_crdt_tie_breaker() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let ts = current_timestamp();
+
+        // Add entry from node-a
+        let threat1 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "ddos".to_string(),
+            5,
+            300,
+            "node-a".to_string(),
+        );
+        crdt.merge(threat1, "node-a".to_string(), ts);
+
+        // Add entry from node-b with same timestamp
+        // node-b > node-a alphabetically, so it should win
+        let threat2 = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "brute_force".to_string(),
+            9,
+            600,
+            "node-b".to_string(),
+        );
+        let result = crdt.merge(threat2, "node-b".to_string(), ts);
+        assert_eq!(result, MergeResult::Updated);
+
+        let stored = crdt.get("10.0.0.1").unwrap();
+        assert_eq!(stored.threat_type, "brute_force");
+    }
+
+    #[test]
+    fn test_y63_crdt_remove_tombstone() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let ts = current_timestamp();
+
+        // Add threat
+        let threat = ThreatIntelligence::new(
+            "10.0.0.1".to_string(),
+            "ddos".to_string(),
+            5,
+            300,
+            "node-1".to_string(),
+        );
+        crdt.merge(threat, "node-1".to_string(), ts);
+        assert!(crdt.get("10.0.0.1").is_some());
+
+        // Remove (tombstone)
+        let result = crdt.remove("10.0.0.1", "node-1".to_string(), ts + 1000);
+        assert_eq!(result, MergeResult::Updated);
+
+        // Should not be in active threats
+        assert!(crdt.get("10.0.0.1").is_none());
+        assert!(crdt.get_active_threats().is_empty());
+    }
+
+    #[test]
+    fn test_y63_crdt_get_active_threats() {
+        let mut crdt = ThreatIntelCRDT::new("node-1".to_string());
+        let ts = current_timestamp();
+
+        // Add multiple threats
+        for i in 1..=5 {
+            let threat = ThreatIntelligence::new(
+                format!("10.0.0.{}", i),
+                "ddos".to_string(),
+                5,
+                300,
+                "node-1".to_string(),
+            );
+            crdt.merge(threat, "node-1".to_string(), ts + i as u64);
+        }
+
+        let active = crdt.get_active_threats();
+        assert_eq!(active.len(), 5);
+    }
+
+    // ========================================
+    // Y6.9: Solana Staking Tests
+    // ========================================
+
+    #[test]
+    fn test_y69_stake_tier_from_stake() {
+        // No stake
+        assert_eq!(StakeTier::from_stake(0), StakeTier::None);
+        assert_eq!(StakeTier::from_stake(99_999_999), StakeTier::None);
+
+        // Basic (0.1 - 1 SOL)
+        assert_eq!(StakeTier::from_stake(100_000_000), StakeTier::Basic);
+        assert_eq!(StakeTier::from_stake(999_999_999), StakeTier::Basic);
+
+        // Standard (1 - 10 SOL)
+        assert_eq!(StakeTier::from_stake(1_000_000_000), StakeTier::Standard);
+        assert_eq!(StakeTier::from_stake(9_999_999_999), StakeTier::Standard);
+
+        // High (10 - 100 SOL)
+        assert_eq!(StakeTier::from_stake(10_000_000_000), StakeTier::High);
+        assert_eq!(StakeTier::from_stake(99_999_999_999), StakeTier::High);
+
+        // Elite (100+ SOL)
+        assert_eq!(StakeTier::from_stake(100_000_000_000), StakeTier::Elite);
+        assert_eq!(StakeTier::from_stake(1_000_000_000_000), StakeTier::Elite);
+    }
+
+    #[test]
+    fn test_y69_stake_tier_trust_weight() {
+        assert_eq!(StakeTier::None.trust_weight(), 0);
+        assert_eq!(StakeTier::Basic.trust_weight(), 1);
+        assert_eq!(StakeTier::Standard.trust_weight(), 3);
+        assert_eq!(StakeTier::High.trust_weight(), 5);
+        assert_eq!(StakeTier::Elite.trust_weight(), 10);
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_disabled() {
+        let verifier = StakingVerifier::disabled();
+        assert!(!verifier.is_enabled());
+        // When disabled, all nodes have sufficient stake
+        assert!(verifier.has_sufficient_stake("any-node"));
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_enabled() {
+        let mut verifier = StakingVerifier::new("https://api.devnet.solana.com".to_string());
+        assert!(verifier.is_enabled());
+
+        // Unknown node has no stake
+        assert!(!verifier.has_sufficient_stake("unknown-node"));
+
+        // Register stake
+        verifier.register_stake(
+            "node-1".to_string(),
+            "wallet123".to_string(),
+            1_000_000_000, // 1 SOL
+        );
+
+        assert!(verifier.has_sufficient_stake("node-1"));
+        assert_eq!(verifier.get_stake_tier("node-1"), StakeTier::Standard);
+        assert_eq!(verifier.get_trust_weight("node-1"), 3);
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_insufficient_stake() {
+        let mut verifier = StakingVerifier::new("https://api.devnet.solana.com".to_string());
+
+        // Register with stake below minimum
+        verifier.register_stake(
+            "node-1".to_string(),
+            "wallet123".to_string(),
+            50_000_000, // 0.05 SOL - below minimum
+        );
+
+        assert!(!verifier.has_sufficient_stake("node-1"));
+        assert_eq!(verifier.get_stake_tier("node-1"), StakeTier::None);
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_slash() {
+        let mut verifier = StakingVerifier::new("https://api.devnet.solana.com".to_string());
+
+        // Register stake
+        verifier.register_stake(
+            "node-1".to_string(),
+            "wallet123".to_string(),
+            10_000_000_000, // 10 SOL
+        );
+
+        assert!(verifier.has_sufficient_stake("node-1"));
+
+        // Slash the node
+        verifier.slash_node("node-1", "sending fake threats");
+
+        // Slashed node should not have sufficient stake
+        assert!(!verifier.has_sufficient_stake("node-1"));
+
+        // Unslash
+        verifier.unslash_node("node-1");
+        assert!(verifier.has_sufficient_stake("node-1"));
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_get_staked_nodes() {
+        let mut verifier = StakingVerifier::new("https://api.devnet.solana.com".to_string());
+
+        verifier.register_stake("node-1".to_string(), "w1".to_string(), 1_000_000_000);
+        verifier.register_stake("node-2".to_string(), "w2".to_string(), 500_000_000);
+        verifier.register_stake("node-3".to_string(), "w3".to_string(), 50_000_000); // Below min
+
+        let staked = verifier.get_staked_nodes();
+        assert_eq!(staked.len(), 2);
+        assert!(staked.contains(&"node-1"));
+        assert!(staked.contains(&"node-2"));
+        assert!(!staked.contains(&"node-3"));
+    }
+
+    #[test]
+    fn test_y69_staking_verifier_get_nodes_by_tier() {
+        let mut verifier = StakingVerifier::new("https://api.devnet.solana.com".to_string());
+
+        verifier.register_stake("basic-1".to_string(), "w1".to_string(), 200_000_000);
+        verifier.register_stake("basic-2".to_string(), "w2".to_string(), 300_000_000);
+        verifier.register_stake("standard-1".to_string(), "w3".to_string(), 5_000_000_000);
+        verifier.register_stake("elite-1".to_string(), "w4".to_string(), 200_000_000_000);
+
+        let basic_nodes = verifier.get_nodes_by_tier(StakeTier::Basic);
+        assert_eq!(basic_nodes.len(), 2);
+
+        let standard_nodes = verifier.get_nodes_by_tier(StakeTier::Standard);
+        assert_eq!(standard_nodes.len(), 1);
+
+        let elite_nodes = verifier.get_nodes_by_tier(StakeTier::Elite);
+        assert_eq!(elite_nodes.len(), 1);
     }
 }
