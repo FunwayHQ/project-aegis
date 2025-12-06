@@ -10,11 +10,12 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
+use tracing::{info, warn};
 
 // SECURITY FIX (X2.6): Import lock recovery utilities for std::sync::RwLock
 use crate::lock_utils::{read_lock_or_recover, write_lock_or_recover};
@@ -761,6 +762,10 @@ impl TrustToken {
 }
 
 /// Distributed trust score cache
+///
+/// # Security Note (Y6.7)
+/// This cache now tracks revoked tokens and nodes to prevent
+/// compromised credentials from being reused.
 #[derive(Debug)]
 pub struct TrustScoreCache {
     /// Cached trust tokens by client ID
@@ -771,6 +776,10 @@ pub struct TrustScoreCache {
     default_trust_score: u8,
     /// Minimum trust score to skip challenge
     skip_challenge_threshold: u8,
+    /// Y6.7: Revoked client IDs (with revocation timestamp)
+    revoked_clients: Arc<RwLock<HashMap<String, u64>>>,
+    /// Y6.7: Revoked node public keys
+    revoked_nodes: Arc<RwLock<HashSet<String>>>,
 }
 
 impl TrustScoreCache {
@@ -780,6 +789,8 @@ impl TrustScoreCache {
             node_public_keys: Arc::new(RwLock::new(HashMap::new())),
             default_trust_score,
             skip_challenge_threshold,
+            revoked_clients: Arc::new(RwLock::new(HashMap::new())),
+            revoked_nodes: Arc::new(RwLock::new(HashSet::new())),
         }
     }
 
@@ -863,6 +874,67 @@ impl TrustScoreCache {
             .filter(|t| !t.is_expired())
             .cloned()
             .collect()
+    }
+
+    // ========================================
+    // Y6.7: Token/Node Revocation Methods
+    // ========================================
+
+    /// Revoke a client's trust token
+    ///
+    /// After revocation, the client will need to complete a new challenge
+    /// to regain trust status.
+    pub async fn revoke_client(&self, client_id: &str, revoked_at: u64) {
+        // Remove existing token
+        let mut tokens = self.tokens.write().await;
+        tokens.remove(client_id);
+        drop(tokens);
+
+        // Add to revoked list
+        let mut revoked = self.revoked_clients.write().await;
+        revoked.insert(client_id.to_string(), revoked_at);
+
+        info!("Revoked trust token for client: {}", client_id);
+    }
+
+    /// Check if a client's token has been revoked
+    pub async fn is_client_revoked(&self, client_id: &str) -> bool {
+        let revoked = self.revoked_clients.read().await;
+        revoked.contains_key(client_id)
+    }
+
+    /// Revoke a node (mark as untrusted)
+    ///
+    /// After revocation, messages from this node will be rejected.
+    pub async fn revoke_node(&self, public_key: &str) {
+        // Remove from trusted keys if present
+        let mut keys = self.node_public_keys.write().await;
+        keys.retain(|_, v| hex::encode(v.as_bytes()) != public_key);
+        drop(keys);
+
+        // Add to revoked list
+        let mut revoked = self.revoked_nodes.write().await;
+        revoked.insert(public_key.to_string());
+
+        info!("Revoked node with public key: {}...", &public_key[..16.min(public_key.len())]);
+    }
+
+    /// Check if a node has been revoked
+    pub async fn is_node_revoked(&self, public_key: &str) -> bool {
+        let revoked = self.revoked_nodes.read().await;
+        revoked.contains(public_key)
+    }
+
+    /// Get count of revoked clients
+    pub async fn revoked_client_count(&self) -> usize {
+        let revoked = self.revoked_clients.read().await;
+        revoked.len()
+    }
+
+    /// Get count of revoked nodes
+    pub async fn revoked_node_count(&self) -> usize {
+        let revoked = self.revoked_nodes.read().await;
+        revoked.len()
     }
 }
 
@@ -1185,6 +1257,65 @@ pub enum EnforcementMessage {
         node_id: String,
         entries: Vec<EnhancedThreatIntel>,
     },
+    /// Y6.8: Revoke a specific trust token
+    RevokeToken(TokenRevocation),
+    /// Y6.8: Revoke a node entirely (mark as untrusted)
+    RevokeNode(NodeRevocation),
+}
+
+/// Y6.7-Y6.8: Token revocation message
+///
+/// Allows revoking a specific trust token, preventing replay attacks
+/// where a compromised token might be reused after being invalidated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TokenRevocation {
+    /// The client ID whose token is being revoked
+    pub client_id: String,
+    /// Reason for revocation
+    pub reason: RevocationReason,
+    /// Timestamp of revocation (for ordering)
+    pub revoked_at: u64,
+    /// Node ID that issued the revocation
+    pub issuing_node: String,
+    /// Ed25519 signature of the revocation
+    pub signature: Option<String>,
+}
+
+/// Y6.7-Y6.8: Node revocation message
+///
+/// Allows revoking an entire node's trust status, typically used when
+/// a node is compromised or behaving maliciously.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeRevocation {
+    /// The node ID being revoked
+    pub node_id: String,
+    /// The node's public key (to prevent future messages)
+    pub public_key: String,
+    /// Reason for revocation
+    pub reason: RevocationReason,
+    /// Timestamp of revocation
+    pub revoked_at: u64,
+    /// Node ID that issued the revocation
+    pub issuing_node: String,
+    /// Ed25519 signature of the revocation
+    pub signature: Option<String>,
+}
+
+/// Reason for revocation
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum RevocationReason {
+    /// Token/node was compromised
+    Compromised,
+    /// Malicious behavior detected
+    MaliciousBehavior,
+    /// Node went offline permanently
+    Offline,
+    /// Administrative revocation
+    Administrative,
+    /// Stake slashed (for nodes)
+    StakeSlashed,
+    /// Custom reason
+    Other(String),
 }
 
 impl EnforcementMessage {
@@ -1263,12 +1394,19 @@ impl DistributedEnforcementEngine {
     }
 
     /// Process incoming P2P message
+    ///
+    /// # Security Note (Y6.7-Y6.8)
+    /// This method now handles revocation messages for tokens and nodes.
     pub async fn process_message(&self, message: EnforcementMessage) -> Result<(), String> {
         match message {
             EnforcementMessage::ThreatIntel(threat) => {
                 self.handle_threat_intel(threat).await?;
             }
             EnforcementMessage::TrustToken(token) => {
+                // Y6.7: Check if client or issuing node is revoked
+                if self.trust_cache.is_client_revoked(&token.client_id).await {
+                    return Err(format!("Client {} is revoked", token.client_id));
+                }
                 self.trust_cache.store_token(token).await?;
             }
             EnforcementMessage::ChallengeComplete(completion) => {
@@ -1284,7 +1422,49 @@ impl DistributedEnforcementEngine {
                     }
                 }
             }
+            // Y6.8: Handle token revocation
+            EnforcementMessage::RevokeToken(revocation) => {
+                self.handle_token_revocation(revocation).await?;
+            }
+            // Y6.8: Handle node revocation
+            EnforcementMessage::RevokeNode(revocation) => {
+                self.handle_node_revocation(revocation).await?;
+            }
         }
+
+        Ok(())
+    }
+
+    /// Y6.7: Handle token revocation message
+    async fn handle_token_revocation(&self, revocation: TokenRevocation) -> Result<(), String> {
+        // TODO: Verify signature of revocation message
+        // For now, accept revocations from any source (should be restricted)
+
+        info!(
+            "Processing token revocation for client {} (reason: {:?}, from: {})",
+            revocation.client_id, revocation.reason, revocation.issuing_node
+        );
+
+        self.trust_cache
+            .revoke_client(&revocation.client_id, revocation.revoked_at)
+            .await;
+
+        Ok(())
+    }
+
+    /// Y6.7: Handle node revocation message
+    async fn handle_node_revocation(&self, revocation: NodeRevocation) -> Result<(), String> {
+        // TODO: Verify signature of revocation message
+        // TODO: Require quorum of nodes for node revocation
+
+        warn!(
+            "Processing node revocation for {} (reason: {:?}, from: {})",
+            &revocation.public_key[..16.min(revocation.public_key.len())],
+            revocation.reason,
+            revocation.issuing_node
+        );
+
+        self.trust_cache.revoke_node(&revocation.public_key).await;
 
         Ok(())
     }
@@ -2068,5 +2248,169 @@ mod tests {
         let result = blocklist.add_verified_hex(&threat, &public_key_hex).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Severity"));
+    }
+
+    // ========================================
+    // Y6.7-Y6.8: Revocation Tests
+    // ========================================
+
+    #[tokio::test]
+    async fn test_y67_revoke_client() {
+        let cache = TrustScoreCache::new(50, 60);
+        let signing_key = generate_test_signing_key();
+        let verifying_key = signing_key.verifying_key();
+
+        // Register node
+        cache.add_node_public_key("node-1", verifying_key).await;
+
+        // Store a token
+        let mut token = TrustToken::new(
+            "client-1".to_string(),
+            80,
+            ChallengeType::Managed,
+            "node-1".to_string(),
+            900,
+        );
+        token.sign(&signing_key);
+        cache.store_token(token).await.unwrap();
+
+        // Verify token exists
+        assert_eq!(cache.get_trust_score("client-1").await, 80);
+
+        // Revoke client
+        cache.revoke_client("client-1", 1234567890).await;
+
+        // Client should be revoked
+        assert!(cache.is_client_revoked("client-1").await);
+
+        // Trust score should fall back to default
+        assert_eq!(cache.get_trust_score("client-1").await, 50);
+    }
+
+    #[tokio::test]
+    async fn test_y67_revoke_node() {
+        let cache = TrustScoreCache::new(50, 60);
+        let signing_key = generate_test_signing_key();
+        let verifying_key = signing_key.verifying_key();
+        let public_key_hex = hex::encode(verifying_key.as_bytes());
+
+        // Register node
+        cache.add_node_public_key("node-1", verifying_key).await;
+
+        // Revoke node
+        cache.revoke_node(&public_key_hex).await;
+
+        // Node should be revoked
+        assert!(cache.is_node_revoked(&public_key_hex).await);
+        assert_eq!(cache.revoked_node_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_y68_process_token_revocation() {
+        let config = DistributedEnforcementConfig {
+            node_id: "test-node".to_string(),
+            signing_key: Some(generate_test_signing_key()),
+            ..Default::default()
+        };
+
+        let engine = DistributedEnforcementEngine::new(config);
+
+        // Process revocation message
+        let revocation = TokenRevocation {
+            client_id: "client-to-revoke".to_string(),
+            reason: RevocationReason::Compromised,
+            revoked_at: 1234567890,
+            issuing_node: "admin-node".to_string(),
+            signature: None,
+        };
+
+        let msg = EnforcementMessage::RevokeToken(revocation);
+        engine.process_message(msg).await.unwrap();
+
+        // Client should be revoked
+        assert!(engine.trust_cache.is_client_revoked("client-to-revoke").await);
+    }
+
+    #[tokio::test]
+    async fn test_y68_process_node_revocation() {
+        let config = DistributedEnforcementConfig {
+            node_id: "test-node".to_string(),
+            signing_key: Some(generate_test_signing_key()),
+            ..Default::default()
+        };
+
+        let engine = DistributedEnforcementEngine::new(config);
+        let malicious_key = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+
+        // Process revocation message
+        let revocation = NodeRevocation {
+            node_id: "malicious-node".to_string(),
+            public_key: malicious_key.to_string(),
+            reason: RevocationReason::MaliciousBehavior,
+            revoked_at: 1234567890,
+            issuing_node: "admin-node".to_string(),
+            signature: None,
+        };
+
+        let msg = EnforcementMessage::RevokeNode(revocation);
+        engine.process_message(msg).await.unwrap();
+
+        // Node should be revoked
+        assert!(engine.trust_cache.is_node_revoked(malicious_key).await);
+    }
+
+    #[tokio::test]
+    async fn test_y68_revoked_client_token_rejected() {
+        let signing_key = generate_test_signing_key();
+        let verifying_key = signing_key.verifying_key();
+
+        let config = DistributedEnforcementConfig {
+            node_id: "test-node".to_string(),
+            signing_key: Some(signing_key.clone()),
+            ..Default::default()
+        };
+
+        let engine = DistributedEnforcementEngine::new(config);
+
+        // Register node key
+        engine.trust_cache.add_node_public_key("test-node", verifying_key).await;
+
+        // Revoke client first
+        engine.trust_cache.revoke_client("client-1", 1234567890).await;
+
+        // Try to store a token for revoked client
+        let mut token = TrustToken::new(
+            "client-1".to_string(),
+            80,
+            ChallengeType::Managed,
+            "test-node".to_string(),
+            900,
+        );
+        token.sign(&signing_key);
+
+        // Should reject token for revoked client
+        let msg = EnforcementMessage::TrustToken(token);
+        let result = engine.process_message(msg).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("revoked"));
+    }
+
+    #[test]
+    fn test_y68_revocation_reason_serialization() {
+        // Test all revocation reasons can be serialized
+        let reasons = vec![
+            RevocationReason::Compromised,
+            RevocationReason::MaliciousBehavior,
+            RevocationReason::Offline,
+            RevocationReason::Administrative,
+            RevocationReason::StakeSlashed,
+            RevocationReason::Other("Custom reason".to_string()),
+        ];
+
+        for reason in reasons {
+            let json = serde_json::to_string(&reason).unwrap();
+            let deserialized: RevocationReason = serde_json::from_str(&json).unwrap();
+            assert_eq!(reason, deserialized);
+        }
     }
 }

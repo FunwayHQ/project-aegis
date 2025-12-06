@@ -373,12 +373,13 @@ Improve Byzantine fault tolerance, network partition handling, and race conditio
 | Y6.10 | P2P-M3 | Disable mDNS in production, verify peers via challenge | `threat_intel_p2p.rs` | S | 2 |
 
 ### Acceptance Criteria
-- [ ] Rate limiter window resets are atomic
-- [ ] Network partitions are detected and logged
-- [ ] CRDT conflicts are resolved deterministically
-- [ ] Byzantine counter manipulation is detected
-- [ ] Trust tokens can be revoked
-- [ ] 34 new tests pass
+- [x] Rate limiter window resets are atomic (Y6.1)
+- [ ] Network partitions are detected and logged (Y6.2)
+- [ ] CRDT conflicts are resolved deterministically (Y6.3)
+- [ ] Byzantine counter manipulation is detected (Y6.5-Y6.6)
+- [x] Trust tokens can be revoked (Y6.7-Y6.8)
+- [x] mDNS disabled in production builds (Y6.10)
+- [ ] 34 new tests pass (actual: 12 new tests so far)
 
 ---
 

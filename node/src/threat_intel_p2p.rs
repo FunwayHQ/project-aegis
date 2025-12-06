@@ -439,23 +439,35 @@ pub struct P2PConfig {
 impl P2PConfig {
     /// Validate the configuration for production use
     ///
-    /// # Security Note (Y5.6)
-    /// This validation ensures that the P2P network is properly configured
-    /// with pre-populated node keys. In release builds, empty trusted_public_keys
-    /// is a security error.
+    /// # Security Note (Y5.6, Y6.10)
+    /// This validation ensures that the P2P network is properly configured:
+    /// - Y5.6: Pre-populated node keys are required in release builds
+    /// - Y6.10: mDNS must be disabled in release builds (prevents local network attacks)
     ///
     /// # Returns
     /// - `Ok(())` if configuration is valid
     /// - `Err(String)` describing the configuration issue
     pub fn validate(&self) -> Result<(), String> {
-        // Y5.6: Require pre-populated node keys in production
         #[cfg(not(debug_assertions))]
         {
+            // Y5.6: Require pre-populated node keys in production
             if self.trusted_public_keys.is_empty() {
                 return Err(
                     "SECURITY ERROR (Y5.6): P2P trusted_public_keys is empty. \
                      Production deployments MUST pre-populate trusted node keys. \
                      Configure at least one trusted node public key before starting."
+                        .to_string(),
+                );
+            }
+
+            // Y6.10: Disable mDNS in production
+            // mDNS allows local network peer discovery which is a security risk
+            // as it could allow untrusted peers on the same network to connect
+            if self.enable_mdns {
+                return Err(
+                    "SECURITY ERROR (Y6.10): mDNS is enabled in production build. \
+                     Local network peer discovery is a security risk. \
+                     Set enable_mdns = false and use bootstrap_peers for peer discovery."
                         .to_string(),
                 );
             }
@@ -477,6 +489,21 @@ impl P2PConfig {
         }
 
         Ok(())
+    }
+
+    /// Create a production-safe configuration
+    ///
+    /// # Security Note (Y6.10)
+    /// This method creates a configuration suitable for production use:
+    /// - mDNS disabled by default
+    /// - Requires explicit bootstrap peers and trusted keys
+    pub fn production(listen_port: u16, bootstrap_peers: Vec<(PeerId, Multiaddr)>, trusted_public_keys: Vec<String>) -> Self {
+        Self {
+            listen_port,
+            enable_mdns: false, // Y6.10: Always disabled in production
+            bootstrap_peers,
+            trusted_public_keys,
+        }
     }
 }
 
@@ -1708,5 +1735,39 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
+    }
+
+    // ========================================
+    // Y6.10: mDNS Production Security Tests
+    // ========================================
+
+    #[test]
+    fn test_y610_production_config_disables_mdns() {
+        let valid_key = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        let config = P2PConfig::production(
+            9001,
+            Vec::new(),
+            vec![valid_key.to_string()],
+        );
+
+        // Production config should have mDNS disabled
+        assert!(!config.enable_mdns);
+        assert!(config.validate().is_ok());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_y610_mdns_allowed_in_debug_builds() {
+        // In debug builds, mDNS is allowed (for testing convenience)
+        let valid_key = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,  // Should be allowed in debug
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![valid_key.to_string()],
+        };
+
+        // In debug builds, this should pass (mDNS allowed)
+        assert!(config.validate().is_ok());
     }
 }
