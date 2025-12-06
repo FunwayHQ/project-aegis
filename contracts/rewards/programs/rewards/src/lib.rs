@@ -15,6 +15,9 @@ const MIN_STAKE: u64 = 1_000_000_000_000;
 /// Y2.3: Maximum nonces to store per operator (sliding window)
 const MAX_STORED_NONCES: usize = 100;
 
+/// Y7.4: Rate limit for authority performance recording (minimum seconds between recordings)
+const AUTHORITY_RECORDING_COOLDOWN: i64 = 60; // 1 minute cooldown
+
 /// Maximum stake multiplier (3x as per whitepaper)
 const MAX_STAKE_MULTIPLIER: u64 = 300; // 3.00x in basis points (100 = 1x)
 
@@ -42,6 +45,8 @@ pub mod rewards {
         pool.current_epoch = start_epoch;
         pool.start_epoch = start_epoch;
         pool.total_network_requests = 0;
+        // Y7.4: Initialize rate limiting timestamp
+        pool.last_authority_recording = 0;
         pool.bump = ctx.bumps.reward_pool;
 
         // Calculate initial emission rate based on halving schedule
@@ -269,6 +274,8 @@ pub mod rewards {
 
     /// Simplified record_performance for backward compatibility (authority-only, no signature)
     /// Y2.1: Added epoch validation - epoch must be greater than last_performance_epoch
+    /// Y7.4: Added rate limiting to prevent spam/abuse
+    /// Y7.5: Added audit event emission for authority actions
     pub fn record_performance_authority(
         ctx: Context<RecordPerformanceAuthority>,
         uptime_percentage: u8,
@@ -277,6 +284,8 @@ pub mod rewards {
         requests_served: u64,
         epoch: u64,
     ) -> Result<()> {
+        let clock = Clock::get()?;
+
         require!(uptime_percentage <= 100, RewardsError::InvalidPercentage);
         require!(latency_score <= 100, RewardsError::InvalidPercentage);
         require!(throughput_score <= 100, RewardsError::InvalidPercentage);
@@ -287,6 +296,24 @@ pub mod rewards {
             epoch > rewards.last_performance_epoch,
             RewardsError::EpochNotIncreasing
         );
+
+        // Y7.4: Rate limit check - prevent authority from recording too frequently
+        let pool = &ctx.accounts.reward_pool;
+        let time_since_last_recording = clock.unix_timestamp
+            .saturating_sub(pool.last_authority_recording);
+        require!(
+            time_since_last_recording >= AUTHORITY_RECORDING_COOLDOWN,
+            RewardsError::RateLimitExceeded
+        );
+
+        // Y7.5: Emit audit event BEFORE the action for transparency
+        emit!(AuthorityActionAuditEvent {
+            action_type: AuthorityActionType::RecordPerformance,
+            authority: ctx.accounts.authority.key(),
+            operator: rewards.operator,
+            epoch,
+            timestamp: clock.unix_timestamp,
+        });
 
         let rewards = &mut ctx.accounts.operator_rewards;
         rewards.uptime_percentage = uptime_percentage;
@@ -301,6 +328,8 @@ pub mod rewards {
         pool.total_network_requests = pool.total_network_requests
             .checked_add(requests_served)
             .ok_or(RewardsError::Overflow)?;
+        // Y7.4: Update last recording timestamp
+        pool.last_authority_recording = clock.unix_timestamp;
 
         emit!(PerformanceRecordedEvent {
             operator: rewards.operator,
@@ -581,6 +610,8 @@ pub struct RewardPool {
     pub current_epoch: u64,           // Current epoch number (8)
     pub start_epoch: u64,             // Starting epoch for halving calculation (8)
     pub total_network_requests: u64,  // Total requests this epoch for demand calc (8)
+    /// Y7.4: Last time authority recorded performance (for rate limiting)
+    pub last_authority_recording: i64,// Last authority recording timestamp (8)
     pub bump: u8,                     // PDA bump (1)
 }
 
@@ -592,6 +623,7 @@ impl RewardPool {
         8 +   // current_epoch
         8 +   // start_epoch
         8 +   // total_network_requests
+        8 +   // last_authority_recording (Y7.4)
         1;    // bump
 }
 
@@ -990,6 +1022,32 @@ pub struct OracleDeactivatedEvent {
     pub oracle_pubkey: [u8; 32],
 }
 
+/// Y7.5: Audit event for authority actions
+/// Emitted whenever the authority performs privileged operations
+#[event]
+pub struct AuthorityActionAuditEvent {
+    pub action_type: AuthorityActionType,
+    pub authority: Pubkey,
+    pub operator: Pubkey,
+    pub epoch: u64,
+    pub timestamp: i64,
+}
+
+/// Y7.5: Types of authority actions for audit trail
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
+pub enum AuthorityActionType {
+    /// Performance recording without oracle signature
+    RecordPerformance,
+    /// Manual epoch advancement
+    AdvanceEpoch,
+    /// Pool funding
+    FundPool,
+    /// Oracle registration
+    RegisterOracle,
+    /// Oracle deactivation
+    DeactivateOracle,
+}
+
 /// Errors
 #[error_code]
 pub enum RewardsError {
@@ -1025,4 +1083,8 @@ pub enum RewardsError {
     /// Y2.3: Nonce replay protection
     #[msg("Nonce has already been used")]
     NonceAlreadyUsed,
+
+    /// Y7.4: Rate limiting for authority actions
+    #[msg("Rate limit exceeded - please wait before performing this action again")]
+    RateLimitExceeded,
 }

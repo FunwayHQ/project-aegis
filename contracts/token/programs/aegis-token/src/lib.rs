@@ -820,7 +820,12 @@ pub struct ExecuteMultisigTransaction<'info> {
     pub mint: Account<'info, Mint>,
 
     /// Treasury token account (for transfers)
-    #[account(mut)]
+    /// Y7.3 SECURITY FIX: Validate treasury is owned by the token_config PDA
+    /// This prevents attackers from substituting a malicious treasury account
+    #[account(
+        mut,
+        constraint = treasury.owner == token_config.key() @ TokenError::InvalidTreasuryOwner
+    )]
     pub treasury: Account<'info, TokenAccount>,
 
     /// Recipient token account
@@ -1045,4 +1050,8 @@ pub enum TokenError {
     // SECURITY FIX (X6): Duplicate signer detection
     #[msg("Duplicate signer detected - all signers must be unique")]
     DuplicateSigner,
+
+    // Y7.3: Treasury ownership validation
+    #[msg("Treasury account must be owned by token config PDA")]
+    InvalidTreasuryOwner,
 }

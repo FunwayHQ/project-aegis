@@ -6,6 +6,15 @@ const MAX_METADATA_URL_LENGTH: usize = 128;
 // DEPRECATED: Now stored in RegistryConfig for flexibility
 const MIN_STAKE_FOR_REGISTRATION: u64 = 100_000_000_000; // 100 AEGIS tokens
 
+/// Y7.6: Reputation threshold below which nodes are auto-deactivated
+/// Set to 10% (1000 out of 10000 = 10.00%)
+const AUTO_DEACTIVATION_REPUTATION_THRESHOLD: u64 = 1000;
+
+/// Y7.7: Minimum reputation required for re-registration
+/// Prevents abusive nodes from simply re-registering
+/// Set to 30% (3000 out of 10000 = 30.00%)
+const MIN_REPUTATION_FOR_REREGISTRATION: u64 = 3000;
+
 #[program]
 pub mod node_registry {
     use super::*;
@@ -179,6 +188,7 @@ pub mod node_registry {
     }
 
     /// Reactivate a previously deactivated node
+    /// Y7.7: Requires minimum reputation score to prevent abusive re-registration
     pub fn reactivate_node(ctx: Context<ReactivateNode>) -> Result<()> {
         let node_account = &mut ctx.accounts.node_account;
         let clock = Clock::get()?;
@@ -188,10 +198,21 @@ pub mod node_registry {
             RegistryError::NodeNotInactive
         );
 
+        // Y7.7: Check reputation floor - nodes with very low reputation cannot reactivate
+        // They must wait for reputation to recover or appeal to admin
+        require!(
+            node_account.reputation_score >= MIN_REPUTATION_FOR_REREGISTRATION,
+            RegistryError::ReputationTooLow
+        );
+
         node_account.status = NodeStatus::Active;
         node_account.updated_at = clock.unix_timestamp;
 
-        msg!("Node reactivated: {}", node_account.operator);
+        msg!(
+            "Y7.7: Node reactivated: {} (reputation: {})",
+            node_account.operator,
+            node_account.reputation_score
+        );
 
         emit!(NodeReactivatedEvent {
             operator: node_account.operator,
@@ -290,6 +311,25 @@ pub mod node_registry {
                 expected_intervals,
                 node_account.reputation_score
             );
+
+            // Y7.6: Auto-deactivate node if reputation falls below threshold
+            if node_account.reputation_score < AUTO_DEACTIVATION_REPUTATION_THRESHOLD
+                && node_account.status == NodeStatus::Active
+            {
+                node_account.status = NodeStatus::Inactive;
+                msg!(
+                    "Y7.6: Node {} AUTO-DEACTIVATED due to low reputation ({})",
+                    node_account.operator,
+                    node_account.reputation_score
+                );
+
+                emit!(NodeAutoDeactivatedEvent {
+                    operator: node_account.operator,
+                    reputation_score: node_account.reputation_score,
+                    threshold: AUTO_DEACTIVATION_REPUTATION_THRESHOLD,
+                    timestamp: current_time,
+                });
+            }
         } else {
             // Reputation boost for on-time heartbeat (0.1% per successful heartbeat)
             let boost = 10; // 0.10%
@@ -680,6 +720,15 @@ pub struct NodeReactivatedEvent {
     pub timestamp: i64,
 }
 
+/// Y7.6: Event emitted when a node is auto-deactivated due to low reputation
+#[event]
+pub struct NodeAutoDeactivatedEvent {
+    pub operator: Pubkey,
+    pub reputation_score: u64,
+    pub threshold: u64,
+    pub timestamp: i64,
+}
+
 /// Event emitted when a node submits a heartbeat
 #[event]
 pub struct HeartbeatEvent {
@@ -759,4 +808,8 @@ pub enum RegistryError {
 
     #[msg("Arithmetic overflow")]
     Overflow,
+
+    /// Y7.7: Reputation floor for reactivation
+    #[msg("Reputation score too low for reactivation (minimum 30% required)")]
+    ReputationTooLow,
 }

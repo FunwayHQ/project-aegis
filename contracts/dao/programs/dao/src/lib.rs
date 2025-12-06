@@ -33,6 +33,15 @@ const DEFAULT_QUORUM_PERCENTAGE: u8 = 10;
 /// Approval threshold percentage (51% of votes must be FOR)
 const DEFAULT_APPROVAL_THRESHOLD: u8 = 51;
 
+/// Y7.1: Partial bond return threshold (50% of quorum = some participation)
+const PARTIAL_BOND_QUORUM_THRESHOLD: u8 = 50;
+
+/// Y7.1: Percentage of bond to return for near-quorum proposals (50%)
+const PARTIAL_BOND_RETURN_PERCENTAGE: u64 = 50;
+
+/// Y7.2: Minimum votes for appeal eligibility (40% of quorum required)
+const APPEAL_QUORUM_THRESHOLD: u8 = 40;
+
 /// Maximum title length
 const MAX_TITLE_LENGTH: usize = 128;
 
@@ -923,7 +932,16 @@ pub mod dao {
         Ok(())
     }
 
-    /// Return proposal bond to proposer (after finalization, if passed)
+    /// Return proposal bond to proposer (after finalization)
+    ///
+    /// Y7.1 SECURITY FIX: Implements partial bond return for defeated proposals
+    /// that achieved 50%+ of quorum participation. This prevents griefing by
+    /// rewarding legitimate proposals that simply didn't pass the approval threshold.
+    ///
+    /// Bond return tiers:
+    /// - Passed/Executed: 100% bond returned
+    /// - Defeated with ≥50% quorum participation: 50% bond returned
+    /// - Defeated with <50% quorum participation: 0% bond returned (forfeited)
     pub fn return_proposal_bond(ctx: Context<ReturnProposalBond>) -> Result<()> {
         let proposal = &mut ctx.accounts.proposal;
         let dao_config = &ctx.accounts.dao_config;
@@ -937,15 +955,57 @@ pub mod dao {
         // Check bond not already returned
         require!(!proposal.bond_returned, DaoError::BondAlreadyReturned);
 
-        // Only return bond for passed/executed proposals
-        // Defeated proposals forfeit bond to treasury
-        require!(
-            proposal.status == ProposalStatus::Passed
-                || proposal.status == ProposalStatus::Executed,
-            DaoError::BondForfeited
-        );
+        // Y7.1: Calculate return amount based on proposal outcome and participation
+        let full_bond = dao_config.proposal_bond;
+        let return_amount: u64;
+        let return_type: &str;
 
-        // Transfer bond back to proposer
+        if proposal.status == ProposalStatus::Passed || proposal.status == ProposalStatus::Executed {
+            // Full bond return for successful proposals
+            return_amount = full_bond;
+            return_type = "full";
+        } else if proposal.status == ProposalStatus::Defeated {
+            // Y7.1: Check if proposal achieved partial quorum for partial return
+            let total_votes = proposal.for_votes
+                .checked_add(proposal.against_votes)
+                .ok_or(DaoError::Overflow)?;
+
+            // Calculate what % of quorum was achieved
+            let quorum_required = dao_config.quorum_percentage as u64;
+            let quorum_achieved_percentage = if quorum_required > 0 {
+                (total_votes as u128)
+                    .checked_mul(100)
+                    .ok_or(DaoError::Overflow)?
+                    .checked_div(quorum_required as u128)
+                    .ok_or(DaoError::Overflow)? as u64
+            } else {
+                0
+            };
+
+            if quorum_achieved_percentage >= PARTIAL_BOND_QUORUM_THRESHOLD as u64 {
+                // Partial bond return (50%) for proposals with significant participation
+                return_amount = full_bond
+                    .checked_mul(PARTIAL_BOND_RETURN_PERCENTAGE)
+                    .ok_or(DaoError::Overflow)?
+                    .checked_div(100)
+                    .ok_or(DaoError::Overflow)?;
+                return_type = "partial";
+                msg!(
+                    "Y7.1: Partial bond return - proposal achieved {}% of quorum",
+                    quorum_achieved_percentage
+                );
+            } else {
+                // No bond return - insufficient participation
+                return Err(DaoError::BondForfeited.into());
+            }
+        } else {
+            // Cancelled or other status - no return
+            return Err(DaoError::BondForfeited.into());
+        }
+
+        require!(return_amount > 0, DaoError::BondForfeited);
+
+        // Transfer bond (full or partial) back to proposer
         let dao_bump = dao_config.bump;
         let seeds = &[b"dao_config".as_ref(), &[dao_bump]];
         let signer = &[&seeds[..]];
@@ -957,21 +1017,138 @@ pub mod dao {
         };
         let cpi_program = ctx.accounts.token_program.to_account_info();
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
-        token::transfer(cpi_ctx, dao_config.proposal_bond)?;
+        token::transfer(cpi_ctx, return_amount)?;
 
         proposal.bond_returned = true;
 
         msg!(
-            "Proposal {} bond returned to {}",
+            "Proposal {} bond {} return ({}) to {}",
             proposal.proposal_id,
+            return_type,
+            return_amount,
             proposal.proposer
         );
 
         emit!(BondReturnedEvent {
             proposal_id: proposal.proposal_id,
             proposer: proposal.proposer,
-            amount: dao_config.proposal_bond,
+            amount: return_amount,
             timestamp: Clock::get()?.unix_timestamp,
+        });
+
+        Ok(())
+    }
+
+    /// Y7.2: Appeal a defeated proposal for reconsideration
+    ///
+    /// Allows defeated proposals with significant support (≥40% of quorum) to be
+    /// reconsidered. The appeal creates a new proposal with extended voting period.
+    ///
+    /// Requirements:
+    /// - Original proposal must be Defeated
+    /// - Must have achieved ≥40% of required quorum
+    /// - Appellant must provide appeal bond (1.5x normal bond)
+    /// - Can only appeal once per proposal
+    pub fn appeal_proposal(
+        ctx: Context<AppealProposal>,
+        original_proposal_id: u64,
+    ) -> Result<()> {
+        let original = &ctx.accounts.original_proposal;
+        let appeal = &mut ctx.accounts.appeal_proposal;
+        let dao_config = &ctx.accounts.dao_config;
+        let clock = Clock::get()?;
+
+        // Verify original proposal is defeated
+        require!(
+            original.status == ProposalStatus::Defeated,
+            DaoError::CannotAppealNonDefeated
+        );
+
+        // Y7.2: Check proposal achieved minimum participation for appeal eligibility
+        let total_votes = original.for_votes
+            .checked_add(original.against_votes)
+            .ok_or(DaoError::Overflow)?;
+
+        let quorum_required = dao_config.quorum_percentage as u64;
+        let quorum_achieved_percentage = if quorum_required > 0 {
+            (total_votes as u128)
+                .checked_mul(100)
+                .ok_or(DaoError::Overflow)?
+                .checked_div(quorum_required as u128)
+                .ok_or(DaoError::Overflow)? as u64
+        } else {
+            0
+        };
+
+        require!(
+            quorum_achieved_percentage >= APPEAL_QUORUM_THRESHOLD as u64,
+            DaoError::InsufficientVotesForAppeal
+        );
+
+        // Calculate appeal bond (1.5x normal bond)
+        let appeal_bond = dao_config.proposal_bond
+            .checked_mul(3)
+            .ok_or(DaoError::Overflow)?
+            .checked_div(2)
+            .ok_or(DaoError::Overflow)?;
+
+        // Transfer appeal bond from appellant
+        let cpi_accounts = Transfer {
+            from: ctx.accounts.appellant_token_account.to_account_info(),
+            to: ctx.accounts.bond_escrow.to_account_info(),
+            authority: ctx.accounts.appellant.to_account_info(),
+        };
+        let cpi_program = ctx.accounts.token_program.to_account_info();
+        let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
+        token::transfer(cpi_ctx, appeal_bond)?;
+
+        // Create appeal proposal with extended voting period
+        let appeal_id = dao_config.proposal_count
+            .checked_add(1)
+            .ok_or(DaoError::Overflow)?;
+
+        appeal.proposal_id = appeal_id;
+        appeal.proposer = ctx.accounts.appellant.key();
+        appeal.title = format!("APPEAL: {}", original.title);
+        appeal.description_cid = original.description_cid.clone();
+        appeal.proposal_type = original.proposal_type;
+        appeal.status = ProposalStatus::Active;
+        appeal.for_votes = 0;
+        appeal.against_votes = 0;
+        // Extended voting period (1.5x normal)
+        let extended_duration = dao_config.voting_period
+            .checked_mul(3)
+            .ok_or(DaoError::Overflow)?
+            .checked_div(2)
+            .ok_or(DaoError::Overflow)?;
+        appeal.abstain_votes = 0;
+        appeal.vote_start = clock.unix_timestamp;
+        appeal.vote_end = clock.unix_timestamp
+            .checked_add(extended_duration)
+            .ok_or(DaoError::Overflow)?;
+        // Execution eligible after extended voting + timelock (3 days per whitepaper)
+        appeal.execution_eligible_at = appeal.vote_end
+            .checked_add(EXECUTION_TIMELOCK)
+            .ok_or(DaoError::Overflow)?;
+        appeal.created_at = clock.unix_timestamp;
+        appeal.executed_at = None;
+        appeal.execution_data = original.execution_data.clone();
+        appeal.bond_returned = false;
+        appeal.bump = ctx.bumps.appeal_proposal;
+
+        msg!(
+            "Y7.2: Appeal created for proposal {} -> new proposal {}. Appeal bond: {}",
+            original_proposal_id,
+            appeal_id,
+            appeal_bond
+        );
+
+        emit!(ProposalAppealedEvent {
+            original_proposal_id,
+            appeal_proposal_id: appeal_id,
+            appellant: ctx.accounts.appellant.key(),
+            appeal_bond,
+            timestamp: clock.unix_timestamp,
         });
 
         Ok(())
@@ -1748,6 +1925,54 @@ pub struct ReturnProposalBond<'info> {
     pub token_program: Program<'info, Token>,
 }
 
+/// Y7.2: Appeal a defeated proposal
+#[derive(Accounts)]
+#[instruction(original_proposal_id: u64)]
+pub struct AppealProposal<'info> {
+    #[account(
+        mut,
+        seeds = [b"dao_config"],
+        bump = dao_config.bump,
+        has_one = bond_escrow @ DaoError::InvalidBondEscrow
+    )]
+    pub dao_config: Account<'info, DaoConfig>,
+
+    /// Original defeated proposal
+    #[account(
+        seeds = [b"proposal", original_proposal_id.to_le_bytes().as_ref()],
+        bump = original_proposal.bump
+    )]
+    pub original_proposal: Account<'info, Proposal>,
+
+    /// New appeal proposal account
+    #[account(
+        init,
+        payer = appellant,
+        space = Proposal::MAX_SIZE,
+        seeds = [b"appeal", original_proposal_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub appeal_proposal: Account<'info, Proposal>,
+
+    /// Bond escrow to receive appeal bond
+    #[account(mut)]
+    pub bond_escrow: Account<'info, TokenAccount>,
+
+    /// Appellant's token account
+    #[account(
+        mut,
+        constraint = appellant_token_account.owner == appellant.key() @ DaoError::InvalidTokenOwner,
+        constraint = appellant_token_account.mint == dao_config.governance_token_mint @ DaoError::InvalidMint
+    )]
+    pub appellant_token_account: Account<'info, TokenAccount>,
+
+    #[account(mut)]
+    pub appellant: Signer<'info>,
+
+    pub system_program: Program<'info, System>,
+    pub token_program: Program<'info, Token>,
+}
+
 /// Deposit to treasury
 #[derive(Accounts)]
 pub struct DepositToTreasury<'info> {
@@ -1913,6 +2138,16 @@ pub struct BondReturnedEvent {
     pub timestamp: i64,
 }
 
+/// Y7.2: Event emitted when a proposal is appealed
+#[event]
+pub struct ProposalAppealedEvent {
+    pub original_proposal_id: u64,
+    pub appeal_proposal_id: u64,
+    pub appellant: Pubkey,
+    pub appeal_bond: u64,
+    pub timestamp: i64,
+}
+
 #[event]
 pub struct TreasuryDepositEvent {
     pub depositor: Pubkey,
@@ -2066,4 +2301,11 @@ pub enum DaoError {
     // SECURITY FIX (X1.4): New error codes for DAO config close validation
     #[msg("Invalid DAO config account - incorrect data or not owned by program")]
     InvalidDaoConfig,
+
+    // Y7.2: Appeal mechanism error codes
+    #[msg("Only defeated proposals can be appealed")]
+    CannotAppealNonDefeated,
+
+    #[msg("Proposal did not achieve minimum quorum (40%) required for appeal")]
+    InsufficientVotesForAppeal,
 }
