@@ -33,6 +33,86 @@ const RATE_LIMIT_WINDOW_SECS: u64 = 1;
 /// How often to clean up old rate limit entries (60 seconds)
 const RATE_LIMIT_CLEANUP_INTERVAL_SECS: u64 = 60;
 
+// =============================================================================
+// SECURITY FIX (Y9.10): Outbound Amplification Protection
+// =============================================================================
+//
+// Prevents amplification attacks where receiving one message causes many outbound
+// messages. This could happen if:
+// 1. We receive a threat and re-broadcast it to many peers
+// 2. We process a batch of threats and publish them all at once
+// 3. A malicious node triggers rapid-fire publishing
+
+/// Y9.10: Maximum outbound messages per window (prevents amplification)
+const OUTBOUND_RATE_LIMIT_MAX: u32 = 50;
+
+/// Y9.10: Outbound rate limit window (1 second)
+const OUTBOUND_RATE_LIMIT_WINDOW_SECS: u64 = 1;
+
+/// Y9.10: Outbound amplification rate limiter
+///
+/// Tracks our own outbound message rate to prevent amplification attacks.
+/// If we receive a burst of messages, we shouldn't amplify it by sending
+/// a corresponding burst of outbound messages.
+#[derive(Debug)]
+pub struct OutboundRateLimiter {
+    /// Count in current window
+    count: u32,
+    /// Window start time
+    window_start: Instant,
+    /// Total messages dropped
+    pub dropped_count: u64,
+}
+
+impl OutboundRateLimiter {
+    pub fn new() -> Self {
+        Self {
+            count: 0,
+            window_start: Instant::now(),
+            dropped_count: 0,
+        }
+    }
+
+    /// Check if we can send an outbound message
+    ///
+    /// Returns true if allowed, false if rate limited.
+    pub fn check_and_update(&mut self) -> bool {
+        let now = Instant::now();
+        let window_duration = Duration::from_secs(OUTBOUND_RATE_LIMIT_WINDOW_SECS);
+
+        // Reset window if expired
+        if now.duration_since(self.window_start) >= window_duration {
+            self.window_start = now;
+            self.count = 1;
+            return true;
+        }
+
+        // Check if under limit
+        if self.count < OUTBOUND_RATE_LIMIT_MAX {
+            self.count += 1;
+            return true;
+        }
+
+        self.dropped_count += 1;
+        warn!(
+            "Y9.10: Outbound rate limited - {} messages dropped total (amplification protection)",
+            self.dropped_count
+        );
+        false
+    }
+
+    /// Get current count in window
+    pub fn current_count(&self) -> u32 {
+        self.count
+    }
+}
+
+impl Default for OutboundRateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Rate limiter entry for a single peer
 #[derive(Debug, Clone)]
 struct RateLimitEntry {
@@ -1335,6 +1415,8 @@ pub struct ThreatIntelP2P {
     trusted_registry: TrustedNodeRegistry,
     /// SECURITY FIX (X6): Rate limiter for gossip messages
     rate_limiter: GossipRateLimiter,
+    /// SECURITY FIX (Y9.10): Outbound rate limiter for amplification protection
+    outbound_rate_limiter: OutboundRateLimiter,
     /// SECURITY FIX (Y5.4): Seen message IDs for replay protection
     /// Tracks message_ids to detect and drop duplicate messages
     seen_message_ids: HashSet<String>,
@@ -1438,6 +1520,7 @@ impl ThreatIntelP2P {
             signing_key,
             trusted_registry,
             rate_limiter: GossipRateLimiter::new(),
+            outbound_rate_limiter: OutboundRateLimiter::new(),
             seen_message_ids: HashSet::new(),
         })
     }
@@ -1533,6 +1616,7 @@ impl ThreatIntelP2P {
             signing_key,
             trusted_registry,
             rate_limiter: GossipRateLimiter::new(),
+            outbound_rate_limiter: OutboundRateLimiter::new(),
             seen_message_ids: HashSet::new(),
         })
     }
@@ -1566,7 +1650,16 @@ impl ThreatIntelP2P {
     }
 
     /// Publish threat intelligence to the network (signed)
+    ///
+    /// Y9.10: Applies outbound rate limiting to prevent amplification attacks.
     pub fn publish(&mut self, threat: &ThreatIntelligence) -> Result<()> {
+        // Y9.10: Check outbound rate limit before publishing
+        if !self.outbound_rate_limiter.check_and_update() {
+            return Err(anyhow::anyhow!(
+                "Y9.10: Outbound rate limited (amplification protection)"
+            ));
+        }
+
         // Sign the threat intelligence
         let signed_threat = SignedThreatIntelligence::sign(threat.clone(), &self.signing_key)?;
         let json = signed_threat.to_json()?;
@@ -1582,7 +1675,16 @@ impl ThreatIntelP2P {
     }
 
     /// Publish a raw signed threat intelligence message
+    ///
+    /// Y9.10: Applies outbound rate limiting to prevent amplification attacks.
     pub fn publish_signed(&mut self, signed_threat: &SignedThreatIntelligence) -> Result<()> {
+        // Y9.10: Check outbound rate limit before publishing
+        if !self.outbound_rate_limiter.check_and_update() {
+            return Err(anyhow::anyhow!(
+                "Y9.10: Outbound rate limited (amplification protection)"
+            ));
+        }
+
         let json = signed_threat.to_json()?;
 
         self.swarm

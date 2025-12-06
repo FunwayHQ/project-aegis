@@ -94,8 +94,9 @@ const CHALLENGE_TTL: Duration = Duration::from_secs(300); // 5 minutes to solve
 // SECURITY FIX (X4.6): Configurable token TTL
 // ============================================
 
-/// Default token validity period
-const DEFAULT_TOKEN_TTL_SECS: u64 = 900; // 15 minutes
+/// Y9.2: Default token validity period (reduced from 15 to 5 minutes)
+/// Shorter TTL reduces window for token theft and replay attacks
+const DEFAULT_TOKEN_TTL_SECS: u64 = 300; // 5 minutes
 
 /// Minimum token TTL (security floor)
 const MIN_TOKEN_TTL_SECS: u64 = 300; // 5 minutes
@@ -611,8 +612,9 @@ impl ChallengeManager {
         challenge_type: ChallengeType,
     ) -> Result<Challenge> {
         // SECURITY FIX (X4.2): Use cryptographically secure random generator
-        // SECURITY FIX (X4.5): Use 32-char ID and 128-char PoW challenge to prevent collisions
-        let id = secure_random_string(32);
+        // SECURITY FIX (X4.5): Use 128-char PoW challenge to prevent collisions
+        // Y9.1: Increased ID length from 32 to 48 characters for better entropy
+        let id = secure_random_string(48);
         let pow_challenge = secure_random_string(128); // Increased from 64 to 128 for collision resistance
 
         // SECURITY FIX (X2.1): Use safe timestamp helper

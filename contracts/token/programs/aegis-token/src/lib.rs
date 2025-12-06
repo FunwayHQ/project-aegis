@@ -401,7 +401,12 @@ pub mod aegis_token {
             }
         }
 
+        // Y9.12: tx.executed set for event emission before account close
         tx.executed = true;
+
+        // Y9.12: MultisigTransaction account will be closed via `close = proposer` constraint
+        // Rent is refunded to the original proposer of the transaction
+        msg!("Multisig transaction executed, account closed, rent refunded to proposer");
 
         emit!(MultisigExecutedEvent {
             tx_id: tx.key(),
@@ -810,11 +815,21 @@ pub struct ExecuteMultisigTransaction<'info> {
     )]
     pub token_config: Account<'info, TokenConfig>,
 
+    /// Y9.12: MultisigTransaction account is closed after execution, returning rent to proposer
     #[account(
         mut,
+        close = proposer,
         constraint = multisig_tx.config == token_config.key() @ TokenError::ConfigMismatch
     )]
     pub multisig_tx: Account<'info, MultisigTransaction>,
+
+    /// CHECK: The original proposer who receives rent refund
+    /// Validated against multisig_tx.proposer
+    #[account(
+        mut,
+        constraint = proposer.key() == multisig_tx.proposer @ TokenError::InvalidProposer
+    )]
+    pub proposer: AccountInfo<'info>,
 
     #[account(mut)]
     pub mint: Account<'info, Mint>,
@@ -1054,4 +1069,8 @@ pub enum TokenError {
     // Y7.3: Treasury ownership validation
     #[msg("Treasury account must be owned by token config PDA")]
     InvalidTreasuryOwner,
+
+    // Y9.12: Proposer validation for rent refund
+    #[msg("Proposer account does not match transaction proposer")]
+    InvalidProposer,
 }

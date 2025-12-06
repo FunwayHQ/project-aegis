@@ -736,11 +736,11 @@ pub mod dao {
         let cpi_ctx = CpiContext::new_with_signer(cpi_program, cpi_accounts, signer);
         token::transfer(cpi_ctx, amount)?;
 
-        // Mark as withdrawn
-        vote_escrow.withdrawn = true;
-
+        // Y9.11: VoteEscrow account is closed via `close = voter` constraint
+        // The rent will be returned to the voter automatically by Anchor.
+        // We still log the details before the account is closed.
         msg!(
-            "Vote tokens withdrawn for proposal {}: voter={}, amount={}",
+            "Vote tokens withdrawn for proposal {}: voter={}, amount={} (account closed, rent recovered)",
             proposal.proposal_id,
             vote_escrow.voter,
             amount
@@ -1803,8 +1803,10 @@ pub struct WithdrawVoteTokens<'info> {
     )]
     pub proposal: Account<'info, Proposal>,
 
+    /// Y9.11: VoteEscrow account is closed after withdrawal, returning rent to voter
     #[account(
         mut,
+        close = voter,
         seeds = [b"vote_escrow", proposal.proposal_id.to_le_bytes().as_ref(), voter.key().as_ref()],
         bump = vote_escrow.bump,
         constraint = vote_escrow.voter == voter.key() @ DaoError::InvalidVoter,

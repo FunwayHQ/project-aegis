@@ -2,7 +2,7 @@ use regex::{Regex, RegexBuilder, RegexSet};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 // =============================================================================
 // SECURITY FIX (X2.5): ReDoS Protection Constants
@@ -282,6 +282,8 @@ impl AegisWaf {
     ///
     /// SECURITY FIX: Uses RegexSet.matches() for O(1) complexity matching.
     /// Also enforces body size limits to prevent memory exhaustion.
+    ///
+    /// Y9.7: Performs URL decoding before analysis to catch encoded attacks.
     pub fn analyze_request(
         &self,
         _method: &str,
@@ -295,8 +297,26 @@ impl AegisWaf {
 
         let mut matches = Vec::new();
 
-        // Check URI using RegexSet for O(1) matching
+        // Y9.7: URL decode the URI to catch encoded attacks like %3Cscript%3E
+        // We check both the original and decoded versions
         self.check_text_with_regexset(uri, "URI", &mut matches);
+
+        // Try to URL decode and check the decoded version too
+        if let Ok(decoded_uri) = urlencoding::decode(uri) {
+            // Only check if decoding changed the URI (avoid duplicate checks)
+            if decoded_uri != uri {
+                debug!("Y9.7: WAF checking URL-decoded URI: {} -> {}", uri, decoded_uri);
+                self.check_text_with_regexset(&decoded_uri, "URI (decoded)", &mut matches);
+
+                // Also try double decoding to catch double-encoded attacks
+                if let Ok(double_decoded) = urlencoding::decode(&decoded_uri) {
+                    if double_decoded != decoded_uri {
+                        debug!("Y9.7: WAF checking double-decoded URI: {} -> {}", decoded_uri, double_decoded);
+                        self.check_text_with_regexset(&double_decoded, "URI (double-decoded)", &mut matches);
+                    }
+                }
+            }
+        }
 
         // Check headers using RegexSet for O(1) matching per header
         for (name, value) in headers {

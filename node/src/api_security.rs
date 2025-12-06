@@ -2320,6 +2320,24 @@ impl ApiSecurityEngine {
 
         let mut jwt_subject: Option<String> = None;
 
+        // Y9.5: Validate query parameter count to prevent DoS
+        if query_params.len() > MAX_QUERY_PARAMS {
+            warn!(
+                "Y9.5: Rejecting request with {} query params (max: {})",
+                query_params.len(),
+                MAX_QUERY_PARAMS
+            );
+            result.allowed = false;
+            result.action = ApiSecurityAction::Block {
+                reason: format!(
+                    "Too many query parameters: {} (max: {})",
+                    query_params.len(),
+                    MAX_QUERY_PARAMS
+                ),
+            };
+            return result;
+        }
+
         // 1. JWT Validation
         if self.config.enable_jwt_validation {
             if let Some(auth_header) = headers.get("authorization").or(headers.get("Authorization"))
