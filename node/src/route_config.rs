@@ -10,6 +10,54 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+// ============================================================================
+// Y4.7: Route priority validation constants
+// ============================================================================
+
+/// Minimum allowed route priority
+pub const MIN_ROUTE_PRIORITY: i32 = 0;
+
+/// Maximum allowed route priority
+pub const MAX_ROUTE_PRIORITY: i32 = 10_000;
+
+/// Route configuration validation error
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RouteConfigError {
+    /// Priority is outside valid range
+    InvalidPriority { priority: i32, min: i32, max: i32 },
+    /// Invalid regex pattern
+    InvalidRegexPattern { pattern: String, error: String },
+    /// Empty route name
+    EmptyRouteName,
+    /// Duplicate route name
+    DuplicateRouteName(String),
+}
+
+impl std::fmt::Display for RouteConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RouteConfigError::InvalidPriority { priority, min, max } => {
+                write!(
+                    f,
+                    "Route priority {} is outside valid range [{}, {}]",
+                    priority, min, max
+                )
+            }
+            RouteConfigError::InvalidRegexPattern { pattern, error } => {
+                write!(f, "Invalid regex pattern '{}': {}", pattern, error)
+            }
+            RouteConfigError::EmptyRouteName => {
+                write!(f, "Route name cannot be empty")
+            }
+            RouteConfigError::DuplicateRouteName(name) => {
+                write!(f, "Duplicate route name: {}", name)
+            }
+        }
+    }
+}
+
+impl std::error::Error for RouteConfigError {}
+
 /// Route matching pattern types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "pattern", rename_all = "lowercase")]
@@ -24,29 +72,42 @@ pub enum RoutePattern {
 
 impl RoutePattern {
     /// Check if a given path matches this pattern
-    /// Note: For regex patterns, this recompiles on each call.
-    /// Use CompiledRouteConfig for high-performance matching.
+    ///
+    /// # Security Warning (Y4.1)
+    ///
+    /// This method recompiles regex patterns on each call, which can lead to:
+    /// 1. Performance degradation
+    /// 2. ReDoS (Regular Expression Denial of Service) attacks
+    ///
+    /// Use `CompiledRoutePattern::compile()` and `CompiledRoutePattern::matches()`
+    /// instead, which pre-compiles and caches regex patterns.
+    ///
+    /// # Deprecation
+    ///
+    /// This method is deprecated and will be removed in a future release.
+    /// Migrate to `CompiledRoutePattern` for all route matching operations.
+    #[deprecated(
+        since = "0.1.0",
+        note = "SECURITY (Y4.1): Use CompiledRoutePattern::matches() instead to prevent ReDoS attacks"
+    )]
     pub fn matches(&self, path: &str) -> bool {
-        match self {
-            RoutePattern::Exact(pattern) => path == pattern,
-            RoutePattern::Prefix(prefix) => {
-                let normalized_prefix = prefix.trim_end_matches('*').trim_end_matches('/');
-                path == normalized_prefix || path.starts_with(&format!("{}/", normalized_prefix))
-            }
-            RoutePattern::Regex(pattern) => {
-                // SECURITY FIX (X5.1): This method compiles regex on each call.
-                // For production use, prefer CompiledRoutePattern::compile() and
-                // CompiledRoutePattern::matches() which caches the compiled regex.
-                // This fallback implementation is kept for backward compatibility.
-                //
-                // TODO: Deprecate this method in favor of CompiledRoutePattern
-                if let Ok(re) = regex::Regex::new(pattern) {
-                    re.is_match(path)
-                } else {
-                    false
-                }
-            }
-        }
+        // Compile pattern on the fly - this is the security concern
+        let compiled = CompiledRoutePattern::compile(self);
+        compiled.matches(path)
+    }
+
+    /// Compile this pattern into a CompiledRoutePattern for efficient matching
+    ///
+    /// # Example
+    /// ```
+    /// use aegis_node::route_config::{RoutePattern, CompiledRoutePattern};
+    ///
+    /// let pattern = RoutePattern::Prefix("/api/*".to_string());
+    /// let compiled = pattern.compile();
+    /// assert!(compiled.matches("/api/users"));
+    /// ```
+    pub fn compile(&self) -> CompiledRoutePattern {
+        CompiledRoutePattern::compile(self)
     }
 }
 
@@ -299,6 +360,12 @@ fn default_enabled() -> bool {
 
 impl Route {
     /// Check if this route matches the given request
+    ///
+    /// # Security Note (Y4.2)
+    ///
+    /// This method compiles the route pattern on each call.
+    /// For high-performance scenarios, use `RouteConfig::compile()` to get a
+    /// `CompiledRouteConfig`, which pre-compiles all patterns.
     pub fn matches_request(&self, method: &str, path: &str, headers: &[(String, String)]) -> bool {
         // Check if route is enabled
         if !self.enabled {
@@ -310,8 +377,11 @@ impl Route {
             return false;
         }
 
-        // Check path match
-        if !self.path.matches(path) {
+        // SECURITY FIX (Y4.2): Use CompiledRoutePattern instead of legacy matches()
+        // This compiles the pattern, which is still not ideal for hot paths.
+        // For production, use CompiledRouteConfig for pre-compiled patterns.
+        let compiled_path = self.path.compile();
+        if !compiled_path.matches(path) {
             return false;
         }
 
@@ -329,6 +399,48 @@ impl Route {
         }
 
         true
+    }
+
+    /// Validate this route configuration
+    ///
+    /// # Returns
+    /// `Ok(())` if the route is valid, `Err(RouteConfigError)` if validation fails.
+    ///
+    /// # Validation Rules (Y4.7)
+    /// - Route name must not be empty if provided
+    /// - Priority must be within valid range (0-10000)
+    /// - Regex patterns must be valid
+    pub fn validate(&self) -> Result<(), RouteConfigError> {
+        // Y4.7: Validate route priority range
+        if self.priority < MIN_ROUTE_PRIORITY || self.priority > MAX_ROUTE_PRIORITY {
+            return Err(RouteConfigError::InvalidPriority {
+                priority: self.priority,
+                min: MIN_ROUTE_PRIORITY,
+                max: MAX_ROUTE_PRIORITY,
+            });
+        }
+
+        // Validate route name if provided
+        if let Some(ref name) = self.name {
+            if name.is_empty() {
+                return Err(RouteConfigError::EmptyRouteName);
+            }
+        }
+
+        // Validate regex pattern compiles successfully
+        if let RoutePattern::Regex(ref pattern) = self.path {
+            match regex::Regex::new(pattern) {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(RouteConfigError::InvalidRegexPattern {
+                        pattern: pattern.clone(),
+                        error: e.to_string(),
+                    });
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -412,6 +524,52 @@ impl RouteConfig {
     /// Pre-compiles all regex patterns and pre-sorts routes by priority
     pub fn compile(&self) -> CompiledRouteConfig {
         CompiledRouteConfig::compile(self)
+    }
+
+    /// Validate this route configuration
+    ///
+    /// # Returns
+    /// `Ok(())` if all routes are valid, `Err(RouteConfigError)` if validation fails.
+    ///
+    /// # Validation Rules (Y4.7)
+    /// - All route priorities must be within valid range (0-10000)
+    /// - Route names must not be empty if provided
+    /// - Route names must be unique
+    /// - Regex patterns must be valid
+    ///
+    /// # Example
+    /// ```
+    /// use aegis_node::route_config::{RouteConfig, Route, RoutePattern, MethodMatcher};
+    ///
+    /// let mut config = RouteConfig::new();
+    /// config.routes.push(Route {
+    ///     name: Some("api".to_string()),
+    ///     path: RoutePattern::Prefix("/api/*".to_string()),
+    ///     methods: MethodMatcher::default(),
+    ///     headers: None,
+    ///     wasm_modules: vec![],
+    ///     priority: 100,
+    ///     enabled: true,
+    /// });
+    /// assert!(config.validate().is_ok());
+    /// ```
+    pub fn validate(&self) -> Result<(), RouteConfigError> {
+        use std::collections::HashSet;
+        let mut seen_names: HashSet<&str> = HashSet::new();
+
+        for route in &self.routes {
+            // Validate each route
+            route.validate()?;
+
+            // Check for duplicate route names
+            if let Some(ref name) = route.name {
+                if !seen_names.insert(name.as_str()) {
+                    return Err(RouteConfigError::DuplicateRouteName(name.clone()));
+                }
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -869,5 +1027,328 @@ routes:
         let result = RouteConfig::from_yaml_file("/nonexistent/path/routes.yaml");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to read"));
+    }
+
+    // ========================================================================
+    // Sprint Y4: Wasm Runtime Security Tests
+    // ========================================================================
+
+    /// Y4.1: Test that CompiledRoutePattern is used for matching
+    #[test]
+    fn test_y41_compiled_route_pattern_matches() {
+        // Test exact pattern
+        let exact = RoutePattern::Exact("/api/users".to_string());
+        let compiled = exact.compile();
+        assert!(compiled.matches("/api/users"));
+        assert!(!compiled.matches("/api/users/123"));
+
+        // Test prefix pattern
+        let prefix = RoutePattern::Prefix("/api/*".to_string());
+        let compiled = prefix.compile();
+        assert!(compiled.matches("/api"));
+        assert!(compiled.matches("/api/users"));
+        assert!(compiled.matches("/api/users/123"));
+        assert!(!compiled.matches("/other"));
+
+        // Test regex pattern
+        let regex = RoutePattern::Regex(r"^/api/v[0-9]+/.*".to_string());
+        let compiled = regex.compile();
+        assert!(compiled.matches("/api/v1/users"));
+        assert!(compiled.matches("/api/v2/products"));
+        assert!(!compiled.matches("/api/users"));
+    }
+
+    /// Y4.1: Test that invalid regex produces CompiledRoutePattern::Invalid
+    #[test]
+    fn test_y41_compiled_route_pattern_invalid_regex() {
+        let invalid_regex = RoutePattern::Regex(r"[invalid(".to_string());
+        let compiled = invalid_regex.compile();
+        assert!(matches!(compiled, CompiledRoutePattern::Invalid));
+        assert!(!compiled.matches("/anything")); // Invalid never matches
+    }
+
+    /// Y4.2: Test CompiledRoute for high-performance matching
+    #[test]
+    fn test_y42_compiled_route_matches_request() {
+        let route = Route {
+            name: Some("api_route".to_string()),
+            path: RoutePattern::Prefix("/api/*".to_string()),
+            methods: MethodMatcher::Multiple(vec!["GET".to_string(), "POST".to_string()]),
+            headers: None,
+            wasm_modules: vec![],
+            priority: 100,
+            enabled: true,
+        };
+
+        let compiled = CompiledRoute::compile(&route);
+
+        assert!(compiled.matches_request("GET", "/api/users", &[]));
+        assert!(compiled.matches_request("POST", "/api/products", &[]));
+        assert!(!compiled.matches_request("DELETE", "/api/users", &[]));
+        assert!(!compiled.matches_request("GET", "/other", &[]));
+    }
+
+    /// Y4.2: Test CompiledRouteConfig for pre-compiled route matching
+    #[test]
+    fn test_y42_compiled_route_config_priority_sorting() {
+        let config = RouteConfig {
+            routes: vec![
+                Route {
+                    name: Some("low".to_string()),
+                    path: RoutePattern::Prefix("/api/*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 10,
+                    enabled: true,
+                },
+                Route {
+                    name: Some("high".to_string()),
+                    path: RoutePattern::Prefix("/api/*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 100,
+                    enabled: true,
+                },
+            ],
+            default_modules: None,
+            settings: None,
+        };
+
+        let compiled = config.compile();
+        assert_eq!(compiled.route_count(), 2);
+
+        // High priority route should match first
+        let matched = compiled.find_matching_route("GET", "/api/test", &[]);
+        assert!(matched.is_some());
+        assert_eq!(matched.unwrap().name, Some("high".to_string()));
+    }
+
+    /// Y4.7: Test route priority validation - valid range
+    #[test]
+    fn test_y47_route_priority_valid_range() {
+        // Test minimum valid priority
+        let route_min = Route {
+            name: Some("min_priority".to_string()),
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: MIN_ROUTE_PRIORITY,
+            enabled: true,
+        };
+        assert!(route_min.validate().is_ok());
+
+        // Test maximum valid priority
+        let route_max = Route {
+            name: Some("max_priority".to_string()),
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: MAX_ROUTE_PRIORITY,
+            enabled: true,
+        };
+        assert!(route_max.validate().is_ok());
+
+        // Test mid-range priority
+        let route_mid = Route {
+            name: Some("mid_priority".to_string()),
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: 5000,
+            enabled: true,
+        };
+        assert!(route_mid.validate().is_ok());
+    }
+
+    /// Y4.7: Test route priority validation - invalid range (too high)
+    #[test]
+    fn test_y47_route_priority_too_high() {
+        let route = Route {
+            name: Some("too_high".to_string()),
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: MAX_ROUTE_PRIORITY + 1,
+            enabled: true,
+        };
+
+        let result = route.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RouteConfigError::InvalidPriority { priority, min, max } => {
+                assert_eq!(priority, MAX_ROUTE_PRIORITY + 1);
+                assert_eq!(min, MIN_ROUTE_PRIORITY);
+                assert_eq!(max, MAX_ROUTE_PRIORITY);
+            }
+            _ => panic!("Expected InvalidPriority error"),
+        }
+    }
+
+    /// Y4.7: Test route priority validation - invalid range (negative)
+    #[test]
+    fn test_y47_route_priority_negative() {
+        let route = Route {
+            name: Some("negative".to_string()),
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: -1,
+            enabled: true,
+        };
+
+        let result = route.validate();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RouteConfigError::InvalidPriority { .. }));
+    }
+
+    /// Y4.7: Test route validation - empty name
+    #[test]
+    fn test_y47_route_empty_name() {
+        let route = Route {
+            name: Some("".to_string()), // Empty name
+            path: RoutePattern::Exact("/test".to_string()),
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: 0,
+            enabled: true,
+        };
+
+        let result = route.validate();
+        assert!(result.is_err());
+        assert!(matches!(result.unwrap_err(), RouteConfigError::EmptyRouteName));
+    }
+
+    /// Y4.7: Test route validation - invalid regex pattern
+    #[test]
+    fn test_y47_route_invalid_regex() {
+        let route = Route {
+            name: Some("bad_regex".to_string()),
+            path: RoutePattern::Regex(r"[unclosed".to_string()), // Invalid regex
+            methods: MethodMatcher::default(),
+            headers: None,
+            wasm_modules: vec![],
+            priority: 0,
+            enabled: true,
+        };
+
+        let result = route.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RouteConfigError::InvalidRegexPattern { pattern, error: _ } => {
+                assert_eq!(pattern, "[unclosed");
+            }
+            _ => panic!("Expected InvalidRegexPattern error"),
+        }
+    }
+
+    /// Y4.7: Test RouteConfig validation - duplicate route names
+    #[test]
+    fn test_y47_config_duplicate_route_names() {
+        let config = RouteConfig {
+            routes: vec![
+                Route {
+                    name: Some("duplicate".to_string()),
+                    path: RoutePattern::Exact("/first".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 0,
+                    enabled: true,
+                },
+                Route {
+                    name: Some("duplicate".to_string()), // Same name
+                    path: RoutePattern::Exact("/second".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 0,
+                    enabled: true,
+                },
+            ],
+            default_modules: None,
+            settings: None,
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            RouteConfigError::DuplicateRouteName(name) => {
+                assert_eq!(name, "duplicate");
+            }
+            _ => panic!("Expected DuplicateRouteName error"),
+        }
+    }
+
+    /// Y4.7: Test RouteConfig validation - valid config
+    #[test]
+    fn test_y47_config_valid() {
+        let config = RouteConfig {
+            routes: vec![
+                Route {
+                    name: Some("route1".to_string()),
+                    path: RoutePattern::Exact("/first".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 100,
+                    enabled: true,
+                },
+                Route {
+                    name: Some("route2".to_string()),
+                    path: RoutePattern::Prefix("/api/*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 50,
+                    enabled: true,
+                },
+                Route {
+                    name: None, // Anonymous routes are allowed
+                    path: RoutePattern::Regex(r"^/v[0-9]+/.*".to_string()),
+                    methods: MethodMatcher::default(),
+                    headers: None,
+                    wasm_modules: vec![],
+                    priority: 10,
+                    enabled: true,
+                },
+            ],
+            default_modules: None,
+            settings: None,
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    /// Y4.7: Test RouteConfigError Display implementation
+    #[test]
+    fn test_y47_route_config_error_display() {
+        let err1 = RouteConfigError::InvalidPriority {
+            priority: 99999,
+            min: 0,
+            max: 10000,
+        };
+        assert!(err1.to_string().contains("99999"));
+        assert!(err1.to_string().contains("10000"));
+
+        let err2 = RouteConfigError::InvalidRegexPattern {
+            pattern: "[bad".to_string(),
+            error: "unclosed bracket".to_string(),
+        };
+        assert!(err2.to_string().contains("[bad"));
+        assert!(err2.to_string().contains("unclosed bracket"));
+
+        let err3 = RouteConfigError::EmptyRouteName;
+        assert!(err3.to_string().contains("empty"));
+
+        let err4 = RouteConfigError::DuplicateRouteName("test".to_string());
+        assert!(err4.to_string().contains("test"));
     }
 }

@@ -45,6 +45,95 @@ const PUBLIC_IPFS_GATEWAYS: &[&str] = &[
     "https://dweb.link",
 ];
 
+// =============================================================================
+// Y4.8: IPFS CID Format Validation
+// =============================================================================
+//
+// IPFS Content Identifiers (CIDs) have specific formats that must be validated
+// before being used in URL construction to prevent injection attacks.
+//
+// Valid CID formats:
+// - CIDv0: Starts with "Qm", base58btc encoded, 46 characters
+// - CIDv1: Starts with "bafy" (raw), "bafk" (dag-cbor), base32 encoded
+//
+// Security concern: If CIDs are not validated, an attacker could inject:
+// - Path traversal: "../../etc/passwd"
+// - Query strings: "Qm...?evil=payload"
+// - CRLF injection: "Qm...\r\nHost: evil.com"
+
+/// Minimum length for a valid CID
+const MIN_CID_LENGTH: usize = 32;
+
+/// Maximum length for a valid CID
+const MAX_CID_LENGTH: usize = 128;
+
+/// Valid CIDv0 prefix (base58btc encoded multihash)
+const CIDV0_PREFIX: &str = "Qm";
+
+/// Valid CIDv1 prefixes (base32 encoded with multibase 'b' prefix)
+const CIDV1_PREFIXES: &[&str] = &[
+    "bafy",  // CIDv1 with raw codec
+    "bafk",  // CIDv1 with dag-cbor codec
+    "bafz",  // CIDv1 with dag-json codec
+    "bafb",  // CIDv1 with dag-pb codec
+];
+
+/// Validate IPFS CID format before using in URL construction (Y4.8)
+///
+/// # Security
+/// This function prevents injection attacks by validating:
+/// 1. CID length is within expected range
+/// 2. CID starts with a valid prefix (Qm for v0, bafy/bafk for v1)
+/// 3. CID contains only alphanumeric characters (no special chars)
+///
+/// # Returns
+/// - `Ok(())` if the CID is valid
+/// - `Err(String)` with description if invalid
+pub fn validate_cid_format(cid: &str) -> Result<(), String> {
+    // Check length bounds
+    if cid.len() < MIN_CID_LENGTH {
+        return Err(format!(
+            "CID too short: {} characters (minimum: {})",
+            cid.len(),
+            MIN_CID_LENGTH
+        ));
+    }
+    if cid.len() > MAX_CID_LENGTH {
+        return Err(format!(
+            "CID too long: {} characters (maximum: {})",
+            cid.len(),
+            MAX_CID_LENGTH
+        ));
+    }
+
+    // Check for valid prefix
+    let has_valid_prefix = cid.starts_with(CIDV0_PREFIX)
+        || CIDV1_PREFIXES.iter().any(|p| cid.starts_with(p));
+
+    if !has_valid_prefix {
+        return Err(format!(
+            "Invalid CID prefix: must start with 'Qm' (v0) or 'bafy/bafk/bafz/bafb' (v1), got '{}'",
+            &cid.chars().take(4).collect::<String>()
+        ));
+    }
+
+    // Check for invalid characters (only alphanumeric allowed)
+    // This prevents path traversal, query injection, and CRLF injection
+    if !cid.chars().all(|c| c.is_ascii_alphanumeric()) {
+        let invalid_chars: Vec<char> = cid
+            .chars()
+            .filter(|c| !c.is_ascii_alphanumeric())
+            .take(5)
+            .collect();
+        return Err(format!(
+            "CID contains invalid characters: {:?}. Only alphanumeric characters allowed.",
+            invalid_chars
+        ));
+    }
+
+    Ok(())
+}
+
 // ============================================================================
 // SECURITY FIX (X4.12): Bandwidth limiting constants
 // ============================================================================
@@ -292,6 +381,13 @@ impl IpfsClient {
     /// let wasm_bytes = client.fetch_module("QmXxx...").await?;
     /// ```
     pub async fn fetch_module(&self, cid: &str) -> Result<Vec<u8>> {
+        // SECURITY FIX (Y4.8): Validate CID format early to prevent injection attacks
+        // This check happens before any network requests or URL construction
+        validate_cid_format(cid).map_err(|e| {
+            error!("SECURITY (Y4.8): Invalid CID format in fetch_module: {}", e);
+            anyhow::anyhow!("Invalid CID format: {}", e)
+        })?;
+
         // Check local cache first
         if let Some(cached_bytes) = self.get_from_cache(cid).await? {
             debug!("Cache HIT for module CID: {}", cid);
@@ -412,6 +508,13 @@ impl IpfsClient {
     /// Tries multiple public gateways in order until one succeeds.
     /// This provides CDN-like redundancy and availability.
     async fn fetch_from_public_gateways(&self, cid: &str) -> Result<Vec<u8>> {
+        // SECURITY FIX (Y4.8): Validate CID format before URL construction
+        // This prevents injection attacks via malformed CIDs
+        validate_cid_format(cid).map_err(|e| {
+            error!("SECURITY (Y4.8): Invalid CID format rejected: {}", e);
+            anyhow::anyhow!("Invalid CID format: {}", e)
+        })?;
+
         let mut last_error = None;
 
         for gateway in PUBLIC_IPFS_GATEWAYS {
@@ -1108,5 +1211,136 @@ mod tests {
         assert_eq!(stats.remaining_bytes, stats.limit_bytes);
         assert_eq!(stats.active_downloads, 0);
         assert_eq!(stats.max_concurrent_downloads, MAX_CONCURRENT_DOWNLOADS);
+    }
+
+    // ========================================================================
+    // Y4.8: IPFS CID Format Validation Tests
+    // ========================================================================
+
+    #[test]
+    fn test_y48_valid_cidv0() {
+        // Valid CIDv0 format (base58btc, starts with Qm, 46 chars)
+        let valid_cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG";
+        assert!(validate_cid_format(valid_cid).is_ok());
+    }
+
+    #[test]
+    fn test_y48_valid_cidv1_bafy() {
+        // Valid CIDv1 format with raw codec (base32, starts with bafy)
+        let valid_cid = "bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi";
+        assert!(validate_cid_format(valid_cid).is_ok());
+    }
+
+    #[test]
+    fn test_y48_valid_cidv1_bafk() {
+        // Valid CIDv1 format with dag-cbor codec (base32, starts with bafk)
+        let valid_cid = "bafkreih2ac5yabo2daerkw5w5wcwdc7rveqejf4l645hss3uj4f2m7a3kq";
+        // Note: bafkreih is actually bafk prefix for inline CIDs
+        let valid_cid2 = "bafkqabtimvwgy3lfnz2g2lbnfxxg5dboj4sa2lom4qe2lom4qg64dsnzxxi";
+        // Use a constructed valid bafk CID for the test
+        let valid_cid3 = "bafkaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(validate_cid_format(valid_cid3).is_ok());
+    }
+
+    #[test]
+    fn test_y48_cid_too_short() {
+        // CID that's too short
+        let short_cid = "Qm123";
+        let result = validate_cid_format(short_cid);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too short"));
+    }
+
+    #[test]
+    fn test_y48_cid_too_long() {
+        // CID that's too long (over 128 characters)
+        let long_cid = format!("Qm{}", "a".repeat(150));
+        let result = validate_cid_format(&long_cid);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too long"));
+    }
+
+    #[test]
+    fn test_y48_invalid_prefix() {
+        // CID with invalid prefix
+        let invalid_prefixes = vec![
+            "Xm1234567890abcdefghijklmnopqrstuvwxyz",
+            "Ba1234567890abcdefghijklmnopqrstuvwxyz",
+            "abc1234567890abcdefghijklmnopqrstuvwxyz",
+            "12345678901234567890123456789012345678901234",
+        ];
+
+        for cid in invalid_prefixes {
+            let result = validate_cid_format(cid);
+            assert!(result.is_err(), "Should reject invalid prefix: {}", cid);
+            assert!(result.unwrap_err().contains("Invalid CID prefix"));
+        }
+    }
+
+    #[test]
+    fn test_y48_injection_path_traversal() {
+        // SECURITY TEST: Path traversal attempt
+        let malicious_cid = "Qm../../etc/passwd1234567890123456";
+        let result = validate_cid_format(malicious_cid);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_y48_injection_query_string() {
+        // SECURITY TEST: Query string injection attempt
+        let malicious_cid = "QmYwAPJzv5CZsnA625s3Xf2ne?evil=payload";
+        let result = validate_cid_format(malicious_cid);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_y48_injection_crlf() {
+        // SECURITY TEST: CRLF injection attempt
+        let malicious_cid = "QmYwAPJzv5CZsnA625s3Xf2ne\r\nHost: evil.com";
+        let result = validate_cid_format(malicious_cid);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid characters"));
+    }
+
+    #[test]
+    fn test_y48_injection_null_byte() {
+        // SECURITY TEST: Null byte injection attempt
+        // Make sure the CID is long enough to pass length check
+        let malicious_cid = "QmYwAPJzv5CZsnA625s3Xf2nemtYgPp\x00evil12345";
+        let result = validate_cid_format(malicious_cid);
+        assert!(result.is_err(), "Should reject null byte in CID");
+        let err_msg = result.unwrap_err();
+        assert!(
+            err_msg.contains("invalid characters"),
+            "Error should mention invalid characters, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_y48_injection_special_chars() {
+        // SECURITY TEST: Various special characters that shouldn't be in CIDs
+        let special_chars = vec![
+            "QmYwAPJzv5CZsnA625s3Xf2ne<script>alert(1)",
+            "QmYwAPJzv5CZsnA625s3Xf2ne\"onload=",
+            "QmYwAPJzv5CZsnA625s3Xf2ne'OR'1'='1",
+            "QmYwAPJzv5CZsnA625s3Xf2ne;ls -la",
+            "QmYwAPJzv5CZsnA625s3Xf2ne|cat /etc/passwd",
+        ];
+
+        for malicious in special_chars {
+            let result = validate_cid_format(malicious);
+            assert!(result.is_err(), "Should reject special chars in: {}", malicious);
+        }
+    }
+
+    #[test]
+    fn test_y48_cid_validation_constants() {
+        // Verify the constants are sensible
+        assert!(MIN_CID_LENGTH >= 32, "Min CID length should be at least 32");
+        assert!(MAX_CID_LENGTH <= 256, "Max CID length should be reasonable");
+        assert!(MIN_CID_LENGTH < MAX_CID_LENGTH);
     }
 }
