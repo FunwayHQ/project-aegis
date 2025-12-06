@@ -652,7 +652,23 @@ Based on comprehensive security audit findings (85 total: 9 Critical, 16 High, 3
   - **Registry Contract:**
     - Config-based min_stake_for_registration validation
 
-- 🔲 **Sprint Y3:** Input Validation & Bounds Checking
+- ✅ **Sprint Y3:** Input Validation & Bounds Checking - 72 tests passing
+  - **TLS Fingerprint Parser (Y3.1-Y3.2, Y3.8):**
+    - Safe byte access helpers (safe_u8, safe_u16_be, safe_slice)
+    - MAX limits: cipher suites (256), extensions (64), curves (64)
+    - Explicit UTF-8 handling for SNI (Y3.8)
+  - **Cache Key Sanitization (Y3.3-Y3.4):**
+    - MAX_CACHE_KEY_LENGTH constant (1024 bytes)
+    - CRLF/null byte removal (prevents HTTP response splitting)
+    - generate_cache_key returns Result for proper error handling
+  - **IP Extraction (Y3.6):**
+    - Prefix length validation (0-32 IPv4, 0-128 IPv6)
+    - IPv6 CIDR matching support added
+  - **API Security (Y3.5, Y3.7):**
+    - safe_compile_regex for ReDoS protection (already existed)
+    - MAX_REQUEST_BODY_SIZE constant (1MB)
+    - MAX_QUERY_PARAMS constant (100)
+
 - 🔲 **Sprint Y4:** WAF & Bot Management Hardening
 - 🔲 **Sprint Y5:** P2P Network Security
 - 🔲 **Sprint Y6:** Wasm Runtime Isolation

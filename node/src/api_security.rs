@@ -38,6 +38,18 @@ const MAX_RATE_LIMIT_ENTRIES: usize = 50_000;
 const MAX_DISCOVERED_ENDPOINTS: usize = 5_000;
 
 // ============================================
+// Y3.7: Request body size limit
+// Prevents memory exhaustion from oversized request bodies
+// ============================================
+
+/// Maximum request body size (1MB) for API security analysis
+/// Bodies larger than this are rejected before analysis
+pub const MAX_REQUEST_BODY_SIZE: usize = 1024 * 1024; // 1 MB
+
+/// Maximum query parameters allowed in a single request (Y9.5 preview)
+pub const MAX_QUERY_PARAMS: usize = 100;
+
+// ============================================
 // SECURITY FIX (X3.1): Pre-compiled regex patterns
 // Using Lazy initialization to avoid panic on regex compilation
 // If any pattern fails, it logs a warning and excludes that pattern

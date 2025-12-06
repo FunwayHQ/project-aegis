@@ -1,5 +1,5 @@
 use crate::bot_management::{BotAction, BotManager};
-use crate::cache::{generate_cache_key, CacheClient, CacheControl};
+use crate::cache::{generate_cache_key_unchecked, CacheClient, CacheControl};
 use crate::challenge::{
     ChallengeManager, ChallengeType,
     CHALLENGE_TOKEN_COOKIE, CHALLENGE_TOKEN_HEADER,
@@ -786,7 +786,7 @@ impl ProxyHttp for AegisProxy {
         } else {
             format!("{}?{}", path, query)
         };
-        let cache_key = generate_cache_key("GET", &full_path);
+        let cache_key = generate_cache_key_unchecked("GET", &full_path);
         ctx.cache_key = Some(cache_key.clone());
 
         // Try to get from cache

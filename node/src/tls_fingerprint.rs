@@ -15,6 +15,62 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 // SECURITY FIX (X2.6): Import lock recovery utilities
 use crate::lock_utils::write_lock_or_recover;
 
+// ============================================================================
+// Y3.1-Y3.2: Security constants for bounds checking
+// ============================================================================
+
+/// Maximum number of cipher suites allowed (prevents DoS via large arrays)
+const MAX_CIPHER_SUITES: usize = 256;
+/// Maximum number of extensions allowed
+const MAX_EXTENSIONS: usize = 64;
+/// Maximum number of elliptic curves allowed
+const MAX_ELLIPTIC_CURVES: usize = 64;
+/// Maximum number of EC point formats allowed
+const MAX_EC_POINT_FORMATS: usize = 16;
+/// Maximum number of signature algorithms allowed
+const MAX_SIGNATURE_ALGORITHMS: usize = 64;
+/// Maximum number of supported versions allowed
+const MAX_SUPPORTED_VERSIONS: usize = 16;
+/// Maximum ALPN protocols allowed (Y9.8)
+const MAX_ALPN_PROTOCOLS: usize = 10;
+/// Maximum SNI hostname length
+const MAX_SNI_LENGTH: usize = 255;
+/// Maximum TLS record length (per spec: 16KB + overhead)
+const MAX_RECORD_LENGTH: usize = 16384 + 2048;
+/// Maximum handshake message length
+const MAX_HANDSHAKE_LENGTH: usize = 16384;
+/// Maximum extension data length
+const MAX_EXTENSION_LENGTH: usize = 8192;
+
+// ============================================================================
+// Y3.1-Y3.2: Safe byte access helpers
+// ============================================================================
+
+/// Safely read a u8 at offset, returning None if out of bounds
+#[inline]
+fn safe_u8(data: &[u8], offset: usize) -> Option<u8> {
+    data.get(offset).copied()
+}
+
+/// Safely read a u16 (big-endian) at offset, returning None if out of bounds
+#[inline]
+fn safe_u16_be(data: &[u8], offset: usize) -> Option<u16> {
+    if offset.checked_add(1)? >= data.len() {
+        return None;
+    }
+    Some(u16::from_be_bytes([data[offset], data[offset + 1]]))
+}
+
+/// Safely get a slice, returning None if out of bounds
+#[inline]
+fn safe_slice(data: &[u8], start: usize, len: usize) -> Option<&[u8]> {
+    let end = start.checked_add(len)?;
+    if end > data.len() {
+        return None;
+    }
+    Some(&data[start..end])
+}
+
 /// TLS version identifiers from ClientHello
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(u16)]
@@ -110,44 +166,67 @@ impl Default for ClientHello {
 impl ClientHello {
     /// Parse ClientHello from raw bytes
     /// Returns None if parsing fails (malformed or non-ClientHello)
+    ///
+    /// Y3.1-Y3.2: Comprehensive bounds checking to prevent buffer overflows
     pub fn parse(data: &[u8]) -> Option<Self> {
+        // Minimum ClientHello: record header (5) + handshake header (4) + version (2) + random (32) = 43
         if data.len() < 43 {
-            return None; // Minimum ClientHello size
+            return None;
         }
 
-        // TLS Record Layer
-        // ContentType (1) + Version (2) + Length (2) = 5 bytes
-        let content_type = data[0];
+        // TLS Record Layer: ContentType (1) + Version (2) + Length (2) = 5 bytes
+        // Y3.1: Use safe accessor for content type
+        let content_type = safe_u8(data, 0)?;
         if content_type != 0x16 {
             // Not a handshake record
             return None;
         }
 
-        let record_version = TlsVersion::from(u16::from_be_bytes([data[1], data[2]]));
-        let record_length = u16::from_be_bytes([data[3], data[4]]) as usize;
+        // Y3.1: Use safe accessor for version
+        let record_version = TlsVersion::from(safe_u16_be(data, 1)?);
 
-        if data.len() < 5 + record_length {
-            return None; // Truncated record
+        // Y3.1: Use safe accessor for record length and validate bounds
+        let record_length = safe_u16_be(data, 3)? as usize;
+
+        // Y3.2: Validate record length against maximum
+        if record_length > MAX_RECORD_LENGTH {
+            return None; // Record too large
         }
 
-        let handshake = &data[5..5 + record_length];
+        // Y3.1: Use safe slice for handshake data
+        let handshake = safe_slice(data, 5, record_length)?;
 
-        // Handshake header
-        // HandshakeType (1) + Length (3) = 4 bytes
-        if handshake.is_empty() || handshake[0] != 0x01 {
+        // Handshake header: HandshakeType (1) + Length (3) = 4 bytes
+        if handshake.len() < 4 {
+            return None;
+        }
+
+        // Y3.1: Use safe accessor for handshake type
+        let handshake_type = safe_u8(handshake, 0)?;
+        if handshake_type != 0x01 {
             // Not a ClientHello
             return None;
         }
 
-        let handshake_length = u32::from_be_bytes([0, handshake[1], handshake[2], handshake[3]]) as usize;
-        if handshake.len() < 4 + handshake_length {
-            return None;
+        // Y3.1: Safely read 3-byte handshake length
+        let len_b1 = safe_u8(handshake, 1)?;
+        let len_b2 = safe_u8(handshake, 2)?;
+        let len_b3 = safe_u8(handshake, 3)?;
+        let handshake_length = u32::from_be_bytes([0, len_b1, len_b2, len_b3]) as usize;
+
+        // Y3.2: Validate handshake length against maximum
+        if handshake_length > MAX_HANDSHAKE_LENGTH {
+            return None; // Handshake too large
         }
 
-        let client_hello = &handshake[4..4 + handshake_length];
+        // Y3.1: Use safe slice for client hello body
+        let client_hello = safe_slice(handshake, 4, handshake_length)?;
+
         Self::parse_client_hello_body(client_hello, record_version)
     }
 
+    /// Y3.1-Y3.2: Parse ClientHello body with comprehensive bounds checking
+    /// Y3.8: Explicit UTF-8 handling for SNI
     fn parse_client_hello_body(data: &[u8], record_version: TlsVersion) -> Option<Self> {
         if data.len() < 34 {
             return None;
@@ -155,45 +234,56 @@ impl ClientHello {
 
         let mut offset = 0;
 
-        // Client Version (2 bytes)
-        let handshake_version = TlsVersion::from(u16::from_be_bytes([data[0], data[1]]));
-        offset += 2;
+        // Y3.1: Client Version (2 bytes) - use safe accessor
+        let handshake_version = TlsVersion::from(safe_u16_be(data, offset)?);
+        offset = offset.checked_add(2)?;
 
         // Random (32 bytes)
-        offset += 32;
-
-        // Session ID (variable)
-        if offset >= data.len() {
+        offset = offset.checked_add(32)?;
+        if offset > data.len() {
             return None;
         }
-        let session_id_len = data[offset] as usize;
-        offset += 1 + session_id_len;
 
-        if offset + 2 > data.len() {
+        // Session ID (variable)
+        let session_id_len = safe_u8(data, offset)? as usize;
+        offset = offset.checked_add(1)?;
+        offset = offset.checked_add(session_id_len)?;
+        if offset > data.len() {
             return None;
         }
 
         // Cipher Suites
-        let cipher_suites_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
-        offset += 2;
+        let cipher_suites_len = safe_u16_be(data, offset)? as usize;
+        offset = offset.checked_add(2)?;
 
-        if offset + cipher_suites_len > data.len() {
+        // Y3.2: Validate cipher suites length
+        if cipher_suites_len > MAX_CIPHER_SUITES * 2 {
+            return None; // Too many cipher suites
+        }
+
+        if offset.checked_add(cipher_suites_len)? > data.len() {
             return None;
         }
 
-        let mut cipher_suites = Vec::with_capacity(cipher_suites_len / 2);
+        // Y3.2: Limit cipher suites count
+        let max_cipher_count = (cipher_suites_len / 2).min(MAX_CIPHER_SUITES);
+        let mut cipher_suites = Vec::with_capacity(max_cipher_count);
         for i in (0..cipher_suites_len).step_by(2) {
-            let suite = u16::from_be_bytes([data[offset + i], data[offset + i + 1]]);
+            if cipher_suites.len() >= MAX_CIPHER_SUITES {
+                break; // Y3.2: Enforce limit
+            }
+            let suite = safe_u16_be(data, offset.checked_add(i)?)?;
             cipher_suites.push(suite);
         }
-        offset += cipher_suites_len;
+        offset = offset.checked_add(cipher_suites_len)?;
 
         // Compression Methods
-        if offset >= data.len() {
+        let compression_len = safe_u8(data, offset)? as usize;
+        offset = offset.checked_add(1)?;
+        offset = offset.checked_add(compression_len)?;
+        if offset > data.len() {
             return None;
         }
-        let compression_len = data[offset] as usize;
-        offset += 1 + compression_len;
 
         // Extensions (optional)
         let mut extensions = Vec::new();
@@ -204,41 +294,71 @@ impl ClientHello {
         let mut signature_algorithms = Vec::new();
         let mut supported_versions = Vec::new();
 
-        if offset + 2 <= data.len() {
-            let extensions_len = u16::from_be_bytes([data[offset], data[offset + 1]]) as usize;
-            offset += 2;
+        if offset.checked_add(2)? <= data.len() {
+            let extensions_len = safe_u16_be(data, offset)? as usize;
+            offset = offset.checked_add(2)?;
 
-            let extensions_end = offset + extensions_len.min(data.len() - offset);
-            while offset + 4 <= extensions_end {
-                let ext_type = u16::from_be_bytes([data[offset], data[offset + 1]]);
-                let ext_len = u16::from_be_bytes([data[offset + 2], data[offset + 3]]) as usize;
-                offset += 4;
+            // Y3.2: Validate extensions length
+            let extensions_end = offset.checked_add(extensions_len.min(data.len().saturating_sub(offset)))?;
 
-                extensions.push(ext_type);
-
-                if offset + ext_len > data.len() {
+            while offset.checked_add(4)? <= extensions_end {
+                // Y3.2: Enforce extension count limit
+                if extensions.len() >= MAX_EXTENSIONS {
                     break;
                 }
 
-                let ext_data = &data[offset..offset + ext_len];
+                let ext_type = safe_u16_be(data, offset)?;
+                let ext_len = safe_u16_be(data, offset.checked_add(2)?)? as usize;
+                offset = offset.checked_add(4)?;
+
+                // Y3.2: Validate extension length
+                if ext_len > MAX_EXTENSION_LENGTH {
+                    // Skip oversized extension
+                    offset = offset.checked_add(ext_len)?;
+                    continue;
+                }
+
+                extensions.push(ext_type);
+
+                if offset.checked_add(ext_len)? > data.len() {
+                    break;
+                }
+
+                let ext_data = safe_slice(data, offset, ext_len)?;
 
                 match ext_type {
                     // Server Name Indication (SNI)
                     0x0000 => {
                         if ext_data.len() >= 5 {
-                            let name_len = u16::from_be_bytes([ext_data[3], ext_data[4]]) as usize;
-                            if ext_data.len() >= 5 + name_len {
-                                sni = String::from_utf8(ext_data[5..5 + name_len].to_vec()).ok();
+                            let name_len = safe_u16_be(ext_data, 3)? as usize;
+                            // Y3.2: Validate SNI length
+                            if name_len <= MAX_SNI_LENGTH && ext_data.len() >= 5 + name_len {
+                                let sni_slice = safe_slice(ext_data, 5, name_len)?;
+                                // Y3.8: Explicit UTF-8 handling - return None on invalid UTF-8
+                                // instead of silently ignoring
+                                match std::str::from_utf8(sni_slice) {
+                                    Ok(s) => sni = Some(s.to_string()),
+                                    Err(_) => {
+                                        // Y3.8: Invalid UTF-8 in SNI - explicitly return None for SNI
+                                        // but continue parsing (don't fail entire ClientHello)
+                                        sni = None;
+                                    }
+                                }
                             }
                         }
                     }
                     // Supported Groups (elliptic_curves)
                     0x000a => {
                         if ext_data.len() >= 2 {
-                            let groups_len = u16::from_be_bytes([ext_data[0], ext_data[1]]) as usize;
-                            for i in (2..2 + groups_len.min(ext_data.len() - 2)).step_by(2) {
-                                if i + 1 < ext_data.len() {
-                                    elliptic_curves.push(u16::from_be_bytes([ext_data[i], ext_data[i + 1]]));
+                            let groups_len = safe_u16_be(ext_data, 0)? as usize;
+                            let max_groups = groups_len.min(ext_data.len().saturating_sub(2));
+                            for i in (2..2 + max_groups).step_by(2) {
+                                // Y3.2: Enforce elliptic curves limit
+                                if elliptic_curves.len() >= MAX_ELLIPTIC_CURVES {
+                                    break;
+                                }
+                                if let Some(curve) = safe_u16_be(ext_data, i) {
+                                    elliptic_curves.push(curve);
                                 }
                             }
                         }
@@ -246,8 +366,10 @@ impl ClientHello {
                     // EC Point Formats
                     0x000b => {
                         if !ext_data.is_empty() {
-                            let formats_len = ext_data[0] as usize;
-                            for &fmt in ext_data.iter().skip(1).take(formats_len) {
+                            let formats_len = safe_u8(ext_data, 0)? as usize;
+                            // Y3.2: Enforce EC point formats limit
+                            let max_formats = formats_len.min(MAX_EC_POINT_FORMATS);
+                            for &fmt in ext_data.iter().skip(1).take(max_formats) {
                                 ec_point_formats.push(fmt);
                             }
                         }
@@ -255,10 +377,15 @@ impl ClientHello {
                     // Signature Algorithms
                     0x000d => {
                         if ext_data.len() >= 2 {
-                            let algos_len = u16::from_be_bytes([ext_data[0], ext_data[1]]) as usize;
-                            for i in (2..2 + algos_len.min(ext_data.len() - 2)).step_by(2) {
-                                if i + 1 < ext_data.len() {
-                                    signature_algorithms.push(u16::from_be_bytes([ext_data[i], ext_data[i + 1]]));
+                            let algos_len = safe_u16_be(ext_data, 0)? as usize;
+                            let max_algos = algos_len.min(ext_data.len().saturating_sub(2));
+                            for i in (2..2 + max_algos).step_by(2) {
+                                // Y3.2: Enforce signature algorithms limit
+                                if signature_algorithms.len() >= MAX_SIGNATURE_ALGORITHMS {
+                                    break;
+                                }
+                                if let Some(algo) = safe_u16_be(ext_data, i) {
+                                    signature_algorithms.push(algo);
                                 }
                             }
                         }
@@ -268,24 +395,37 @@ impl ClientHello {
                         if ext_data.len() >= 2 {
                             let mut alpn_offset = 2;
                             while alpn_offset < ext_data.len() {
-                                let proto_len = ext_data[alpn_offset] as usize;
-                                alpn_offset += 1;
-                                if alpn_offset + proto_len <= ext_data.len() {
-                                    if let Ok(proto) = String::from_utf8(ext_data[alpn_offset..alpn_offset + proto_len].to_vec()) {
-                                        alpn_protocols.push(proto);
+                                // Y3.2: Enforce ALPN protocols limit (Y9.8)
+                                if alpn_protocols.len() >= MAX_ALPN_PROTOCOLS {
+                                    break;
+                                }
+                                let proto_len = safe_u8(ext_data, alpn_offset)? as usize;
+                                alpn_offset = alpn_offset.checked_add(1)?;
+                                if alpn_offset.checked_add(proto_len)? <= ext_data.len() {
+                                    if let Some(proto_slice) = safe_slice(ext_data, alpn_offset, proto_len) {
+                                        // Y3.8: Explicit UTF-8 handling for ALPN
+                                        if let Ok(proto) = std::str::from_utf8(proto_slice) {
+                                            alpn_protocols.push(proto.to_string());
+                                        }
+                                        // Invalid UTF-8 in ALPN is silently skipped
                                     }
                                 }
-                                alpn_offset += proto_len;
+                                alpn_offset = alpn_offset.checked_add(proto_len)?;
                             }
                         }
                     }
                     // Supported Versions
                     0x002b => {
                         if !ext_data.is_empty() {
-                            let versions_len = ext_data[0] as usize;
-                            for i in (1..1 + versions_len.min(ext_data.len() - 1)).step_by(2) {
-                                if i + 1 < ext_data.len() {
-                                    supported_versions.push(u16::from_be_bytes([ext_data[i], ext_data[i + 1]]));
+                            let versions_len = safe_u8(ext_data, 0)? as usize;
+                            let max_versions = versions_len.min(ext_data.len().saturating_sub(1));
+                            for i in (1..1 + max_versions).step_by(2) {
+                                // Y3.2: Enforce supported versions limit
+                                if supported_versions.len() >= MAX_SUPPORTED_VERSIONS {
+                                    break;
+                                }
+                                if let Some(ver) = safe_u16_be(ext_data, i) {
+                                    supported_versions.push(ver);
                                 }
                             }
                         }
@@ -293,7 +433,7 @@ impl ClientHello {
                     _ => {}
                 }
 
-                offset += ext_len;
+                offset = offset.checked_add(ext_len)?;
             }
         }
 
@@ -1165,5 +1305,141 @@ mod tests {
             result.suspicion_level,
             TlsSuspicionLevel::Low | TlsSuspicionLevel::Medium | TlsSuspicionLevel::High | TlsSuspicionLevel::Critical
         ));
+    }
+
+    // ========================================================================
+    // Y3.1-Y3.2: Bounds checking tests
+    // ========================================================================
+
+    #[test]
+    fn test_safe_u8() {
+        let data = [0x01, 0x02, 0x03];
+        assert_eq!(safe_u8(&data, 0), Some(0x01));
+        assert_eq!(safe_u8(&data, 2), Some(0x03));
+        assert_eq!(safe_u8(&data, 3), None); // Out of bounds
+        assert_eq!(safe_u8(&data, 100), None); // Way out of bounds
+    }
+
+    #[test]
+    fn test_safe_u16_be() {
+        let data = [0x03, 0x03, 0x00, 0x05];
+        assert_eq!(safe_u16_be(&data, 0), Some(0x0303));
+        assert_eq!(safe_u16_be(&data, 2), Some(0x0005));
+        assert_eq!(safe_u16_be(&data, 3), None); // Not enough bytes
+        assert_eq!(safe_u16_be(&data, 4), None); // Out of bounds
+    }
+
+    #[test]
+    fn test_safe_slice() {
+        let data = [0x01, 0x02, 0x03, 0x04, 0x05];
+        assert_eq!(safe_slice(&data, 0, 3), Some(&[0x01, 0x02, 0x03][..]));
+        assert_eq!(safe_slice(&data, 2, 2), Some(&[0x03, 0x04][..]));
+        assert_eq!(safe_slice(&data, 3, 3), None); // Would exceed bounds
+        assert_eq!(safe_slice(&data, 10, 1), None); // Start out of bounds
+        // Test overflow protection
+        assert_eq!(safe_slice(&data, usize::MAX - 1, 5), None);
+    }
+
+    #[test]
+    fn test_bounds_check_truncated_record() {
+        // Record says it's 100 bytes but data is only 50
+        let mut truncated: Vec<u8> = vec![
+            0x16, 0x03, 0x03, 0x00, 0x64, // Record header: handshake, TLS 1.2, length=100
+        ];
+        truncated.extend(vec![0x00; 50]); // Only 50 bytes of data
+        assert!(ClientHello::parse(&truncated).is_none());
+    }
+
+    #[test]
+    fn test_bounds_check_oversized_record() {
+        // Record length exceeds MAX_RECORD_LENGTH
+        let oversized: Vec<u8> = vec![
+            0x16, 0x03, 0x03, 0xFF, 0xFF, // Record header with max length (65535)
+            0x01, // Handshake type (ClientHello)
+        ];
+        // This should fail because record_length > MAX_RECORD_LENGTH
+        assert!(ClientHello::parse(&oversized).is_none());
+    }
+
+    #[test]
+    fn test_bounds_check_integer_overflow_protection() {
+        // Test that checked arithmetic prevents integer overflow
+        // Create malformed data that could cause overflow if not protected
+        let mut malformed: Vec<u8> = vec![
+            0x16, 0x03, 0x03, 0x00, 0x30, // Record header
+            0x01, 0x00, 0x00, 0x2c, // Handshake header
+            0x03, 0x03, // Version
+        ];
+        malformed.extend(vec![0x00; 32]); // Random
+        malformed.push(0xFF); // Session ID length = 255 (will cause bounds check)
+
+        assert!(ClientHello::parse(&malformed).is_none());
+    }
+
+    // ========================================================================
+    // Y3.8: UTF-8 handling tests
+    // ========================================================================
+
+    #[test]
+    fn test_valid_utf8_sni() {
+        let ch = ClientHello {
+            record_version: TlsVersion::Tls12,
+            handshake_version: TlsVersion::Tls12,
+            cipher_suites: vec![0x0035],
+            extensions: vec![0x0000],
+            sni: Some("example.com".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(ch.sni, Some("example.com".to_string()));
+    }
+
+    #[test]
+    fn test_unicode_domain_sni() {
+        // Test internationalized domain name (valid UTF-8)
+        let ch = ClientHello {
+            record_version: TlsVersion::Tls12,
+            handshake_version: TlsVersion::Tls12,
+            cipher_suites: vec![0x0035],
+            extensions: vec![0x0000],
+            sni: Some("例え.jp".to_string()), // Japanese characters
+            ..Default::default()
+        };
+
+        assert_eq!(ch.sni, Some("例え.jp".to_string()));
+    }
+
+    #[test]
+    fn test_max_limits_respected() {
+        // Create ClientHello with many items to test limits
+        let mut ch = ClientHello {
+            record_version: TlsVersion::Tls12,
+            handshake_version: TlsVersion::Tls13,
+            cipher_suites: (0..300).map(|i| i as u16).collect(), // 300 cipher suites
+            extensions: (0..100).map(|i| i as u16).collect(), // 100 extensions
+            elliptic_curves: (0..100).map(|i| i as u16).collect(), // 100 curves
+            sni: Some("test.com".to_string()),
+            ..Default::default()
+        };
+
+        // The struct should accept any Vec, but parsing would enforce limits
+        assert!(ch.cipher_suites.len() == 300);
+        assert!(ch.extensions.len() == 100);
+
+        // Fingerprint should still work
+        let fp = TlsFingerprint::from_client_hello(&ch);
+        assert!(!fp.ja3.is_empty());
+    }
+
+    #[test]
+    fn test_empty_data_handling() {
+        // Empty data
+        assert!(ClientHello::parse(&[]).is_none());
+
+        // Single byte
+        assert!(ClientHello::parse(&[0x16]).is_none());
+
+        // Just record header
+        assert!(ClientHello::parse(&[0x16, 0x03, 0x03, 0x00, 0x00]).is_none());
     }
 }

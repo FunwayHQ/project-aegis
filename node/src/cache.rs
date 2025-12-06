@@ -2,6 +2,47 @@ use anyhow::Result;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, Client};
 
+// ============================================================================
+// Y3.3: Security constants for cache key handling
+// ============================================================================
+
+/// Maximum cache key length to prevent injection and memory attacks (Y3.3)
+pub const MAX_CACHE_KEY_LENGTH: usize = 1024;
+
+/// Maximum number of Cache-Control directives to parse (Y9.6 preview)
+const MAX_CACHE_DIRECTIVES: usize = 20;
+
+// ============================================================================
+// Y3.4: Cache key sanitization error
+// ============================================================================
+
+/// Error type for cache key validation
+#[derive(Debug, Clone)]
+pub enum CacheKeyError {
+    /// Key exceeds maximum length
+    TooLong { length: usize, max: usize },
+    /// Key contains invalid characters
+    InvalidCharacters(String),
+    /// Key is empty
+    Empty,
+}
+
+impl std::fmt::Display for CacheKeyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CacheKeyError::TooLong { length, max } => {
+                write!(f, "Cache key too long: {} bytes (max {})", length, max)
+            }
+            CacheKeyError::InvalidCharacters(chars) => {
+                write!(f, "Cache key contains invalid characters: {:?}", chars)
+            }
+            CacheKeyError::Empty => write!(f, "Cache key is empty"),
+        }
+    }
+}
+
+impl std::error::Error for CacheKeyError {}
+
 /// Cache client for DragonflyDB/Redis
 pub struct CacheClient {
     connection: ConnectionManager,
@@ -119,8 +160,74 @@ impl CacheStats {
 }
 
 /// Generate a cache key from request method and URI
-pub fn generate_cache_key(method: &str, uri: &str) -> String {
-    format!("aegis:cache:{}:{}", method, uri)
+///
+/// Y3.3-Y3.4: Sanitizes the key by:
+/// - Removing CRLF characters (prevents HTTP response splitting attacks)
+/// - Removing null bytes (prevents injection attacks)
+/// - Truncating to MAX_CACHE_KEY_LENGTH
+///
+/// Returns Result to indicate if sanitization was needed
+pub fn generate_cache_key(method: &str, uri: &str) -> Result<String, CacheKeyError> {
+    // Calculate prefix length
+    let prefix = "aegis:cache:";
+    let prefix_len = prefix.len() + method.len() + 1; // +1 for ':'
+
+    // Y3.4: Sanitize URI by removing dangerous characters
+    // CRLF characters can enable HTTP response splitting attacks
+    // Null bytes can cause issues with C-based storage engines
+    let safe_uri: String = uri
+        .chars()
+        .filter(|c| *c != '\r' && *c != '\n' && *c != '\0')
+        .collect();
+
+    // Y3.3: Calculate maximum URI length to stay within limit
+    let max_uri_len = MAX_CACHE_KEY_LENGTH.saturating_sub(prefix_len);
+
+    // Truncate if necessary
+    let truncated_uri: String = safe_uri.chars().take(max_uri_len).collect();
+
+    // Build the key
+    let key = format!("{}{}:{}", prefix, method, truncated_uri);
+
+    // Final validation
+    if key.is_empty() {
+        return Err(CacheKeyError::Empty);
+    }
+
+    if key.len() > MAX_CACHE_KEY_LENGTH {
+        return Err(CacheKeyError::TooLong {
+            length: key.len(),
+            max: MAX_CACHE_KEY_LENGTH,
+        });
+    }
+
+    Ok(key)
+}
+
+/// Sanitize an arbitrary string for use as part of a cache key
+///
+/// Y3.4: Removes CRLF, null bytes, and truncates to specified max length
+pub fn sanitize_cache_key_component(input: &str, max_len: usize) -> String {
+    input
+        .chars()
+        .filter(|c| *c != '\r' && *c != '\n' && *c != '\0')
+        .take(max_len)
+        .collect()
+}
+
+/// Generate a cache key (legacy compatibility - returns String, logs warnings)
+///
+/// For new code, prefer `generate_cache_key` which returns Result
+pub fn generate_cache_key_unchecked(method: &str, uri: &str) -> String {
+    match generate_cache_key(method, uri) {
+        Ok(key) => key,
+        Err(e) => {
+            log::warn!("Cache key generation issue: {}. Using fallback.", e);
+            // Fallback: truncate aggressively
+            let safe_uri = sanitize_cache_key_component(uri, 256);
+            format!("aegis:cache:{}:{}", method, safe_uri)
+        }
+    }
 }
 
 /// Cache-Control header directives
@@ -135,10 +242,23 @@ pub struct CacheControl {
 
 impl CacheControl {
     /// Parse Cache-Control header value
+    ///
+    /// Y9.6 (preview): Limits to MAX_CACHE_DIRECTIVES to prevent DoS
     pub fn parse(header_value: &str) -> Self {
         let mut control = CacheControl::default();
+        let mut directive_count = 0;
 
         for directive in header_value.split(',') {
+            // Y9.6: Enforce maximum directive count
+            directive_count += 1;
+            if directive_count > MAX_CACHE_DIRECTIVES {
+                log::warn!(
+                    "Cache-Control header exceeded {} directives, ignoring rest",
+                    MAX_CACHE_DIRECTIVES
+                );
+                break;
+            }
+
             let directive = directive.trim().to_lowercase();
 
             if directive == "no-cache" {
@@ -190,10 +310,82 @@ impl CacheControl {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_cache_key_generation() {
-        let key = generate_cache_key("GET", "/api/users");
+    // ========================================================================
+    // Y3.3-Y3.4: Cache key sanitization tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_key_generation() {
+        let key = generate_cache_key("GET", "/api/users").unwrap();
         assert_eq!(key, "aegis:cache:GET:/api/users");
+    }
+
+    #[test]
+    fn test_cache_key_crlf_removal() {
+        // Y3.4: CRLF should be removed to prevent HTTP response splitting
+        let key = generate_cache_key("GET", "/api/users\r\n/admin").unwrap();
+        assert!(!key.contains('\r'));
+        assert!(!key.contains('\n'));
+        assert_eq!(key, "aegis:cache:GET:/api/users/admin");
+    }
+
+    #[test]
+    fn test_cache_key_null_byte_removal() {
+        // Y3.4: Null bytes should be removed
+        let key = generate_cache_key("GET", "/api/users\0/admin").unwrap();
+        assert!(!key.contains('\0'));
+        assert_eq!(key, "aegis:cache:GET:/api/users/admin");
+    }
+
+    #[test]
+    fn test_cache_key_truncation() {
+        // Y3.3: Long URIs should be truncated
+        let long_uri: String = "/".to_string() + &"a".repeat(2000);
+        let key = generate_cache_key("GET", &long_uri).unwrap();
+        assert!(key.len() <= MAX_CACHE_KEY_LENGTH);
+    }
+
+    #[test]
+    fn test_cache_key_max_length_enforced() {
+        // Test that the key never exceeds MAX_CACHE_KEY_LENGTH
+        let very_long_uri: String = "/".to_string() + &"x".repeat(5000);
+        let key = generate_cache_key("GET", &very_long_uri).unwrap();
+        assert!(key.len() <= MAX_CACHE_KEY_LENGTH);
+    }
+
+    #[test]
+    fn test_sanitize_cache_key_component() {
+        // Test the standalone sanitization function
+        let sanitized = sanitize_cache_key_component("hello\r\nworld\0!", 10);
+        assert_eq!(sanitized, "helloworld");
+
+        // Test truncation
+        let long_input = "a".repeat(100);
+        let truncated = sanitize_cache_key_component(&long_input, 50);
+        assert_eq!(truncated.len(), 50);
+    }
+
+    #[test]
+    fn test_cache_key_unchecked_fallback() {
+        // Test the legacy unchecked function
+        let key = generate_cache_key_unchecked("GET", "/api/test");
+        assert!(key.starts_with("aegis:cache:"));
+    }
+
+    #[test]
+    fn test_cache_key_error_display() {
+        // Test error messages
+        let too_long = CacheKeyError::TooLong {
+            length: 2000,
+            max: 1024,
+        };
+        assert!(too_long.to_string().contains("too long"));
+
+        let invalid = CacheKeyError::InvalidCharacters("\r\n".to_string());
+        assert!(invalid.to_string().contains("invalid"));
+
+        let empty = CacheKeyError::Empty;
+        assert!(empty.to_string().contains("empty"));
     }
 
     #[tokio::test]

@@ -136,8 +136,20 @@ fn is_trusted_ip(ip: &str, trusted_proxies: &[String]) -> bool {
     false
 }
 
+// ============================================================================
+// Y3.6: Security constants for prefix length validation
+// ============================================================================
+
+/// Maximum prefix length for IPv4 CIDR notation
+const MAX_IPV4_PREFIX: u32 = 32;
+
+/// Maximum prefix length for IPv6 CIDR notation
+const MAX_IPV6_PREFIX: u32 = 128;
+
 /// Simplified CIDR matching (for demonstration)
 /// For production use, integrate a proper library like `ipnet`
+///
+/// Y3.6: Validates prefix_len is within valid range (0-32 for IPv4, 0-128 for IPv6)
 fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
     // Parse CIDR
     let parts: Vec<&str> = cidr.split('/').collect();
@@ -146,9 +158,20 @@ fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
     }
 
     let network_addr = parts[0];
-    let prefix_len: u32 = parts[1].parse().unwrap_or(32);
 
-    // Parse IPs
+    // Y3.6: Parse and validate prefix length before using
+    let prefix_len: u32 = match parts[1].parse() {
+        Ok(len) => len,
+        Err(_) => {
+            log::warn!(
+                "SECURITY (Y3.6): Invalid prefix length in CIDR '{}' - not a number",
+                cidr
+            );
+            return false;
+        }
+    };
+
+    // Parse IPs first to determine address family
     let ip_addr = match IpAddr::from_str(ip) {
         Ok(addr) => addr,
         Err(_) => return false,
@@ -159,7 +182,38 @@ fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
         Err(_) => return false,
     };
 
-    // Only support IPv4 for this simplified implementation
+    // Y3.6: Validate prefix length based on address family
+    match (&ip_addr, &network) {
+        (IpAddr::V4(_), IpAddr::V4(_)) => {
+            if prefix_len > MAX_IPV4_PREFIX {
+                log::warn!(
+                    "SECURITY (Y3.6): IPv4 prefix length {} exceeds maximum {} in CIDR '{}'",
+                    prefix_len,
+                    MAX_IPV4_PREFIX,
+                    cidr
+                );
+                return false;
+            }
+        }
+        (IpAddr::V6(_), IpAddr::V6(_)) => {
+            if prefix_len > MAX_IPV6_PREFIX {
+                log::warn!(
+                    "SECURITY (Y3.6): IPv6 prefix length {} exceeds maximum {} in CIDR '{}'",
+                    prefix_len,
+                    MAX_IPV6_PREFIX,
+                    cidr
+                );
+                return false;
+            }
+        }
+        _ => {
+            // Mismatched address families - can't compare
+            log::debug!("Address family mismatch between IP and CIDR network");
+            return false;
+        }
+    }
+
+    // Perform the actual matching based on address family
     match (ip_addr, network) {
         (IpAddr::V4(ip_v4), IpAddr::V4(net_v4)) => {
             let ip_u32 = u32::from(ip_v4);
@@ -167,12 +221,31 @@ fn ip_in_cidr(ip: &str, cidr: &str) -> bool {
             let mask = if prefix_len == 0 {
                 0
             } else {
+                // Y3.6: prefix_len is already validated to be <= 32
                 !0u32 << (32 - prefix_len)
             };
 
             (ip_u32 & mask) == (net_u32 & mask)
         }
-        _ => false, // IPv6 not supported in this simple implementation
+        (IpAddr::V6(ip_v6), IpAddr::V6(net_v6)) => {
+            // Y3.6: Added IPv6 CIDR matching
+            let ip_bytes = ip_v6.octets();
+            let net_bytes = net_v6.octets();
+
+            // Convert to u128 for easier bit manipulation
+            let ip_u128 = u128::from_be_bytes(ip_bytes);
+            let net_u128 = u128::from_be_bytes(net_bytes);
+
+            let mask = if prefix_len == 0 {
+                0
+            } else {
+                // prefix_len is already validated to be <= 128
+                !0u128 << (128 - prefix_len)
+            };
+
+            (ip_u128 & mask) == (net_u128 & mask)
+        }
+        _ => false,
     }
 }
 
@@ -301,6 +374,73 @@ mod tests {
         assert!(ip_in_cidr("10.0.0.1", "10.0.0.0/8"));
         assert!(ip_in_cidr("10.255.255.255", "10.0.0.0/8"));
         assert!(!ip_in_cidr("11.0.0.1", "10.0.0.0/8"));
+    }
+
+    // ========================================================================
+    // Y3.6: Prefix length validation tests
+    // ========================================================================
+
+    #[test]
+    fn test_y36_ipv4_valid_prefix_lengths() {
+        // Valid prefix lengths 0-32
+        assert!(ip_in_cidr("0.0.0.1", "0.0.0.0/0")); // Match any
+        assert!(ip_in_cidr("192.168.1.1", "192.168.1.0/24"));
+        assert!(ip_in_cidr("192.168.1.1", "192.168.1.1/32")); // Exact match
+    }
+
+    #[test]
+    fn test_y36_ipv4_invalid_prefix_lengths() {
+        // Invalid: prefix length > 32 for IPv4
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/33"));
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/64"));
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/128"));
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/255"));
+    }
+
+    #[test]
+    fn test_y36_ipv6_valid_prefix_lengths() {
+        // Valid IPv6 prefix lengths 0-128
+        assert!(ip_in_cidr("2001:db8::1", "2001:db8::/32"));
+        assert!(ip_in_cidr("2001:db8::1", "2001:db8::1/128")); // Exact match
+        assert!(ip_in_cidr("::1", "::/0")); // Match any IPv6
+        assert!(ip_in_cidr("fe80::1", "fe80::/10")); // Link-local
+    }
+
+    #[test]
+    fn test_y36_ipv6_invalid_prefix_lengths() {
+        // Invalid: prefix length > 128 for IPv6
+        assert!(!ip_in_cidr("2001:db8::1", "2001:db8::/129"));
+        assert!(!ip_in_cidr("2001:db8::1", "2001:db8::/200"));
+        assert!(!ip_in_cidr("2001:db8::1", "2001:db8::/255"));
+    }
+
+    #[test]
+    fn test_y36_invalid_prefix_format() {
+        // Non-numeric prefix
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/abc"));
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/"));
+        assert!(!ip_in_cidr("192.168.1.1", "192.168.0.0/-1"));
+    }
+
+    #[test]
+    fn test_y36_ipv6_cidr_matching() {
+        // Test IPv6 CIDR matching specifically
+        // /64 is common for network allocation
+        assert!(ip_in_cidr("2001:db8:1234:5678::1", "2001:db8:1234:5678::/64"));
+        assert!(ip_in_cidr("2001:db8:1234:5678:ffff:ffff:ffff:ffff", "2001:db8:1234:5678::/64"));
+        assert!(!ip_in_cidr("2001:db8:1234:5679::1", "2001:db8:1234:5678::/64"));
+
+        // /48 allocation
+        assert!(ip_in_cidr("2001:db8:1234::1", "2001:db8:1234::/48"));
+        assert!(!ip_in_cidr("2001:db8:1235::1", "2001:db8:1234::/48"));
+    }
+
+    #[test]
+    fn test_y36_mixed_address_families() {
+        // IPv4 address with IPv6 network should not match
+        assert!(!ip_in_cidr("192.168.1.1", "2001:db8::/32"));
+        // IPv6 address with IPv4 network should not match
+        assert!(!ip_in_cidr("2001:db8::1", "192.168.0.0/16"));
     }
 
     #[test]
