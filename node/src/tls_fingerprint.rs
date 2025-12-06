@@ -3,11 +3,16 @@
 // This module implements TLS ClientHello fingerprinting to detect bots
 // that spoof User-Agent headers but have distinct TLS fingerprints.
 //
-// JA3 = MD5(SSLVersion,Ciphers,Extensions,EllipticCurves,EllipticCurvePointFormats)
-// JA4 = q{quic}t{version}{sni}d{cipher_count}{ext_count}_{sorted_ciphers}_{sorted_extensions}
+// SECURITY FIX (Y5.7): JA3/JA4 now use SHA-256 instead of MD5
+// MD5 is cryptographically broken and should not be used for fingerprinting.
+// This is a BREAKING CHANGE - all existing fingerprint databases need to be rehashed.
+//
+// JA3 = SHA256(SSLVersion,Ciphers,Extensions,EllipticCurves,EllipticCurvePointFormats)
+// JA4 = q{quic}t{version}{sni}d{cipher_count}{ext_count}_{sorted_ciphers_sha256}_{sorted_extensions_sha256}
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -455,7 +460,7 @@ impl ClientHello {
 /// TLS fingerprint computed from ClientHello
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsFingerprint {
-    /// JA3 fingerprint (MD5 hash)
+    /// JA3 fingerprint (SECURITY FIX Y5.7: SHA-256 hash, truncated to 32 chars for compatibility)
     pub ja3: String,
     /// JA3 raw string (before hashing)
     pub ja3_raw: String,
@@ -475,9 +480,16 @@ pub struct TlsFingerprint {
 
 impl TlsFingerprint {
     /// Compute fingerprint from parsed ClientHello
+    ///
+    /// SECURITY FIX (Y5.7): Uses SHA-256 instead of MD5 for all hashing.
+    /// MD5 is cryptographically broken and should not be used.
+    /// Note: This is a breaking change - existing fingerprint databases need rehashing.
     pub fn from_client_hello(ch: &ClientHello) -> Self {
         let ja3_raw = Self::compute_ja3_raw(ch);
-        let ja3 = format!("{:x}", md5::compute(&ja3_raw));
+        // SECURITY FIX (Y5.7): Use SHA-256 instead of MD5
+        // Truncate to 32 chars (128 bits) for backward compatibility with MD5 length
+        let ja3_hash = Sha256::digest(ja3_raw.as_bytes());
+        let ja3 = format!("{:x}", ja3_hash)[..32].to_string();
         let ja4 = Self::compute_ja4(ch);
 
         Self {
@@ -564,7 +576,7 @@ impl TlsFingerprint {
             .map(|c| c.to_ascii_lowercase())
             .unwrap_or('0');
 
-        // Sorted cipher suites (hex, first 12 chars of SHA256)
+        // SECURITY FIX (Y5.7): Sorted cipher suites (hex, first 12 chars of SHA-256)
         let mut sorted_ciphers: Vec<u16> = ch.cipher_suites
             .iter()
             .filter(|&&c| !is_grease_value(c))
@@ -575,9 +587,9 @@ impl TlsFingerprint {
             .map(|c| format!("{:04x}", c))
             .collect::<Vec<_>>()
             .join(",");
-        let cipher_hash = &format!("{:x}", md5::compute(&cipher_str))[..12];
+        let cipher_hash = &format!("{:x}", Sha256::digest(cipher_str.as_bytes()))[..12];
 
-        // Sorted extensions (hex, first 12 chars of SHA256)
+        // SECURITY FIX (Y5.7): Sorted extensions (hex, first 12 chars of SHA-256)
         // Exclude SNI (0) and ALPN (16) as they're indicated elsewhere
         let mut sorted_extensions: Vec<u16> = ch.extensions
             .iter()
@@ -589,7 +601,7 @@ impl TlsFingerprint {
             .map(|e| format!("{:04x}", e))
             .collect::<Vec<_>>()
             .join(",");
-        let ext_hash = &format!("{:x}", md5::compute(&ext_str))[..12];
+        let ext_hash = &format!("{:x}", Sha256::digest(ext_str.as_bytes()))[..12];
 
         format!(
             "{}{}{}{:02}{:02}{}_{}_{}",

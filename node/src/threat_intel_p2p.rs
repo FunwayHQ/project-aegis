@@ -199,6 +199,10 @@ impl ThreatIpAddress {
 /// Threat intelligence message shared across the P2P network
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ThreatIntelligence {
+    /// SECURITY FIX (Y5.3): Unique message ID for replay protection
+    /// This UUID is used to detect and drop duplicate messages.
+    #[serde(default = "generate_message_id")]
+    pub message_id: String,
     /// IP address of the threat (supports IPv4 and IPv6)
     pub ip: String,
     /// Type of threat (e.g., "syn_flood", "ddos", "brute_force")
@@ -213,6 +217,14 @@ pub struct ThreatIntelligence {
     pub source_node: String,
     /// Optional description
     pub description: Option<String>,
+}
+
+/// Generate a unique message ID (Y5.3)
+fn generate_message_id() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 16];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    hex::encode(bytes)
 }
 
 /// Signed threat intelligence message with Ed25519 signature
@@ -331,6 +343,7 @@ impl ThreatIntelligence {
         let timestamp = current_timestamp();
 
         Self {
+            message_id: generate_message_id(), // Y5.3: Unique message ID
             ip,
             threat_type,
             severity,
@@ -402,6 +415,11 @@ pub struct ThreatIntelBehaviour {
 }
 
 /// Configuration for P2P network
+///
+/// # Security Note (Y5.6)
+/// In production, `trusted_public_keys` MUST be pre-populated with known
+/// node keys. An empty list is only allowed in debug builds for testing.
+/// Use `validate()` to check config before starting the P2P network.
 #[derive(Debug, Clone)]
 pub struct P2PConfig {
     /// Port to listen on
@@ -411,9 +429,55 @@ pub struct P2PConfig {
     /// Bootstrap peers for Kademlia DHT
     pub bootstrap_peers: Vec<(PeerId, Multiaddr)>,
     /// Trusted public keys for threat intelligence verification (hex encoded)
-    /// If empty, all valid signatures are accepted (open network)
-    /// If non-empty, only messages signed by these keys are accepted
+    ///
+    /// # Security (Y5.6)
+    /// In release builds, this list MUST contain at least one trusted key.
+    /// Messages from nodes not in this list will be rejected.
     pub trusted_public_keys: Vec<String>,
+}
+
+impl P2PConfig {
+    /// Validate the configuration for production use
+    ///
+    /// # Security Note (Y5.6)
+    /// This validation ensures that the P2P network is properly configured
+    /// with pre-populated node keys. In release builds, empty trusted_public_keys
+    /// is a security error.
+    ///
+    /// # Returns
+    /// - `Ok(())` if configuration is valid
+    /// - `Err(String)` describing the configuration issue
+    pub fn validate(&self) -> Result<(), String> {
+        // Y5.6: Require pre-populated node keys in production
+        #[cfg(not(debug_assertions))]
+        {
+            if self.trusted_public_keys.is_empty() {
+                return Err(
+                    "SECURITY ERROR (Y5.6): P2P trusted_public_keys is empty. \
+                     Production deployments MUST pre-populate trusted node keys. \
+                     Configure at least one trusted node public key before starting."
+                        .to_string(),
+                );
+            }
+        }
+
+        // Validate key format (should be valid hex, 64 chars for Ed25519 public key)
+        for key in &self.trusted_public_keys {
+            if key.len() != 64 {
+                return Err(format!(
+                    "Invalid trusted key length: {} (expected 64 hex chars for Ed25519 public key)",
+                    key.len()
+                ));
+            }
+            if !key.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err(format!(
+                    "Invalid trusted key format: contains non-hex characters"
+                ));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for P2PConfig {
@@ -536,6 +600,17 @@ impl TrustedNodeRegistry {
     }
 }
 
+// =============================================================================
+// Y5.4: Seen Message IDs Cache Constants
+// =============================================================================
+
+/// Maximum number of seen message IDs to cache
+/// This prevents unbounded memory growth while still detecting replays
+const MAX_SEEN_MESSAGE_IDS: usize = 100_000;
+
+/// Cleanup interval - remove old entries when cache exceeds this threshold
+const SEEN_MESSAGE_IDS_CLEANUP_THRESHOLD: usize = 90_000;
+
 /// P2P Threat Intelligence Network
 pub struct ThreatIntelP2P {
     swarm: Swarm<ThreatIntelBehaviour>,
@@ -549,6 +624,9 @@ pub struct ThreatIntelP2P {
     trusted_registry: TrustedNodeRegistry,
     /// SECURITY FIX (X6): Rate limiter for gossip messages
     rate_limiter: GossipRateLimiter,
+    /// SECURITY FIX (Y5.4): Seen message IDs for replay protection
+    /// Tracks message_ids to detect and drop duplicate messages
+    seen_message_ids: HashSet<String>,
 }
 
 impl ThreatIntelP2P {
@@ -649,6 +727,7 @@ impl ThreatIntelP2P {
             signing_key,
             trusted_registry,
             rate_limiter: GossipRateLimiter::new(),
+            seen_message_ids: HashSet::new(),
         })
     }
 
@@ -743,6 +822,7 @@ impl ThreatIntelP2P {
             signing_key,
             trusted_registry,
             rate_limiter: GossipRateLimiter::new(),
+            seen_message_ids: HashSet::new(),
         })
     }
 
@@ -857,6 +937,38 @@ impl ThreatIntelP2P {
                                                     &signed_threat.public_key[..16]
                                                 );
                                                 continue;
+                                            }
+
+                                            // 🔒 SECURITY FIX (Y5.4): Check for duplicate messages (replay protection)
+                                            let msg_id = &signed_threat.threat.message_id;
+                                            if self.seen_message_ids.contains(msg_id) {
+                                                debug!(
+                                                    "Duplicate message detected, skipping: {} (id: {})",
+                                                    signed_threat.threat.ip,
+                                                    msg_id
+                                                );
+                                                continue;
+                                            }
+
+                                            // Add message ID to seen set
+                                            self.seen_message_ids.insert(msg_id.clone());
+
+                                            // Cleanup if we've accumulated too many message IDs
+                                            if self.seen_message_ids.len() > SEEN_MESSAGE_IDS_CLEANUP_THRESHOLD {
+                                                // Simple cleanup: clear half the entries
+                                                // In production, use LRU cache for better behavior
+                                                let to_remove: Vec<String> = self.seen_message_ids
+                                                    .iter()
+                                                    .take(self.seen_message_ids.len() / 2)
+                                                    .cloned()
+                                                    .collect();
+                                                for id in to_remove {
+                                                    self.seen_message_ids.remove(&id);
+                                                }
+                                                debug!(
+                                                    "Cleaned up seen_message_ids, new size: {}",
+                                                    self.seen_message_ids.len()
+                                                );
                                             }
 
                                             info!(
@@ -1507,5 +1619,94 @@ mod tests {
         let limiter = GossipRateLimiter::default();
         assert_eq!(limiter.dropped_count, 0);
         assert_eq!(limiter.tracked_peers(), 0);
+    }
+
+    // ========================================
+    // Y5.6: P2P Config Validation Tests
+    // ========================================
+
+    #[test]
+    fn test_y56_config_validate_valid_keys() {
+        // Valid Ed25519 public key (64 hex chars)
+        let valid_key = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![valid_key.to_string()],
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_y56_config_validate_invalid_key_length() {
+        // Too short
+        let short_key = "a1b2c3d4e5f6";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![short_key.to_string()],
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid trusted key length"));
+    }
+
+    #[test]
+    fn test_y56_config_validate_invalid_key_format() {
+        // Contains non-hex characters
+        let invalid_key = "g1h2i3j4k5l6g1h2i3j4k5l6g1h2i3j4k5l6g1h2i3j4k5l6g1h2i3j4k5l6g1h2";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![invalid_key.to_string()],
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-hex characters"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn test_y56_config_validate_empty_keys_debug() {
+        // In debug builds, empty keys is allowed
+        let config = P2PConfig::default();
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_y56_config_validate_multiple_keys() {
+        // Multiple valid keys
+        let key1 = "1111111111111111111111111111111111111111111111111111111111111111";
+        let key2 = "2222222222222222222222222222222222222222222222222222222222222222";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![key1.to_string(), key2.to_string()],
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_y56_config_validate_one_invalid_among_valid() {
+        // One invalid key among valid ones
+        let valid_key = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        let invalid_key = "short";
+        let config = P2PConfig {
+            listen_port: 9001,
+            enable_mdns: true,
+            bootstrap_peers: Vec::new(),
+            trusted_public_keys: vec![valid_key.to_string(), invalid_key.to_string()],
+        };
+
+        let result = config.validate();
+        assert!(result.is_err());
     }
 }

@@ -347,9 +347,17 @@ impl GlobalBlocklist {
 
     /// Add an IP to the blocklist (requires pre-validation)
     ///
-    /// **Security Note:** This method does NOT verify signatures.
-    /// Use `add_verified()` for P2P threat intel that requires signature validation.
-    pub async fn add(&self, threat: &EnhancedThreatIntel) {
+    /// # Security Note (Y5.1)
+    ///
+    /// This method is `pub(crate)` to restrict access to internal code only.
+    /// External consumers MUST use `add_verified()` for P2P threat intel to prevent
+    /// spoofing attacks where malicious nodes inject fake threats.
+    ///
+    /// Only use this method internally after signature verification has been completed,
+    /// or in trusted internal code paths (tests, local threat detection).
+    ///
+    /// For P2P-received threats, ALWAYS use `add_verified()`.
+    pub(crate) async fn add(&self, threat: &EnhancedThreatIntel) {
         let now = Instant::now();
         let expires_at = now + Duration::from_secs(threat.block_duration_secs);
 
@@ -782,20 +790,30 @@ impl TrustScoreCache {
     }
 
     /// Store a trust token (after verification)
+    ///
+    /// # Security Note (Y5.5)
+    /// This method REQUIRES the verifying node's public key to be pre-registered.
+    /// Tokens from unknown nodes are REJECTED. There is no "bootstrap mode" that
+    /// trusts tokens without verification - this prevents token spoofing attacks.
     pub async fn store_token(&self, token: TrustToken) -> Result<(), String> {
         // Check if expired
         if token.is_expired() {
             return Err("Token is expired".to_string());
         }
 
-        // Verify signature
+        // 🔒 SECURITY FIX (Y5.5): Require node key - no bootstrap mode
+        // Verify signature - REQUIRE the node's public key
         let keys = self.node_public_keys.read().await;
-        if let Some(public_key) = keys.get(&token.verifying_node) {
-            if !token.verify(public_key) {
-                return Err("Invalid signature".to_string());
-            }
+        let public_key = keys.get(&token.verifying_node).ok_or_else(|| {
+            format!(
+                "Unknown verifying node: {}. Register node public key before accepting tokens.",
+                token.verifying_node
+            )
+        })?;
+
+        if !token.verify(public_key) {
+            return Err("Invalid signature".to_string());
         }
-        // If we don't have the node's key, we trust it (for bootstrap)
         drop(keys);
 
         // Store token
@@ -1659,19 +1677,45 @@ mod tests {
         assert_eq!(cache.get_trust_score("unknown").await, 50);
         assert!(!cache.should_skip_challenge("unknown").await);
 
-        // Store a token
-        let token = TrustToken::new(
+        // Create and register node key (Y5.5: no bootstrap mode)
+        let signing_key = generate_test_signing_key();
+        let verifying_key = signing_key.verifying_key();
+        let node_id = "node-1";
+        cache.add_node_public_key(node_id, verifying_key).await;
+
+        // Store a properly signed token
+        let mut token = TrustToken::new(
             "client-1".to_string(),
             80,
             ChallengeType::Managed,
-            "node-1".to_string(),
+            node_id.to_string(),
             900,
         );
+        token.sign(&signing_key);
 
         cache.store_token(token).await.unwrap();
 
         assert_eq!(cache.get_trust_score("client-1").await, 80);
         assert!(cache.should_skip_challenge("client-1").await);
+    }
+
+    #[tokio::test]
+    async fn test_trust_score_cache_rejects_unknown_node() {
+        let cache = TrustScoreCache::new(50, 60);
+
+        // Try to store a token from unknown node (no registered key)
+        let token = TrustToken::new(
+            "client-1".to_string(),
+            80,
+            ChallengeType::Managed,
+            "unknown-node".to_string(),
+            900,
+        );
+
+        // Y5.5: Should reject tokens from unknown nodes
+        let result = cache.store_token(token).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown verifying node"));
     }
 
     // Coordinated Challenge Tests
@@ -1790,6 +1834,7 @@ mod tests {
     #[tokio::test]
     async fn test_trust_token_flow() {
         let signing_key = generate_test_signing_key();
+        let verifying_key = signing_key.verifying_key();
         let config = DistributedEnforcementConfig {
             node_id: "test-node".to_string(),
             signing_key: Some(signing_key),
@@ -1798,6 +1843,12 @@ mod tests {
         };
 
         let engine = DistributedEnforcementEngine::new(config);
+
+        // Y5.5: Register node's public key before processing tokens
+        engine
+            .trust_cache
+            .add_node_public_key("test-node", verifying_key)
+            .await;
 
         // Create and store trust token
         let token = engine.create_trust_token(

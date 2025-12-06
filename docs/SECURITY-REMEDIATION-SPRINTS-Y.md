@@ -14,7 +14,7 @@
 | **Y2** | Solana Contract Hardening | 🔴🟠 CRITICAL/HIGH | 7 | 1 week | None | ✅ COMPLETE |
 | **Y3** | Input Validation & Memory Safety | 🔴🟠 CRITICAL/HIGH | 8 | 1 week | None | ✅ COMPLETE |
 | **Y4** | Wasm Runtime Security | 🔴🟠 CRITICAL/HIGH | 8 | 1 week | Y3 | ✅ COMPLETE |
-| **Y5** | P2P & Cryptographic Hardening | 🟠 HIGH | 8 | 1 week | Y1 |
+| **Y5** | P2P & Cryptographic Hardening | 🟠 HIGH | 8 | 1 week | Y1 | ✅ COMPLETE |
 | **Y6** | Distributed Systems Resilience | 🟡 MEDIUM | 10 | 1 week | Y1, Y5 |
 | **Y7** | Smart Contract Refinements | 🟡 MEDIUM | 8 | 1 week | Y2 |
 | **Y8** | API & Edge Security | 🟡 MEDIUM | 8 | 1 week | Y3, Y4 |
@@ -291,12 +291,12 @@ Add replay protection to P2P messaging and fix cryptographic weaknesses.
 | Y5.8 | CRYPTO-H2 | Add nonce/jti field to `ChallengeToken` | `challenge.rs` | M | 4 |
 
 ### Acceptance Criteria
-- [ ] Unsigned blocklist entries are rejected
-- [ ] Replayed P2P messages are detected and dropped
-- [ ] Trust tokens from unknown nodes are rejected
-- [ ] JA3 fingerprints use SHA-256 (document breaking change)
-- [ ] Challenge tokens include replay protection
-- [ ] 23 new tests pass
+- [x] Unsigned blocklist entries are rejected
+- [x] Replayed P2P messages are detected and dropped
+- [x] Trust tokens from unknown nodes are rejected
+- [x] JA3 fingerprints use SHA-256 (document breaking change)
+- [x] Challenge tokens include replay protection
+- [x] 23 new tests pass (actual: 15 new tests + updated existing tests)
 
 ### Code Changes
 ```rust

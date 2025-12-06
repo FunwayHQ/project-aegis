@@ -166,6 +166,18 @@ fn secure_random_string(len: usize) -> String {
     result
 }
 
+/// SECURITY FIX (Y5.8): Generate a unique JWT ID (jti) for token replay protection
+///
+/// The jti is a 16-byte (128-bit) random identifier encoded as base64url.
+/// This provides sufficient entropy to prevent collisions while being compact.
+///
+/// # Returns
+/// A 22-character base64url-encoded unique identifier (no padding)
+fn generate_jti() -> String {
+    let bytes: [u8; 16] = secure_random_bytes();
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
 /// SECURITY FIX (X2.1): Helper to get current Unix timestamp safely
 /// Returns an error if system time is before UNIX epoch (extremely rare but possible)
 fn current_unix_timestamp() -> Result<u64> {
@@ -450,8 +462,11 @@ pub struct VerificationResult {
 /// Challenge token payload (JWT-like structure)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChallengeToken {
-    /// Token version (incremented to 2 for X2.4 subnet hash support)
+    /// Token version (incremented to 3 for Y5.8 jti support)
     pub ver: u8,
+    /// SECURITY FIX (Y5.8): JWT ID - unique token identifier for replay protection
+    /// This prevents token reuse attacks by allowing the server to track used tokens.
+    pub jti: String,
     /// Fingerprint hash (for binding)
     pub fph: String,
     /// PoW verified
@@ -770,7 +785,8 @@ impl ChallengeManager {
             let subnet_hash = self.hash_string(&subnet);
 
             let token = ChallengeToken {
-                ver: 2, // Version 2 includes subnet hash
+                ver: 3, // Version 3 includes jti for replay protection (Y5.8)
+                jti: generate_jti(), // SECURITY FIX (Y5.8): Unique token ID
                 fph: fingerprint_hash,
                 pow: true,
                 score,
@@ -1568,7 +1584,8 @@ mod tests {
         let subnet = manager.extract_subnet(client_ip);
 
         let token = ChallengeToken {
-            ver: 2, // Version 2 includes subnet hash
+            ver: 3, // Version 3 includes jti (Y5.8)
+            jti: generate_jti(),
             fph: "fingerprint_hash".to_string(),
             pow: true,
             score: 85,
@@ -1653,7 +1670,8 @@ mod tests {
         let subnet = manager.extract_subnet(original_ip);
 
         let token = ChallengeToken {
-            ver: 2,
+            ver: 3,
+            jti: generate_jti(),
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
@@ -1699,7 +1717,8 @@ mod tests {
         let subnet = manager.extract_subnet(original_ip);
 
         let token = ChallengeToken {
-            ver: 2,
+            ver: 3,
+            jti: generate_jti(),
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
@@ -1741,7 +1760,8 @@ mod tests {
         let subnet = manager.extract_subnet(original_ip);
 
         let token = ChallengeToken {
-            ver: 2,
+            ver: 3,
+            jti: generate_jti(),
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
@@ -1859,7 +1879,8 @@ mod tests {
 
         // Create a v1 token (no subnet hash)
         let token = ChallengeToken {
-            ver: 1, // Legacy version
+            ver: 1, // Legacy version (pre-Y5.8, no jti)
+            jti: String::new(), // Empty jti for legacy compatibility test
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
@@ -1900,7 +1921,8 @@ mod tests {
         let subnet = manager.extract_subnet(original_ip);
 
         let token = ChallengeToken {
-            ver: 2,
+            ver: 3,
+            jti: generate_jti(),
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
@@ -1936,7 +1958,8 @@ mod tests {
         let subnet = manager.extract_subnet(original_ip);
 
         let token = ChallengeToken {
-            ver: 2,
+            ver: 3,
+            jti: generate_jti(),
             fph: "fingerprint".to_string(),
             pow: true,
             score: 80,
