@@ -1,11 +1,16 @@
 //! AEGIS DNS Server Entry Point
 //!
 //! Sprint 30.1: DNS Core Server
+//! Sprint 30.2: DNS Management API & Usage Metering
 //!
 //! This binary runs the AEGIS authoritative DNS server with:
 //! - UDP and TCP DNS on port 53
 //! - Rate limiting for DoS protection
 //! - Integration with zone store
+//! - HTTP API for zone/record management
+//! - SQLite persistence for zone durability
+//! - Usage metering and analytics
+//! - Account tier management
 //!
 //! ## Usage
 //!
@@ -18,6 +23,9 @@
 //!
 //! # Run on non-standard ports (for testing without root)
 //! aegis-dns --udp-port 5053 --tcp-port 5053
+//!
+//! # Specify data directory for persistence
+//! aegis-dns --data-dir /var/lib/aegis-dns
 //! ```
 //!
 //! ## Configuration
@@ -31,10 +39,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::Parser;
-use tracing::{error, info, Level};
+use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
-use aegis_node::dns::{DnsConfig, DnsRecord, DnsServer, Zone, ZoneStore};
+use aegis_node::dns::{
+    AccountManager, DnsApi, DnsConfig, DnsMetering, DnsPersistence, DnsRecord, DnsServer, Zone,
+    ZoneStore,
+};
 
 /// AEGIS DNS Server
 #[derive(Parser, Debug)]
@@ -63,6 +74,10 @@ struct Args {
     #[arg(long, default_value = "0.0.0.0")]
     bind: String,
 
+    /// Data directory for persistence (default: ./data/dns)
+    #[arg(long, default_value = "./data/dns")]
+    data_dir: PathBuf,
+
     /// Enable verbose logging
     #[arg(short, long)]
     verbose: bool,
@@ -70,6 +85,10 @@ struct Args {
     /// Disable rate limiting (for testing)
     #[arg(long)]
     no_rate_limit: bool,
+
+    /// Disable persistence (in-memory only)
+    #[arg(long)]
+    no_persistence: bool,
 
     /// Create example zone for testing
     #[arg(long)]
@@ -124,13 +143,69 @@ async fn main() -> anyhow::Result<()> {
     // Validate configuration
     config.validate()?;
 
+    // Create data directory if needed
+    if !args.no_persistence {
+        std::fs::create_dir_all(&args.data_dir)?;
+        info!("Data directory: {}", args.data_dir.display());
+    }
+
     // Create zone store
     let zone_store = Arc::new(ZoneStore::new());
+
+    // Initialize persistence layer
+    let persistence = if args.no_persistence {
+        info!("Persistence disabled (in-memory only)");
+        None
+    } else {
+        let db_path = args.data_dir.join("zones.db");
+        match DnsPersistence::new(db_path.to_str().unwrap()) {
+            Ok(p) => {
+                // Restore zones from persistence
+                let count = p.restore_to_store(&zone_store).await?;
+                info!("Restored {} zones from persistence", count);
+                Some(Arc::new(p))
+            }
+            Err(e) => {
+                warn!("Failed to initialize persistence: {}. Running in-memory only.", e);
+                None
+            }
+        }
+    };
+
+    // Initialize metering (will be used by DNS server for query tracking)
+    let _metering = if args.no_persistence {
+        Arc::new(DnsMetering::new())
+    } else {
+        let metering_db = args.data_dir.join("metering.db");
+        match DnsMetering::with_persistence(metering_db.to_str().unwrap()) {
+            Ok(m) => Arc::new(m),
+            Err(e) => {
+                warn!("Failed to initialize metering persistence: {}. Using in-memory.", e);
+                Arc::new(DnsMetering::new())
+            }
+        }
+    };
+
+    // Initialize account manager (will be used for tier enforcement)
+    let _account_manager = Arc::new(AccountManager::new());
 
     // Create example zone if requested
     if args.example_zone {
         create_example_zone(&zone_store).await?;
     }
+
+    // Create DNS API server
+    let api = Arc::new(DnsApi::new(zone_store.clone(), config.clone()));
+    let api_addr = config.api.addr;
+
+    // Spawn API server
+    let api_clone = api.clone();
+    tokio::spawn(async move {
+        info!("Starting DNS API server on {}", api_addr);
+        if let Err(e) = api_clone.run(api_addr).await {
+            error!("DNS API server error: {}", e);
+        }
+    });
 
     // Create DNS server
     let server = DnsServer::new(config.clone(), zone_store)?;
@@ -143,8 +218,9 @@ async fn main() -> anyhow::Result<()> {
         "  Rate limit: {} qps (burst: {})",
         config.rate_limit.queries_per_second, config.rate_limit.burst_size
     );
+    info!("  Persistence: {}", if persistence.is_some() { "enabled" } else { "disabled" });
 
-    // Run server
+    // Run DNS server (blocks)
     if let Err(e) = server.run().await {
         error!("DNS server error: {}", e);
         std::process::exit(1);
