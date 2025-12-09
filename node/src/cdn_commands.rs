@@ -351,6 +351,7 @@ fn generate_route_config(project: &ProjectConfig) -> Result<String> {
                 module_id: "default-waf".to_string(),
                 ipfs_cid: None,
                 required_public_key: None,
+                config: None,
             }],
         });
     }
@@ -369,6 +370,7 @@ fn generate_route_config(project: &ProjectConfig) -> Result<String> {
                 module_id: "bot-detector".to_string(),
                 ipfs_cid: None,
                 required_public_key: None,
+                config: None,
             }],
         });
     }

@@ -31,6 +31,21 @@ pub enum ModuleExecutionResult {
         updated_context: WasmExecutionContext,
         execution_time_us: u64,
     },
+    /// Rate limiter / DDoS protection result
+    RateLimiter {
+        /// Whether the request is blocked due to rate limiting
+        blocked: bool,
+        /// Reason for blocking (if blocked)
+        block_reason: Option<String>,
+        /// Seconds until the rate limit window resets
+        retry_after_secs: u64,
+        /// Current request count in window
+        current_count: u64,
+        /// Remaining requests in window
+        remaining: u64,
+        /// Execution time in microseconds
+        execution_time_us: u64,
+    },
 }
 
 /// Result of executing a complete module pipeline
@@ -62,6 +77,18 @@ impl PipelineResult {
             blocked: true,
             status_code: 403,
             response_body: format!("Request blocked: {}", reason).into_bytes(),
+            execution_times,
+            final_context: WasmExecutionContext::default(),
+            modules_executed: 0,
+        }
+    }
+
+    /// Create a new pipeline result for rate limiting (429 Too Many Requests)
+    pub fn rate_limited(reason: String, retry_after_secs: u64, execution_times: Vec<(String, u64)>) -> Self {
+        Self {
+            blocked: true,
+            status_code: 429,
+            response_body: format!("Rate limit exceeded: {}. Retry after {} seconds.", reason, retry_after_secs).into_bytes(),
             execution_times,
             final_context: WasmExecutionContext::default(),
             modules_executed: 0,
@@ -211,6 +238,32 @@ impl ModuleDispatcher {
                             // Update context with edge function modifications
                             current_context = updated_context;
                         }
+                        ModuleExecutionResult::RateLimiter {
+                            blocked,
+                            block_reason,
+                            retry_after_secs,
+                            current_count: _,
+                            remaining: _,
+                            execution_time_us,
+                        } => {
+                            execution_times.push((module_ref.module_id.clone(), execution_time_us));
+
+                            if blocked {
+                                let reason = block_reason.unwrap_or_else(|| "Rate limit exceeded".to_string());
+                                info!(
+                                    "Request rate limited by module '{}': {} (retry after {}s)",
+                                    module_ref.module_id, reason, retry_after_secs
+                                );
+
+                                // Early termination - rate limit exceeded
+                                return Ok(PipelineResult::rate_limited(reason, retry_after_secs, execution_times));
+                            }
+
+                            debug!(
+                                "Rate limiter '{}' allowed request ({}μs)",
+                                module_ref.module_id, execution_time_us
+                            );
+                        }
                     }
                 }
                 Err(e) => {
@@ -259,11 +312,50 @@ impl ModuleDispatcher {
         match module_ref.module_type.as_str() {
             "waf" => self.execute_waf_module(module_ref, context),
             "edge_function" => self.execute_edge_function_module(module_ref, context),
+            "ddos_protection" | "rate_limiter" => {
+                self.execute_rate_limiter_module(module_ref, context)
+            }
             unknown => {
                 error!("Unknown module type: {}", unknown);
                 Err(anyhow::anyhow!("Unknown module type: {}", unknown))
             }
         }
+    }
+
+    /// Execute a rate limiter / DDoS protection module
+    ///
+    /// Note: This is a placeholder implementation that always allows requests.
+    /// In production, this would integrate with DDoSManager.check_rate_limit().
+    /// The actual rate limiting logic is handled by the DDoSManager and DistributedRateLimiter.
+    fn execute_rate_limiter_module(
+        &self,
+        module_ref: &WasmModuleRef,
+        _context: &WasmExecutionContext,
+    ) -> Result<ModuleExecutionResult> {
+        let start = Instant::now();
+
+        // Parse config if provided
+        let _config = module_ref.config.as_ref();
+
+        // Placeholder: In production, this would call DDoSManager.check_rate_limit()
+        // For now, we allow all requests and log the intent
+        debug!(
+            "Rate limiter module '{}' executed (config: {:?})",
+            module_ref.module_id,
+            module_ref.config
+        );
+
+        let execution_time = start.elapsed().as_micros() as u64;
+
+        // Default: allow the request
+        Ok(ModuleExecutionResult::RateLimiter {
+            blocked: false,
+            block_reason: None,
+            retry_after_secs: 0,
+            current_count: 0,
+            remaining: u64::MAX,
+            execution_time_us: execution_time,
+        })
     }
 
     /// Execute a WAF module
@@ -414,30 +506,35 @@ mod tests {
                     module_id: "waf-1".to_string(),
                     ipfs_cid: None,
                     required_public_key: None,
+                    config: None,
                 },
                 WasmModuleRef {
                     module_type: "edge_function".to_string(),
                     module_id: "fn-1".to_string(),
                     ipfs_cid: None,
                     required_public_key: None,
+                    config: None,
                 },
                 WasmModuleRef {
                     module_type: "edge_function".to_string(),
                     module_id: "fn-2".to_string(),
                     ipfs_cid: None,
                     required_public_key: None,
+                    config: None,
                 },
                 WasmModuleRef {
                     module_type: "edge_function".to_string(),
                     module_id: "fn-3".to_string(),
                     ipfs_cid: None,
                     required_public_key: None,
+                    config: None,
                 },
                 WasmModuleRef {
                     module_type: "edge_function".to_string(),
                     module_id: "fn-4".to_string(),
                     ipfs_cid: None,
                     required_public_key: None,
+                    config: None,
                 },
             ],
             priority: 0,

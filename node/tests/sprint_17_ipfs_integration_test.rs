@@ -201,6 +201,7 @@ fn test_wasm_module_ref_serialization_with_ipfs() {
         module_id: "waf-v1".to_string(),
         ipfs_cid: Some("QmTestCID123".to_string()),
         required_public_key: Some("ed25519_pubkey_hex".to_string()),
+        config: None,
     };
 
     // Serialize to YAML

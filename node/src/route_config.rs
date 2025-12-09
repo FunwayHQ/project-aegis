@@ -272,9 +272,9 @@ impl CompiledRouteConfig {
 }
 
 /// Wasm module reference in route configuration
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WasmModuleRef {
-    /// Module type (waf, edge_function, etc.)
+    /// Module type (waf, edge_function, ddos_protection, rate_limiter, etc.)
     #[serde(rename = "type")]
     pub module_type: String,
 
@@ -288,6 +288,11 @@ pub struct WasmModuleRef {
     /// Optional: Required Ed25519 public key for signature verification
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required_public_key: Option<String>,
+
+    /// Optional: Inline configuration for the module (e.g., rate limit settings)
+    /// Used by ddos_protection and rate_limiter module types
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
 }
 
 /// HTTP method matching

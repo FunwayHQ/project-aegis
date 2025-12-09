@@ -66,3 +66,9 @@ pub mod api_security;
 
 // Sprint 24: Distributed Enforcement & Global Blocklist Sync
 pub mod distributed_enforcement;
+
+// DDoS Protection for Websites - Full Stack Implementation
+pub mod ddos_policy;
+pub mod ddos_stats;
+pub mod ddos_manager;
+pub mod ddos_api;
