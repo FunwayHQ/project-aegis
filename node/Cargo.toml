@@ -92,6 +92,10 @@ hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 hickory-proto = "0.25"
 hickory-resolver = "0.25"
 
+# GeoIP Database for geo-aware DNS (Sprint 30.3)
+# Optional: Only needed if using MaxMind GeoLite2 database
+maxminddb = { version = "0.24", optional = true }
+
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }
@@ -105,6 +109,8 @@ default = []
 # Enable this feature ONLY for local development - allows loading unsigned Wasm modules
 # WARNING: Never enable this in production builds!
 dev_unsigned_modules = []
+# Enable MaxMind GeoIP database support for geo-aware DNS resolution
+geoip = ["maxminddb"]
 
 [dev-dependencies]
 tempfile = "3.10"  # Temporary file/directory creation for tests

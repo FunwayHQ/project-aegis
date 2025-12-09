@@ -2,6 +2,7 @@
 //!
 //! Sprint 30.1: DNS Core Server
 //! Sprint 30.2: DNS Management API & Usage Metering
+//! Sprint 30.3: Geo-Aware DNS Resolution
 //!
 //! Provides authoritative DNS services for the AEGIS decentralized edge network,
 //! enabling automatic traffic routing through edge nodes via nameserver delegation.
@@ -9,11 +10,13 @@
 //! ## Architecture
 //!
 //! ```text
-//! User → DNS Query → AEGIS DNS Server → Returns Edge Node IPs
-//!                         ↓
-//!                   Zone Store (in-memory)
-//!                         ↓
-//!                   Rate Limiter (DoS protection)
+//! User → DNS Query → AEGIS DNS Server → Geo Resolver → Returns Nearest Edge Node IPs
+//!                         ↓                   ↓
+//!                   Zone Store          Edge Registry
+//!                   (in-memory)         (healthy nodes)
+//!                         ↓                   ↓
+//!                   Rate Limiter        Health Checker
+//!                   (DoS protection)    (background monitoring)
 //!
 //! Admin → HTTP API → Zone/Record CRUD → Persistence (SQLite)
 //!                         ↓
@@ -33,6 +36,9 @@
 //! - `dns_persistence`: SQLite storage for zone durability
 //! - `dns_metering`: Usage analytics and query statistics
 //! - `dns_account`: Account tier management and feature gates
+//! - `edge_registry`: Registry of edge nodes with geographic data
+//! - `health_checker`: Background health monitoring for edge nodes
+//! - `geo_resolver`: Geographic resolution using client location
 
 pub mod dns_types;
 pub mod dns_config;
@@ -43,6 +49,9 @@ pub mod dns_api;
 pub mod dns_persistence;
 pub mod dns_metering;
 pub mod dns_account;
+pub mod edge_registry;
+pub mod health_checker;
+pub mod geo_resolver;
 
 pub use dns_types::*;
 pub use dns_config::*;
@@ -53,3 +62,6 @@ pub use dns_api::*;
 pub use dns_persistence::*;
 pub use dns_metering::*;
 pub use dns_account::*;
+pub use edge_registry::*;
+pub use health_checker::*;
+pub use geo_resolver::*;

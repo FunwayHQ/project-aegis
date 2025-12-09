@@ -20,6 +20,9 @@ use tracing::{debug, error, info, warn};
 use super::{
     DnsConfig, DnsError, DnsRecord, DnsRecordType, DnsRecordValue, Zone, ZoneStore,
 };
+use super::edge_registry::{EdgeNode, EdgeRegistry, GeoLocation};
+use super::health_checker::{HealthChecker, HealthCheckResult, HealthSummary};
+use super::geo_resolver::{GeoResolver, RecordType as GeoRecordType, ResolutionResult};
 
 // =============================================================================
 // API RESPONSE
@@ -188,6 +191,81 @@ pub struct ZoneStatsResponse {
 }
 
 // =============================================================================
+// EDGE NODE REQUEST/RESPONSE TYPES
+// =============================================================================
+
+/// Request to register an edge node
+#[derive(Debug, Deserialize)]
+pub struct RegisterEdgeRequest {
+    pub id: String,
+    pub ipv4: Option<String>,
+    pub ipv6: Option<String>,
+    pub region: String,
+    pub country: String,
+    pub city: Option<String>,
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default = "default_capacity")]
+    pub capacity: u32,
+}
+
+fn default_capacity() -> u32 {
+    100
+}
+
+/// Edge node response
+#[derive(Debug, Serialize)]
+pub struct EdgeNodeResponse {
+    pub id: String,
+    pub ipv4: Option<String>,
+    pub ipv6: Option<String>,
+    pub region: String,
+    pub country: String,
+    pub city: Option<String>,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub capacity: u32,
+    pub healthy: bool,
+    pub last_health_check: u64,
+}
+
+impl EdgeNodeResponse {
+    pub fn from_node(node: &EdgeNode) -> Self {
+        Self {
+            id: node.id.clone(),
+            ipv4: node.ipv4.map(|ip| ip.to_string()),
+            ipv6: node.ipv6.map(|ip| ip.to_string()),
+            region: node.region.clone(),
+            country: node.country.clone(),
+            city: node.city.clone(),
+            latitude: node.latitude,
+            longitude: node.longitude,
+            capacity: node.capacity,
+            healthy: node.healthy,
+            last_health_check: node.last_health_check,
+        }
+    }
+}
+
+/// Request to test geo resolution
+#[derive(Debug, Deserialize)]
+pub struct GeoResolveRequest {
+    pub client_ip: String,
+    #[serde(default = "default_record_type")]
+    pub record_type: String,
+    #[serde(default = "default_count")]
+    pub count: usize,
+}
+
+fn default_record_type() -> String {
+    "A".to_string()
+}
+
+fn default_count() -> usize {
+    3
+}
+
+// =============================================================================
 // DNS API SERVER
 // =============================================================================
 
@@ -195,12 +273,53 @@ pub struct ZoneStatsResponse {
 pub struct DnsApi {
     zone_store: Arc<ZoneStore>,
     config: DnsConfig,
+    edge_registry: Option<Arc<EdgeRegistry>>,
+    health_checker: Option<Arc<HealthChecker>>,
+    geo_resolver: Option<Arc<GeoResolver>>,
 }
 
 impl DnsApi {
     /// Create a new DNS API instance
     pub fn new(zone_store: Arc<ZoneStore>, config: DnsConfig) -> Self {
-        Self { zone_store, config }
+        Self {
+            zone_store,
+            config,
+            edge_registry: None,
+            health_checker: None,
+            geo_resolver: None,
+        }
+    }
+
+    /// Create DNS API with edge components
+    pub fn with_edge(
+        zone_store: Arc<ZoneStore>,
+        config: DnsConfig,
+        edge_registry: Arc<EdgeRegistry>,
+        health_checker: Arc<HealthChecker>,
+        geo_resolver: Arc<GeoResolver>,
+    ) -> Self {
+        Self {
+            zone_store,
+            config,
+            edge_registry: Some(edge_registry),
+            health_checker: Some(health_checker),
+            geo_resolver: Some(geo_resolver),
+        }
+    }
+
+    /// Set edge registry
+    pub fn set_edge_registry(&mut self, registry: Arc<EdgeRegistry>) {
+        self.edge_registry = Some(registry);
+    }
+
+    /// Set health checker
+    pub fn set_health_checker(&mut self, checker: Arc<HealthChecker>) {
+        self.health_checker = Some(checker);
+    }
+
+    /// Set geo resolver
+    pub fn set_geo_resolver(&mut self, resolver: Arc<GeoResolver>) {
+        self.geo_resolver = Some(resolver);
     }
 
     /// Handle an incoming HTTP request
@@ -285,6 +404,33 @@ impl DnsApi {
                 } else {
                     self.not_found()
                 }
+            }
+
+            // Edge node management
+            (Method::GET, "/aegis/dns/api/edges") => self.handle_list_edges().await,
+            (Method::POST, "/aegis/dns/api/edges") => self.handle_register_edge(req).await,
+            (Method::GET, p) if p.starts_with("/aegis/dns/api/edges/") && !p.contains("/health") => {
+                let node_id = extract_domain(p, "/aegis/dns/api/edges/");
+                self.handle_get_edge(&node_id).await
+            }
+            (Method::DELETE, p) if p.starts_with("/aegis/dns/api/edges/") => {
+                let node_id = extract_domain(p, "/aegis/dns/api/edges/");
+                self.handle_unregister_edge(&node_id).await
+            }
+            (Method::GET, p) if p.contains("/edges/") && p.ends_with("/health") => {
+                let node_id = extract_edge_id_from_health_path(p);
+                self.handle_get_edge_health(&node_id).await
+            }
+
+            // Edge health summary
+            (Method::GET, "/aegis/dns/api/health/edges") => self.handle_get_edges_health_summary().await,
+
+            // Geo resolution testing
+            (Method::POST, "/aegis/dns/api/geo/resolve") => self.handle_geo_resolve(req).await,
+            (Method::GET, "/aegis/dns/api/geo/regions") => self.handle_list_regions().await,
+            (Method::GET, p) if p.starts_with("/aegis/dns/api/geo/regions/") => {
+                let region = extract_domain(p, "/aegis/dns/api/geo/regions/");
+                self.handle_get_region_nodes(&region).await
             }
 
             _ => self.not_found(),
@@ -637,6 +783,172 @@ impl DnsApi {
     }
 
     // =========================================================================
+    // EDGE NODE HANDLERS
+    // =========================================================================
+
+    async fn handle_list_edges(&self) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        let nodes = registry.get_all_nodes().await;
+        let responses: Vec<EdgeNodeResponse> = nodes.iter().map(EdgeNodeResponse::from_node).collect();
+
+        json_response(StatusCode::OK, &ApiResponse::success(responses))
+    }
+
+    async fn handle_register_edge(&self, req: Request<Body>) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        let body = match parse_body::<RegisterEdgeRequest>(req).await {
+            Ok(b) => b,
+            Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
+        };
+
+        // Parse IP addresses
+        let ipv4 = body.ipv4.as_ref().and_then(|s| s.parse().ok());
+        let ipv6 = body.ipv6.as_ref().and_then(|s| s.parse().ok());
+
+        if ipv4.is_none() && ipv6.is_none() {
+            return json_error(StatusCode::BAD_REQUEST, "At least one IP address required");
+        }
+
+        let now = current_timestamp();
+        let node = EdgeNode {
+            id: body.id.clone(),
+            ipv4,
+            ipv6,
+            region: body.region,
+            country: body.country,
+            city: body.city,
+            latitude: body.latitude,
+            longitude: body.longitude,
+            capacity: body.capacity,
+            healthy: true,
+            last_health_check: now,
+            consecutive_failures: 0,
+            registered_at: now,
+            metadata: None,
+        };
+
+        match registry.register(node.clone()).await {
+            Ok(_) => {
+                info!("Registered edge node: {}", body.id);
+                let response = EdgeNodeResponse::from_node(&node);
+                json_response(StatusCode::CREATED, &ApiResponse::success(response))
+            }
+            Err(e) => {
+                error!("Failed to register edge node: {}", e);
+                json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to register node")
+            }
+        }
+    }
+
+    async fn handle_get_edge(&self, node_id: &str) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        match registry.get_node(node_id).await {
+            Some(node) => {
+                let response = EdgeNodeResponse::from_node(&node);
+                json_response(StatusCode::OK, &ApiResponse::success(response))
+            }
+            None => json_error(StatusCode::NOT_FOUND, "Edge node not found"),
+        }
+    }
+
+    async fn handle_unregister_edge(&self, node_id: &str) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        if registry.unregister(node_id).await {
+            info!("Unregistered edge node: {}", node_id);
+            json_response(
+                StatusCode::OK,
+                &ApiResponse::<()>::success_message("Edge node unregistered"),
+            )
+        } else {
+            json_error(StatusCode::NOT_FOUND, "Edge node not found")
+        }
+    }
+
+    async fn handle_get_edge_health(&self, node_id: &str) -> Response<Body> {
+        let Some(checker) = &self.health_checker else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Health checker not configured");
+        };
+
+        match checker.get_result(node_id).await {
+            Some(result) => json_response(StatusCode::OK, &ApiResponse::success(result)),
+            None => json_error(StatusCode::NOT_FOUND, "No health data for node"),
+        }
+    }
+
+    async fn handle_get_edges_health_summary(&self) -> Response<Body> {
+        let Some(checker) = &self.health_checker else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Health checker not configured");
+        };
+
+        let summary = checker.get_summary().await;
+        json_response(StatusCode::OK, &ApiResponse::success(summary))
+    }
+
+    // =========================================================================
+    // GEO RESOLUTION HANDLERS
+    // =========================================================================
+
+    async fn handle_geo_resolve(&self, req: Request<Body>) -> Response<Body> {
+        let Some(resolver) = &self.geo_resolver else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Geo resolver not configured");
+        };
+
+        let body = match parse_body::<GeoResolveRequest>(req).await {
+            Ok(b) => b,
+            Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
+        };
+
+        let client_ip = match body.client_ip.parse() {
+            Ok(ip) => ip,
+            Err(_) => return json_error(StatusCode::BAD_REQUEST, "Invalid IP address"),
+        };
+
+        let record_type = match body.record_type.to_uppercase().as_str() {
+            "A" => GeoRecordType::A,
+            "AAAA" => GeoRecordType::AAAA,
+            _ => return json_error(StatusCode::BAD_REQUEST, "Invalid record type (use A or AAAA)"),
+        };
+
+        let result = resolver
+            .resolve_with_info(client_ip, record_type, body.count)
+            .await;
+
+        json_response(StatusCode::OK, &ApiResponse::success(result))
+    }
+
+    async fn handle_list_regions(&self) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        let regions = registry.get_all_regions().await;
+        json_response(StatusCode::OK, &ApiResponse::success(regions))
+    }
+
+    async fn handle_get_region_nodes(&self, region: &str) -> Response<Body> {
+        let Some(registry) = &self.edge_registry else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "Edge registry not configured");
+        };
+
+        let nodes = registry.get_healthy_in_region(region).await;
+        let responses: Vec<EdgeNodeResponse> = nodes.iter().map(EdgeNodeResponse::from_node).collect();
+
+        json_response(StatusCode::OK, &ApiResponse::success(responses))
+    }
+
+    // =========================================================================
     // HELPERS
     // =========================================================================
 
@@ -722,6 +1034,26 @@ fn extract_analytics_domain(path: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Extract edge node ID from health path like /aegis/dns/api/edges/node-1/health
+fn extract_edge_id_from_health_path(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').collect();
+    // /aegis/dns/api/edges/{node_id}/health
+    // 0("")  1    2   3      4         5
+    if parts.len() >= 6 {
+        parts[5].to_string()
+    } else {
+        String::new()
+    }
+}
+
+/// Get current Unix timestamp
+fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 /// Validate domain name (basic validation)
