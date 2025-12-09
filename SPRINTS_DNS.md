@@ -19,6 +19,44 @@ Implement a complete authoritative DNS infrastructure for AEGIS, enabling automa
 
 ---
 
+## Pricing Model
+
+**Free basic DNS** (encourages adoption) with optional paid features via $AEGIS staking:
+
+### Free Tier
+- Up to **5 zones** per account
+- Standard DNS resolution (A, AAAA, CNAME, MX, TXT, NS)
+- Basic query analytics (last 24 hours)
+- Rate limiting: 1,000 queries/second per zone
+- Community support
+
+### Paid Tier (Staking Required)
+Stake $AEGIS tokens to unlock premium features:
+
+| Feature | Requirement |
+|---------|-------------|
+| **Unlimited zones** | Stake 1,000 $AEGIS |
+| **DNSSEC signing** | Stake 2,500 $AEGIS |
+| **Advanced analytics** (90-day history, geo breakdown) | Stake 5,000 $AEGIS |
+| **Priority support** | Stake 10,000 $AEGIS |
+| **Custom nameservers** (ns1.yourdomain.com) | Stake 25,000 $AEGIS |
+
+### Usage Metering
+The API tracks the following metrics per account/zone:
+- Total queries (daily, monthly)
+- Query types breakdown (A, AAAA, etc.)
+- Response codes (NOERROR, NXDOMAIN, REFUSED)
+- Geographic distribution of queries
+- Cache hit/miss ratio
+- Latency percentiles (p50, p95, p99)
+
+These metrics are:
+1. Stored locally in SQLite for API access
+2. Signed and submitted to Solana for staking tier validation
+3. Displayed in the DNS dashboard
+
+---
+
 ## Sprint 30.1: DNS Core Server
 
 ### Objective
@@ -372,16 +410,18 @@ path = "src/main_dns.rs"
 
 ---
 
-## Sprint 30.2: DNS Management API
+## Sprint 30.2: DNS Management API & Usage Metering
 
 ### Objective
-Build HTTP API for managing DNS zones and records, following existing AEGIS API patterns.
+Build HTTP API for managing DNS zones and records, with usage metering for the freemium pricing model.
 
 ### New Files
 ```
 /node/src/dns/
 ├── dns_api.rs          # HTTP API server
-└── dns_persistence.rs  # SQLite storage for zones
+├── dns_persistence.rs  # SQLite storage for zones
+├── dns_metering.rs     # Usage metering and analytics
+└── dns_account.rs      # Account management and tier enforcement
 ```
 
 ### LLM Prompt for Sprint 30.2
@@ -391,6 +431,30 @@ You are implementing the DNS Management API for the AEGIS decentralized edge net
 
 ## Context
 In Sprint 30.1, we built the core DNS server. Now we need an HTTP API for managing zones and records. Follow the patterns from `/node/src/ddos_api.rs` (Hyper-based, manual routing).
+
+## Pricing Model (IMPORTANT)
+AEGIS DNS uses a freemium model:
+
+**Free Tier:**
+- Up to 5 zones per account
+- Standard DNS resolution
+- Basic analytics (24-hour history)
+- 1,000 qps rate limit per zone
+
+**Paid Tier (requires $AEGIS staking):**
+- Unlimited zones (1,000 $AEGIS staked)
+- DNSSEC (2,500 $AEGIS staked)
+- Advanced analytics (5,000 $AEGIS staked)
+- Priority support (10,000 $AEGIS staked)
+
+## Usage Metering Requirements
+Track and store the following metrics per zone:
+- Query count (total, by type, by response code)
+- Geographic distribution of queries
+- Latency percentiles (p50, p95, p99)
+- Cache hit/miss ratio
+
+Store in SQLite with daily rollups. Expose via API endpoints.
 
 ## Technical Requirements
 
@@ -502,6 +566,12 @@ impl DnsApi {
 | GET | `/aegis/dns/api/nameservers` | Get AEGIS nameservers |
 | GET | `/aegis/dns/api/stats` | Global DNS stats |
 | GET | `/aegis/dns/api/stats/:domain` | Per-zone stats |
+| **Account & Metering** | | |
+| GET | `/aegis/dns/api/account` | Get account info (tier, zone count, limits) |
+| GET | `/aegis/dns/api/account/usage` | Get usage summary (queries, bandwidth) |
+| GET | `/aegis/dns/api/account/tier` | Get current tier and staking requirements |
+| GET | `/aegis/dns/api/zones/:domain/analytics` | Detailed zone analytics (queries, geo, latency) |
+| GET | `/aegis/dns/api/zones/:domain/analytics/timeseries` | Time-series query data |
 
 **Request/Response Formats:**
 
@@ -615,11 +685,217 @@ impl DnsPersistence {
 }
 ```
 
-### 3. Update `/node/src/dns/mod.rs`
+### 3. Create `/node/src/dns/dns_metering.rs`
+Usage metering and analytics:
+
+```rust
+use rusqlite::Connection;
+use std::sync::Arc;
+use std::net::IpAddr;
+use tokio::sync::Mutex;
+use std::collections::HashMap;
+use serde::{Serialize, Deserialize};
+
+/// Query metrics collected per DNS query
+#[derive(Debug, Clone)]
+pub struct QueryMetric {
+    pub domain: String,
+    pub query_type: String,        // A, AAAA, CNAME, etc.
+    pub response_code: String,     // NOERROR, NXDOMAIN, REFUSED
+    pub latency_us: u64,           // Microseconds
+    pub cache_hit: bool,
+    pub client_country: Option<String>,  // ISO country code from GeoIP
+    pub timestamp: u64,
+}
+
+/// Aggregated zone analytics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZoneAnalytics {
+    pub domain: String,
+    pub period_start: u64,
+    pub period_end: u64,
+    pub total_queries: u64,
+    pub queries_by_type: HashMap<String, u64>,
+    pub queries_by_response: HashMap<String, u64>,
+    pub queries_by_country: HashMap<String, u64>,
+    pub cache_hit_ratio: f64,
+    pub latency_p50_us: u64,
+    pub latency_p95_us: u64,
+    pub latency_p99_us: u64,
+}
+
+/// Account usage summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountUsage {
+    pub account_id: String,
+    pub zone_count: u32,
+    pub total_queries_today: u64,
+    pub total_queries_month: u64,
+    pub tier: AccountTier,
+    pub limits: AccountLimits,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountLimits {
+    pub max_zones: u32,
+    pub max_qps_per_zone: u32,
+    pub analytics_retention_days: u32,
+    pub dnssec_enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum AccountTier {
+    Free,
+    Staked { amount: u64 },  // Amount of $AEGIS staked
+}
+
+pub struct DnsMetering {
+    conn: Arc<Mutex<Connection>>,
+    /// In-memory buffer for recent queries (flushed to DB periodically)
+    buffer: Arc<Mutex<Vec<QueryMetric>>>,
+}
+
+impl DnsMetering {
+    pub fn new(db_path: &str) -> anyhow::Result<Self> {
+        let conn = Connection::open(db_path)?;
+
+        // Create metering tables
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS query_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                domain TEXT NOT NULL,
+                query_type TEXT NOT NULL,
+                response_code TEXT NOT NULL,
+                latency_us INTEGER NOT NULL,
+                cache_hit INTEGER NOT NULL,
+                client_country TEXT,
+                timestamp INTEGER NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS daily_rollups (
+                domain TEXT NOT NULL,
+                date TEXT NOT NULL,  -- YYYY-MM-DD
+                total_queries INTEGER NOT NULL,
+                queries_by_type TEXT NOT NULL,  -- JSON
+                queries_by_response TEXT NOT NULL,  -- JSON
+                queries_by_country TEXT NOT NULL,  -- JSON
+                cache_hits INTEGER NOT NULL,
+                cache_misses INTEGER NOT NULL,
+                latency_sum_us INTEGER NOT NULL,
+                latency_count INTEGER NOT NULL,
+                PRIMARY KEY (domain, date)
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_metrics_domain_ts ON query_metrics(domain, timestamp)",
+            [],
+        )?;
+
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+            buffer: Arc::new(Mutex::new(Vec::new())),
+        })
+    }
+
+    /// Record a query metric (buffered for performance)
+    pub async fn record_query(&self, metric: QueryMetric)
+
+    /// Flush buffered metrics to database
+    pub async fn flush(&self) -> anyhow::Result<usize>
+
+    /// Get analytics for a zone
+    pub async fn get_zone_analytics(&self, domain: &str, start: u64, end: u64) -> anyhow::Result<ZoneAnalytics>
+
+    /// Get time-series data for a zone
+    pub async fn get_timeseries(&self, domain: &str, start: u64, end: u64, interval_secs: u64) -> anyhow::Result<Vec<(u64, u64)>>
+
+    /// Run daily rollup job (call from background task)
+    pub async fn run_daily_rollup(&self) -> anyhow::Result<()>
+
+    /// Clean up old data beyond retention period
+    pub async fn cleanup_old_data(&self, retention_days: u32) -> anyhow::Result<usize>
+}
+```
+
+### 4. Create `/node/src/dns/dns_account.rs`
+Account management and tier enforcement:
+
+```rust
+use serde::{Serialize, Deserialize};
+
+/// Account information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DnsAccount {
+    pub id: String,
+    pub wallet_address: Option<String>,  // Solana wallet for staking
+    pub tier: AccountTier,
+    pub zone_count: u32,
+    pub created_at: u64,
+}
+
+/// Check if account can create a new zone
+pub fn can_create_zone(account: &DnsAccount) -> bool {
+    match &account.tier {
+        AccountTier::Free => account.zone_count < 5,
+        AccountTier::Staked { amount } => {
+            if *amount >= 1000 {
+                true  // Unlimited zones
+            } else {
+                account.zone_count < 5
+            }
+        }
+    }
+}
+
+/// Check if account has DNSSEC access
+pub fn has_dnssec_access(account: &DnsAccount) -> bool {
+    match &account.tier {
+        AccountTier::Free => false,
+        AccountTier::Staked { amount } => *amount >= 2500,
+    }
+}
+
+/// Check if account has advanced analytics
+pub fn has_advanced_analytics(account: &DnsAccount) -> bool {
+    match &account.tier {
+        AccountTier::Free => false,
+        AccountTier::Staked { amount } => *amount >= 5000,
+    }
+}
+
+/// Get analytics retention days for account
+pub fn get_analytics_retention_days(account: &DnsAccount) -> u32 {
+    match &account.tier {
+        AccountTier::Free => 1,  // 24 hours
+        AccountTier::Staked { amount } => {
+            if *amount >= 5000 { 90 } else { 7 }
+        }
+    }
+}
+
+/// Get rate limit for account (queries per second per zone)
+pub fn get_rate_limit(account: &DnsAccount) -> u32 {
+    match &account.tier {
+        AccountTier::Free => 1000,
+        AccountTier::Staked { amount } => {
+            if *amount >= 10000 { 10000 } else { 5000 }
+        }
+    }
+}
+```
+
+### 5. Update `/node/src/dns/mod.rs`
 Add new modules:
 ```rust
 pub mod dns_api;
 pub mod dns_persistence;
+pub mod dns_metering;
+pub mod dns_account;
 ```
 
 ### 4. Create API Server Runner
@@ -661,6 +937,15 @@ server.run().await
 - Test SQLite persistence save/restore
 - Test error handling (invalid domain, duplicate records)
 - Integration test: Create zone via API, resolve via DNS
+- **Metering tests:**
+  - Test query metric recording and buffering
+  - Test daily rollup aggregation
+  - Test analytics API endpoints
+  - Test data retention cleanup
+- **Account/Tier tests:**
+  - Test zone limit enforcement (5 for free tier)
+  - Test tier feature gates (DNSSEC, analytics)
+  - Test rate limit by tier
 
 ## Success Criteria
 - API server starts on port 8054
@@ -668,6 +953,14 @@ server.run().await
 - Can create/list/delete records via HTTP
 - Zones persist across restarts (SQLite)
 - API returns proper error messages
+- **Metering works:**
+  - Query metrics recorded to SQLite
+  - Analytics endpoints return correct data
+  - Daily rollups execute successfully
+- **Tier enforcement works:**
+  - Free tier limited to 5 zones
+  - DNSSEC blocked for free tier
+  - Rate limits applied per tier
 - All tests pass
 ```
 
