@@ -86,6 +86,12 @@ ring = "0.17.14"
 subtle = "2.6.1"
 zeroize = { version = "1.7", features = ["derive"] }  # Secure memory clearing for secrets (X3.6)
 
+# DNS Infrastructure (Sprint 30)
+# Note: Using 0.25.x for stability. TLS features (DoT/DoH) will be added in Sprint 30.5
+hickory-server = { version = "0.25", features = ["dnssec-ring"] }
+hickory-proto = "0.25"
+hickory-resolver = "0.25"
+
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { version = "0.12", features = ["async_tokio"] }
@@ -135,6 +141,10 @@ required-features = []
 [[bin]]
 name = "aegis-cdn"
 path = "src/main_cdn.rs"
+
+[[bin]]
+name = "aegis-dns"
+path = "src/main_dns.rs"
 
 # Security notes:
 # - RUSTSEC-2024-0437 (protobuf): Transitive via prometheus 0.13 → pingora-core

@@ -72,3 +72,6 @@ pub mod ddos_policy;
 pub mod ddos_stats;
 pub mod ddos_manager;
 pub mod ddos_api;
+
+// Sprint 30: DNS Infrastructure
+pub mod dns;
