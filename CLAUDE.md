@@ -554,6 +554,22 @@ aegis-cdn list
   - **@aegis/dao-app**: React + Vite + Tailwind dApp with Solana wallet adapters
   - pnpm monorepo with Turborepo orchestration
   - Devnet verified: fetches config, lists proposals, displays voting data
+- ✅ **Sprint 19.5:** DDoS Protection Dashboard - Full Stack (81 tests total)
+  - **Backend (Rust):** DDoS management API with policy CRUD, blocklist/allowlist, stats
+    - `ddos_policy.rs`: Policy structs with validation (thresholds, IP/CIDR parsing)
+    - `ddos_stats.rs`: Statistics aggregation (attacks, drop rate, top attackers)
+    - `ddos_manager.rs`: Core orchestration (blocklist, allowlist, rate limiting, CIDR matching)
+    - `ddos_api.rs`: HTTP REST API at `/aegis/ddos/api/*` (policy CRUD, blocklist, SSE)
+    - Extended `module_dispatcher.rs` with RateLimiter variant for route-based limiting
+    - 57 Rust tests passing
+  - **@aegis/ddos-sdk**: TypeScript HTTP client for DDoS API (19 tests)
+    - Policy CRUD, blocklist/allowlist management, statistics
+    - Server-Sent Events (SSE) subscription for real-time updates
+  - **@aegis/ddos-dashboard**: React + Vite + Tailwind + Recharts (5 tests)
+    - Dashboard: Real-time stats, attack chart, live event log
+    - Policies: CRUD for domain policies with rate limiting toggle
+    - Blocklist: Blocklist/Allowlist management with CIDR support
+    - Statistics: Traffic charts, attack type breakdown, top attackers, export
 
 ### Phase 4: Advanced Security & Mainnet (Sprints 19-30)
 
