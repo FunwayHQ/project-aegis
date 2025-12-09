@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AEGIS CAPTCHA Demo | Decentralized Bot Protection</title>
+    <meta name="description" content="Demo page for the AEGIS CAPTCHA widget - a privacy-respecting, decentralized alternative to reCAPTCHA.">
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#007AFF',
+                        secondary: '#1EB5B0',
+                        darkBg: '#0A0E27',
+                        darkGrey: '#1A1D2E',
+                        mediumGrey: '#2D3142',
+                        lightGrey: '#4F5D75',
+                        aegis: {
+                            teal: '#1EB5B0',
+                            darkblue: '#1E478B',
+                            lightblue: '#4CB1CC',
+                            cyan: '#10F7CD',
+                            mediumblue: '#207D9C',
+                            purple: '#212382'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'system-ui', 'sans-serif']
+                    }
+                }
+            }
+        }
+    </script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="bg-darkBg text-white font-sans min-h-screen">
+    <!-- Navigation -->
+    <nav class="fixed w-full bg-darkGrey/90 backdrop-blur-md z-50 border-b border-aegis-teal/20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between items-center h-16">
+                <a href="index.html" class="flex items-center">
+                    <img src="images/AEGIS-logo.svg" alt="AEGIS Logo" class="h-24 w-24">
+                </a>
+                <div class="flex items-center space-x-4">
+                    <a href="index.html" class="text-gray-300 hover:text-aegis-teal transition-colors">Home</a>
+                    <a href="#" class="px-4 py-2 bg-aegis-teal text-white rounded-lg font-medium">CAPTCHA Demo</a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="pt-24 pb-16 px-4">
+        <div class="max-w-4xl mx-auto">
+            <!-- Header -->
+            <div class="text-center mb-12">
+                <h1 class="text-4xl md:text-5xl font-bold mb-4">
+                    <span class="bg-gradient-to-r from-aegis-teal to-aegis-cyan bg-clip-text text-transparent">
+                        AEGIS CAPTCHA
+                    </span>
+                </h1>
+                <p class="text-xl text-gray-300 max-w-2xl mx-auto">
+                    Privacy-respecting, decentralized bot protection using Proof-of-Work and browser fingerprinting.
+                </p>
+            </div>
+
+            <!-- Demo Grid -->
+            <div class="grid md:grid-cols-2 gap-8 mb-16">
+                <!-- Contact Form Demo -->
+                <div class="bg-darkGrey rounded-xl p-6 border border-aegis-teal/20">
+                    <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                        Contact Form
+                    </h2>
+                    <form id="contact-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Name</label>
+                            <input type="text" name="name" required
+                                class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Email</label>
+                            <input type="email" name="email" required
+                                class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors">
+                        </div>
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Message</label>
+                            <textarea name="message" rows="3" required
+                                class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors resize-none"></textarea>
+                        </div>
+
+                        <!-- CAPTCHA Widget -->
+                        <div id="contact-captcha" class="my-4"></div>
+
+                        <button type="submit" id="contact-submit" disabled
+                            class="w-full py-3 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-aegis-cyan/30 transition-all">
+                            Send Message
+                        </button>
+                    </form>
+                    <div id="contact-result" class="mt-4 hidden"></div>
+                </div>
+
+                <!-- Newsletter Form Demo -->
+                <div class="bg-darkGrey rounded-xl p-6 border border-aegis-teal/20">
+                    <h2 class="text-xl font-semibold mb-4 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                        </svg>
+                        Newsletter Signup
+                    </h2>
+                    <form id="newsletter-form" class="space-y-4">
+                        <div>
+                            <label class="block text-sm text-gray-400 mb-1">Email Address</label>
+                            <input type="email" name="email" required
+                                class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors">
+                        </div>
+                        <div class="flex items-start gap-2">
+                            <input type="checkbox" id="newsletter-consent" required
+                                class="mt-1 rounded border-lightGrey/30 bg-mediumGrey text-aegis-teal focus:ring-aegis-teal">
+                            <label for="newsletter-consent" class="text-sm text-gray-400">
+                                I agree to receive updates about AEGIS
+                            </label>
+                        </div>
+
+                        <!-- CAPTCHA Widget (Light Theme) -->
+                        <div id="newsletter-captcha" class="my-4"></div>
+
+                        <button type="submit" id="newsletter-submit" disabled
+                            class="w-full py-3 bg-gradient-to-r from-aegis-purple to-aegis-darkblue text-white rounded-lg font-semibold disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-aegis-purple/30 transition-all">
+                            Subscribe
+                        </button>
+                    </form>
+                    <div id="newsletter-result" class="mt-4 hidden"></div>
+                </div>
+            </div>
+
+            <!-- How It Works -->
+            <div class="bg-darkGrey/50 rounded-xl p-8 border border-aegis-teal/10 mb-12">
+                <h2 class="text-2xl font-bold mb-6 text-center">How AEGIS CAPTCHA Works</h2>
+                <div class="grid md:grid-cols-4 gap-6">
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                            <span class="text-aegis-teal font-bold">1</span>
+                        </div>
+                        <h3 class="font-semibold mb-1">Click Checkbox</h3>
+                        <p class="text-sm text-gray-400">User initiates verification</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                            <span class="text-aegis-teal font-bold">2</span>
+                        </div>
+                        <h3 class="font-semibold mb-1">Proof-of-Work</h3>
+                        <p class="text-sm text-gray-400">Browser solves SHA-256 puzzle</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                            <span class="text-aegis-teal font-bold">3</span>
+                        </div>
+                        <h3 class="font-semibold mb-1">Fingerprint</h3>
+                        <p class="text-sm text-gray-400">Collects browser characteristics</p>
+                    </div>
+                    <div class="text-center">
+                        <div class="w-12 h-12 mx-auto mb-3 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                            <span class="text-aegis-teal font-bold">4</span>
+                        </div>
+                        <h3 class="font-semibold mb-1">Verify & Token</h3>
+                        <p class="text-sm text-gray-400">Ed25519 signed JWT issued</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Test Controls -->
+            <div class="bg-darkGrey rounded-xl p-6 border border-aegis-teal/20">
+                <h2 class="text-xl font-semibold mb-4">Test Controls</h2>
+                <div class="grid md:grid-cols-3 gap-4">
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-2">API Endpoint</label>
+                        <input type="text" id="api-endpoint" value="https://api.aegis.network"
+                            class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors font-mono text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-2">Challenge Type</label>
+                        <select id="challenge-type"
+                            class="w-full px-4 py-2 bg-mediumGrey border border-lightGrey/30 rounded-lg focus:border-aegis-teal focus:outline-none transition-colors">
+                            <option value="managed">Managed (Default)</option>
+                            <option value="invisible">Invisible</option>
+                            <option value="interactive">Interactive</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-sm text-gray-400 mb-2">Debug Mode</label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="debug-mode"
+                                class="rounded border-lightGrey/30 bg-mediumGrey text-aegis-teal focus:ring-aegis-teal">
+                            <span class="text-sm">Enable console logging</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="mt-4 flex gap-4">
+                    <button onclick="reinitializeCaptchas()"
+                        class="px-4 py-2 bg-aegis-teal text-white rounded-lg font-medium hover:bg-aegis-teal/80 transition-colors">
+                        Reinitialize CAPTCHAs
+                    </button>
+                    <button onclick="resetAllCaptchas()"
+                        class="px-4 py-2 bg-mediumGrey text-white rounded-lg font-medium border border-lightGrey/30 hover:border-aegis-teal transition-colors">
+                        Reset All
+                    </button>
+                </div>
+            </div>
+
+            <!-- Console Output -->
+            <div class="mt-8">
+                <h2 class="text-xl font-semibold mb-4">Console Output</h2>
+                <div id="console-output" class="bg-black/50 rounded-xl p-4 font-mono text-sm h-48 overflow-y-auto border border-lightGrey/20">
+                    <p class="text-gray-500">[AEGIS CAPTCHA] Waiting for initialization...</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-darkGrey border-t border-aegis-teal/10 py-8 px-4">
+        <div class="max-w-4xl mx-auto text-center">
+            <p class="text-gray-400 text-sm">
+                AEGIS CAPTCHA is part of the <a href="index.html" class="text-aegis-teal hover:underline">AEGIS Decentralized Edge Network</a>
+            </p>
+            <p class="text-gray-500 text-xs mt-2">
+                No tracking. No third-party dependencies. Fully open source.
+            </p>
+        </div>
+    </footer>
+
+    <!-- AEGIS CAPTCHA Script -->
+    <script src="js/aegis-captcha.js"></script>
+    <script>
+        // Console logging helper
+        const consoleOutput = document.getElementById('console-output');
+        function logToConsole(message, type = 'info') {
+            const colors = {
+                info: 'text-gray-300',
+                success: 'text-green-400',
+                error: 'text-red-400',
+                warn: 'text-yellow-400'
+            };
+            const time = new Date().toLocaleTimeString();
+            const p = document.createElement('p');
+            p.className = colors[type] || colors.info;
+            p.textContent = `[${time}] ${message}`;
+            consoleOutput.appendChild(p);
+            consoleOutput.scrollTop = consoleOutput.scrollHeight;
+        }
+
+        // Form handlers
+        document.getElementById('contact-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!window.contactCaptchaToken) {
+                logToConsole('Please complete the CAPTCHA verification', 'error');
+                return;
+            }
+
+            const result = document.getElementById('contact-result');
+            result.className = 'mt-4 p-4 rounded-lg bg-green-500/20 text-green-400 border border-green-500/30';
+            result.textContent = 'Message sent successfully! Token: ' + window.contactCaptchaToken.substring(0, 20) + '...';
+            result.classList.remove('hidden');
+            logToConsole('Contact form submitted with valid CAPTCHA token', 'success');
+        });
+
+        document.getElementById('newsletter-form').addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!window.newsletterCaptchaToken) {
+                logToConsole('Please complete the CAPTCHA verification', 'error');
+                return;
+            }
+
+            const result = document.getElementById('newsletter-result');
+            result.className = 'mt-4 p-4 rounded-lg bg-green-500/20 text-green-400 border border-green-500/30';
+            result.textContent = 'Subscribed successfully!';
+            result.classList.remove('hidden');
+            logToConsole('Newsletter form submitted with valid CAPTCHA token', 'success');
+        });
+
+        // Initialize CAPTCHAs
+        function initializeCaptchas() {
+            const apiEndpoint = document.getElementById('api-endpoint').value;
+            const challengeType = document.getElementById('challenge-type').value;
+            const debug = document.getElementById('debug-mode').checked;
+
+            logToConsole(`Initializing CAPTCHAs with endpoint: ${apiEndpoint}`);
+
+            // Contact form CAPTCHA (Dark theme)
+            AegisCaptcha.init({
+                container: '#contact-captcha',
+                apiEndpoint: apiEndpoint,
+                challengeType: challengeType,
+                theme: 'dark',
+                debug: debug,
+                onSuccess: (token) => {
+                    window.contactCaptchaToken = token;
+                    document.getElementById('contact-submit').disabled = false;
+                    logToConsole('Contact CAPTCHA verified successfully', 'success');
+                },
+                onError: (error) => {
+                    logToConsole(`Contact CAPTCHA error: ${error.message}`, 'error');
+                },
+                onLoad: () => {
+                    logToConsole('Contact CAPTCHA loaded');
+                }
+            });
+
+            // Need a small delay to initialize second widget
+            setTimeout(() => {
+                // Create second instance for newsletter (simulate separate initialization)
+                const newsletterContainer = document.getElementById('newsletter-captcha');
+                newsletterContainer.innerHTML = '';
+
+                // For demo, we'll reuse the same widget code
+                // In production, each form would have its own instance
+                const widget = document.createElement('div');
+                widget.id = 'newsletter-captcha-widget';
+                newsletterContainer.appendChild(widget);
+
+                // Re-initialize for newsletter with light theme
+                // Note: In real implementation, AegisCaptcha would support multiple instances
+                logToConsole('Newsletter CAPTCHA loaded (demo mode)');
+
+                // For demo purposes, enable newsletter submit after contact is verified
+                const observer = new MutationObserver(() => {
+                    if (window.contactCaptchaToken) {
+                        window.newsletterCaptchaToken = window.contactCaptchaToken;
+                        document.getElementById('newsletter-submit').disabled = false;
+                    }
+                });
+                observer.observe(document.getElementById('contact-captcha'), { subtree: true, childList: true, attributes: true });
+            }, 100);
+        }
+
+        function reinitializeCaptchas() {
+            resetAllCaptchas();
+            initializeCaptchas();
+        }
+
+        function resetAllCaptchas() {
+            window.contactCaptchaToken = null;
+            window.newsletterCaptchaToken = null;
+            document.getElementById('contact-submit').disabled = true;
+            document.getElementById('newsletter-submit').disabled = true;
+            document.getElementById('contact-result').classList.add('hidden');
+            document.getElementById('newsletter-result').classList.add('hidden');
+
+            if (typeof AegisCaptcha !== 'undefined') {
+                AegisCaptcha.reset();
+            }
+
+            logToConsole('All CAPTCHAs reset');
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initializeCaptchas);
+
+        // Debug mode toggle
+        document.getElementById('debug-mode').addEventListener('change', function() {
+            logToConsole(`Debug mode ${this.checked ? 'enabled' : 'disabled'}`, 'warn');
+        });
+    </script>
+</body>
+</html>

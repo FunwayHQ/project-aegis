@@ -1,0 +1,64 @@
+{
+  "name": "@aegis/captcha-react",
+  "version": "1.0.0",
+  "description": "React component for AEGIS CAPTCHA - decentralized bot protection",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.tsx --format cjs,esm --dts",
+    "dev": "tsup src/index.tsx --format cjs,esm --dts --watch",
+    "test": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint src --ext .ts,.tsx",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^14.1.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "jsdom": "^23.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^1.0.0"
+  },
+  "keywords": [
+    "aegis",
+    "captcha",
+    "react",
+    "bot-protection",
+    "pow",
+    "proof-of-work",
+    "decentralized",
+    "web3"
+  ],
+  "author": "AEGIS",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FunwayHQ/project-aegis.git",
+    "directory": "packages/aegis-captcha-react"
+  },
+  "bugs": {
+    "url": "https://github.com/FunwayHQ/project-aegis/issues"
+  },
+  "homepage": "https://aegis.funwayinteractive.com"
+}
