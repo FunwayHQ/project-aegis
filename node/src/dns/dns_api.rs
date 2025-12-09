@@ -23,6 +23,8 @@ use super::{
 use super::edge_registry::{EdgeNode, EdgeRegistry, GeoLocation};
 use super::health_checker::{HealthChecker, HealthCheckResult, HealthSummary};
 use super::geo_resolver::{GeoResolver, RecordType as GeoRecordType, ResolutionResult};
+use super::dnssec_keys::{DnssecKeyManager, DnssecAlgorithm, KeyFlags, DigestType, DsRecord as DnssecDsRecord};
+use super::dnssec::{DnssecSigner, DnssecConfig, DnssecResigner, SignedZone};
 
 // =============================================================================
 // API RESPONSE
@@ -266,6 +268,91 @@ fn default_count() -> usize {
 }
 
 // =============================================================================
+// DNSSEC REQUEST/RESPONSE TYPES
+// =============================================================================
+
+/// DNSSEC status response
+#[derive(Debug, Serialize)]
+pub struct DnssecStatusResponse {
+    pub domain: String,
+    pub enabled: bool,
+    pub algorithm: Option<String>,
+    pub key_tag_zsk: Option<u16>,
+    pub key_tag_ksk: Option<u16>,
+    pub signed_at: Option<u64>,
+    pub expires_at: Option<u64>,
+}
+
+/// DS record response for registrar
+#[derive(Debug, Serialize)]
+pub struct DsRecordResponse {
+    pub domain: String,
+    pub key_tag: u16,
+    pub algorithm: u8,
+    pub algorithm_name: String,
+    pub digest_type: u8,
+    pub digest: String,
+    pub zone_format: String,
+    pub registrar_format: String,
+}
+
+impl DsRecordResponse {
+    pub fn from_ds_record(domain: &str, ds: &DnssecDsRecord) -> Self {
+        Self {
+            domain: domain.to_string(),
+            key_tag: ds.key_tag,
+            algorithm: ds.algorithm,
+            algorithm_name: DnssecAlgorithm::from_number(ds.algorithm)
+                .map(|a| a.name().to_string())
+                .unwrap_or_else(|| format!("UNKNOWN({})", ds.algorithm)),
+            digest_type: ds.digest_type,
+            digest: hex::encode(&ds.digest).to_uppercase(),
+            zone_format: ds.to_zone_format(domain),
+            registrar_format: ds.to_registrar_format(),
+        }
+    }
+}
+
+/// Request to enable DNSSEC
+#[derive(Debug, Deserialize)]
+pub struct EnableDnssecRequest {
+    #[serde(default = "default_dnssec_algorithm")]
+    pub algorithm: String,
+}
+
+fn default_dnssec_algorithm() -> String {
+    "ED25519".to_string()
+}
+
+/// Signed zone info response
+#[derive(Debug, Serialize)]
+pub struct SignedZoneResponse {
+    pub domain: String,
+    pub record_count: usize,
+    pub rrsig_count: usize,
+    pub nsec_count: usize,
+    pub dnskey_count: usize,
+    pub signed_at: u64,
+    pub expires_at: u64,
+    pub key_tags: Vec<u16>,
+}
+
+impl SignedZoneResponse {
+    pub fn from_signed_zone(zone: &SignedZone) -> Self {
+        Self {
+            domain: zone.domain.clone(),
+            record_count: zone.records.len(),
+            rrsig_count: zone.get_rrsigs().len(),
+            nsec_count: zone.get_nsec_records().len(),
+            dnskey_count: zone.get_dnskey_records().len(),
+            signed_at: zone.signed_at,
+            expires_at: zone.expires_at,
+            key_tags: zone.key_tags.clone(),
+        }
+    }
+}
+
+// =============================================================================
 // DNS API SERVER
 // =============================================================================
 
@@ -276,6 +363,9 @@ pub struct DnsApi {
     edge_registry: Option<Arc<EdgeRegistry>>,
     health_checker: Option<Arc<HealthChecker>>,
     geo_resolver: Option<Arc<GeoResolver>>,
+    // DNSSEC components (Sprint 30.4)
+    dnssec_key_manager: Option<Arc<DnssecKeyManager>>,
+    dnssec_resigner: Option<Arc<DnssecResigner>>,
 }
 
 impl DnsApi {
@@ -287,6 +377,8 @@ impl DnsApi {
             edge_registry: None,
             health_checker: None,
             geo_resolver: None,
+            dnssec_key_manager: None,
+            dnssec_resigner: None,
         }
     }
 
@@ -304,6 +396,8 @@ impl DnsApi {
             edge_registry: Some(edge_registry),
             health_checker: Some(health_checker),
             geo_resolver: Some(geo_resolver),
+            dnssec_key_manager: None,
+            dnssec_resigner: None,
         }
     }
 
@@ -320,6 +414,16 @@ impl DnsApi {
     /// Set geo resolver
     pub fn set_geo_resolver(&mut self, resolver: Arc<GeoResolver>) {
         self.geo_resolver = Some(resolver);
+    }
+
+    /// Set DNSSEC key manager
+    pub fn set_dnssec_key_manager(&mut self, manager: Arc<DnssecKeyManager>) {
+        self.dnssec_key_manager = Some(manager);
+    }
+
+    /// Set DNSSEC resigner
+    pub fn set_dnssec_resigner(&mut self, resigner: Arc<DnssecResigner>) {
+        self.dnssec_resigner = Some(resigner);
     }
 
     /// Handle an incoming HTTP request
@@ -431,6 +535,50 @@ impl DnsApi {
             (Method::GET, p) if p.starts_with("/aegis/dns/api/geo/regions/") => {
                 let region = extract_domain(p, "/aegis/dns/api/geo/regions/");
                 self.handle_get_region_nodes(&region).await
+            }
+
+            // DNSSEC management (Sprint 30.4)
+            (Method::GET, p) if p.contains("/dnssec") && !p.contains("/dnssec/") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_get_dnssec_status(&domain).await
+                } else {
+                    self.not_found()
+                }
+            }
+            (Method::POST, p) if p.ends_with("/dnssec/enable") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_enable_dnssec(&domain, req).await
+                } else {
+                    self.not_found()
+                }
+            }
+            (Method::POST, p) if p.ends_with("/dnssec/disable") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_disable_dnssec(&domain).await
+                } else {
+                    self.not_found()
+                }
+            }
+            (Method::GET, p) if p.ends_with("/dnssec/ds") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_get_ds_record(&domain).await
+                } else {
+                    self.not_found()
+                }
+            }
+            (Method::POST, p) if p.ends_with("/dnssec/resign") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_resign_zone(&domain).await
+                } else {
+                    self.not_found()
+                }
+            }
+            (Method::GET, p) if p.ends_with("/dnssec/signed") => {
+                if let Some(domain) = extract_dnssec_domain(p) {
+                    self.handle_get_signed_zone(&domain).await
+                } else {
+                    self.not_found()
+                }
             }
 
             _ => self.not_found(),
@@ -949,6 +1097,228 @@ impl DnsApi {
     }
 
     // =========================================================================
+    // DNSSEC HANDLERS (Sprint 30.4)
+    // =========================================================================
+
+    async fn handle_get_dnssec_status(&self, domain: &str) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(key_manager) = &self.dnssec_key_manager else {
+            // DNSSEC not configured, return disabled status
+            let response = DnssecStatusResponse {
+                domain: domain.to_string(),
+                enabled: false,
+                algorithm: None,
+                key_tag_zsk: None,
+                key_tag_ksk: None,
+                signed_at: None,
+                expires_at: None,
+            };
+            return json_response(StatusCode::OK, &ApiResponse::success(response));
+        };
+
+        let enabled = key_manager.is_enabled(domain).await;
+        let zsk = key_manager.get_active_zsk(domain).await;
+        let ksk = key_manager.get_active_ksk(domain).await;
+
+        // Get signed zone info if available
+        let (signed_at, expires_at) = if let Some(resigner) = &self.dnssec_resigner {
+            if let Some(signed) = resigner.get_signed_zone(domain).await {
+                (Some(signed.signed_at), Some(signed.expires_at))
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+
+        let response = DnssecStatusResponse {
+            domain: domain.to_string(),
+            enabled,
+            algorithm: zsk.as_ref().map(|k| {
+                DnssecAlgorithm::from_number(k.algorithm)
+                    .map(|a| a.name().to_string())
+                    .unwrap_or_else(|| format!("UNKNOWN({})", k.algorithm))
+            }),
+            key_tag_zsk: zsk.map(|k| k.key_tag),
+            key_tag_ksk: ksk.map(|k| k.key_tag),
+            signed_at,
+            expires_at,
+        };
+
+        json_response(StatusCode::OK, &ApiResponse::success(response))
+    }
+
+    async fn handle_enable_dnssec(&self, domain: &str, req: Request<Body>) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(key_manager) = &self.dnssec_key_manager else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "DNSSEC not configured");
+        };
+
+        // Parse request
+        let body = match parse_body::<EnableDnssecRequest>(req).await {
+            Ok(b) => b,
+            Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
+        };
+
+        // Parse algorithm
+        let algorithm = match body.algorithm.to_uppercase().as_str() {
+            "ED25519" => DnssecAlgorithm::Ed25519,
+            "ECDSAP256SHA256" | "ECDSA" => DnssecAlgorithm::EcdsaP256Sha256,
+            "RSASHA256" | "RSA" => DnssecAlgorithm::RsaSha256,
+            _ => return json_error(StatusCode::BAD_REQUEST, "Unsupported algorithm. Use ED25519, ECDSAP256SHA256, or RSASHA256"),
+        };
+
+        // Check if already enabled
+        if key_manager.is_enabled(domain).await {
+            return json_error(StatusCode::CONFLICT, "DNSSEC already enabled for this zone");
+        }
+
+        // Generate ZSK and KSK
+        if let Err(e) = key_manager.generate_key(domain, KeyFlags::Zsk, algorithm).await {
+            error!("Failed to generate ZSK: {}", e);
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate ZSK");
+        }
+
+        if let Err(e) = key_manager.generate_key(domain, KeyFlags::Ksk, algorithm).await {
+            error!("Failed to generate KSK: {}", e);
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate KSK");
+        }
+
+        // Sign the zone if resigner is available
+        if let Some(resigner) = &self.dnssec_resigner {
+            if let Err(e) = resigner.resign_zone(domain).await {
+                warn!("Failed to sign zone after enabling DNSSEC: {}", e);
+            }
+        }
+
+        // Update zone settings
+        let _ = self.zone_store.update_zone_settings(domain, None, Some(true)).await;
+
+        info!("Enabled DNSSEC for zone {} with algorithm {}", domain, body.algorithm);
+
+        // Return DS record for registrar
+        if let Some(ds) = key_manager.get_ds_record(domain).await {
+            let response = DsRecordResponse::from_ds_record(domain, &ds);
+            json_response(StatusCode::OK, &ApiResponse::success(response))
+        } else {
+            json_response(
+                StatusCode::OK,
+                &ApiResponse::<()>::success_message("DNSSEC enabled. DS record will be available shortly."),
+            )
+        }
+    }
+
+    async fn handle_disable_dnssec(&self, domain: &str) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(key_manager) = &self.dnssec_key_manager else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "DNSSEC not configured");
+        };
+
+        // Check if enabled
+        if !key_manager.is_enabled(domain).await {
+            return json_error(StatusCode::BAD_REQUEST, "DNSSEC not enabled for this zone");
+        }
+
+        // Get all keys and remove them
+        let keys = key_manager.get_keys(domain).await;
+        for key in keys {
+            if let Err(e) = key_manager.remove_key(domain, key.key_tag).await {
+                warn!("Failed to remove key {}: {}", key.key_tag, e);
+            }
+        }
+
+        // Update zone settings
+        let _ = self.zone_store.update_zone_settings(domain, None, Some(false)).await;
+
+        info!("Disabled DNSSEC for zone {}", domain);
+
+        json_response(
+            StatusCode::OK,
+            &ApiResponse::<()>::success_message("DNSSEC disabled. Remember to remove DS record from your registrar."),
+        )
+    }
+
+    async fn handle_get_ds_record(&self, domain: &str) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(key_manager) = &self.dnssec_key_manager else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "DNSSEC not configured");
+        };
+
+        // Check if DNSSEC is enabled
+        if !key_manager.is_enabled(domain).await {
+            return json_error(StatusCode::BAD_REQUEST, "DNSSEC not enabled for this zone");
+        }
+
+        // Get DS record
+        match key_manager.get_ds_record(domain).await {
+            Some(ds) => {
+                let response = DsRecordResponse::from_ds_record(domain, &ds);
+                json_response(StatusCode::OK, &ApiResponse::success(response))
+            }
+            None => json_error(StatusCode::NOT_FOUND, "No KSK found for this zone"),
+        }
+    }
+
+    async fn handle_resign_zone(&self, domain: &str) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(resigner) = &self.dnssec_resigner else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "DNSSEC signing not configured");
+        };
+
+        // Force re-sign
+        match resigner.resign_zone(domain).await {
+            Ok(signed) => {
+                info!("Re-signed zone {}", domain);
+                let response = SignedZoneResponse::from_signed_zone(&signed);
+                json_response(StatusCode::OK, &ApiResponse::success(response))
+            }
+            Err(e) => {
+                error!("Failed to re-sign zone {}: {}", domain, e);
+                json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("Failed to sign zone: {}", e))
+            }
+        }
+    }
+
+    async fn handle_get_signed_zone(&self, domain: &str) -> Response<Body> {
+        // Check if zone exists
+        if !self.zone_store.zone_exists(domain).await {
+            return json_error(StatusCode::NOT_FOUND, "Zone not found");
+        }
+
+        let Some(resigner) = &self.dnssec_resigner else {
+            return json_error(StatusCode::SERVICE_UNAVAILABLE, "DNSSEC signing not configured");
+        };
+
+        match resigner.get_signed_zone(domain).await {
+            Some(signed) => {
+                let response = SignedZoneResponse::from_signed_zone(&signed);
+                json_response(StatusCode::OK, &ApiResponse::success(response))
+            }
+            None => json_error(StatusCode::NOT_FOUND, "Zone not signed. Enable DNSSEC first."),
+        }
+    }
+
+    // =========================================================================
     // HELPERS
     // =========================================================================
 
@@ -1045,6 +1415,18 @@ fn extract_edge_id_from_health_path(path: &str) -> String {
         parts[5].to_string()
     } else {
         String::new()
+    }
+}
+
+/// Extract domain from DNSSEC paths like /aegis/dns/api/zones/example.com/dnssec
+fn extract_dnssec_domain(path: &str) -> Option<String> {
+    let parts: Vec<&str> = path.split('/').collect();
+    // /aegis/dns/api/zones/{domain}/dnssec
+    // 0("")  1    2   3     4       5       6
+    if parts.len() >= 7 && !parts[5].is_empty() {
+        Some(parts[5].to_string())
+    } else {
+        None
     }
 }
 

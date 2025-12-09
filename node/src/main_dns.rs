@@ -2,9 +2,12 @@
 //!
 //! Sprint 30.1: DNS Core Server
 //! Sprint 30.2: DNS Management API & Usage Metering
+//! Sprint 30.5: DNS over HTTPS (DoH) & DNS over TLS (DoT)
 //!
 //! This binary runs the AEGIS authoritative DNS server with:
 //! - UDP and TCP DNS on port 53
+//! - DNS over TLS (DoT) on port 853
+//! - DNS over HTTPS (DoH) on port 443
 //! - Rate limiting for DoS protection
 //! - Integration with zone store
 //! - HTTP API for zone/record management
@@ -43,8 +46,8 @@ use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
 use aegis_node::dns::{
-    AccountManager, DnsApi, DnsConfig, DnsMetering, DnsPersistence, DnsRecord, DnsServer, Zone,
-    ZoneStore,
+    AccountManager, DnsApi, DnsConfig, DnsMetering, DnsPersistence, DnsRecord, DnsServer,
+    DohConfig, DohServer, DotConfig, DotServer, Zone, ZoneStore,
 };
 
 /// AEGIS DNS Server
@@ -93,6 +96,30 @@ struct Args {
     /// Create example zone for testing
     #[arg(long)]
     example_zone: bool,
+
+    /// Enable DNS over TLS (DoT) on port 853
+    #[arg(long)]
+    enable_dot: bool,
+
+    /// DoT listen port (default: 853)
+    #[arg(long, default_value = "853")]
+    dot_port: u16,
+
+    /// Enable DNS over HTTPS (DoH)
+    #[arg(long)]
+    enable_doh: bool,
+
+    /// DoH listen port (default: 443)
+    #[arg(long, default_value = "443")]
+    doh_port: u16,
+
+    /// TLS certificate path (required for DoT/DoH)
+    #[arg(long)]
+    tls_cert: Option<String>,
+
+    /// TLS private key path (required for DoT/DoH)
+    #[arg(long)]
+    tls_key: Option<String>,
 }
 
 #[tokio::main]
@@ -208,12 +235,66 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Create DNS server
-    let server = DnsServer::new(config.clone(), zone_store)?;
+    let server = DnsServer::new(config.clone(), zone_store.clone())?;
+    let server_arc = Arc::new(server);
+
+    // Start DoT server if enabled
+    if args.enable_dot {
+        if args.tls_cert.is_none() || args.tls_key.is_none() {
+            error!("DoT requires --tls-cert and --tls-key options");
+            std::process::exit(1);
+        }
+
+        let dot_config = DotConfig {
+            enabled: true,
+            addr: format!("{}:{}", args.bind, args.dot_port).parse()?,
+            cert_path: args.tls_cert.clone(),
+            key_path: args.tls_key.clone(),
+        };
+
+        let dot_server = DotServer::new(dot_config.clone(), server_arc.clone())?;
+        info!("Starting DoT server on {}", dot_config.addr);
+        tokio::spawn(async move {
+            if let Err(e) = dot_server.run().await {
+                error!("DoT server error: {}", e);
+            }
+        });
+    }
+
+    // Start DoH server if enabled
+    if args.enable_doh {
+        if args.tls_cert.is_none() || args.tls_key.is_none() {
+            error!("DoH requires --tls-cert and --tls-key options");
+            std::process::exit(1);
+        }
+
+        let doh_config = DohConfig {
+            enabled: true,
+            addr: format!("{}:{}", args.bind, args.doh_port).parse()?,
+            cert_path: Some(args.tls_cert.clone().unwrap()),
+            key_path: Some(args.tls_key.clone().unwrap()),
+            path: "/dns-query".to_string(),
+        };
+
+        let doh_server = DohServer::new(doh_config.clone(), server_arc.clone());
+        info!("Starting DoH server on {}", doh_config.addr);
+        tokio::spawn(async move {
+            if let Err(e) = doh_server.run().await {
+                error!("DoH server error: {}", e);
+            }
+        });
+    }
 
     info!("DNS server configuration:");
     info!("  UDP: {}", config.udp_addr);
     info!("  TCP: {}", config.tcp_addr);
     info!("  API: {}", config.api.addr);
+    if args.enable_dot {
+        info!("  DoT: {}:{}", args.bind, args.dot_port);
+    }
+    if args.enable_doh {
+        info!("  DoH: {}:{}/dns-query", args.bind, args.doh_port);
+    }
     info!(
         "  Rate limit: {} qps (burst: {})",
         config.rate_limit.queries_per_second, config.rate_limit.burst_size
@@ -221,7 +302,7 @@ async fn main() -> anyhow::Result<()> {
     info!("  Persistence: {}", if persistence.is_some() { "enabled" } else { "disabled" });
 
     // Run DNS server (blocks)
-    if let Err(e) = server.run().await {
+    if let Err(e) = server_arc.run().await {
         error!("DNS server error: {}", e);
         std::process::exit(1);
     }

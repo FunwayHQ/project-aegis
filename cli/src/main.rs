@@ -75,6 +75,12 @@ enum Commands {
         #[command(subcommand)]
         action: ConfigCommands,
     },
+
+    /// DNS zone and record management
+    Dns {
+        #[command(subcommand)]
+        action: commands::dns::DnsCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -150,6 +156,9 @@ async fn main() -> Result<()> {
             ConfigCommands::SetCluster { cluster } => config::set_cluster(&cluster)?,
             ConfigCommands::Show => config::show()?,
         },
+        Commands::Dns { action } => {
+            commands::dns::execute(action).await?;
+        }
     }
 
     Ok(())

@@ -92,6 +92,12 @@ hickory-server = { version = "0.25", features = ["dnssec-ring"] }
 hickory-proto = "0.25"
 hickory-resolver = "0.25"
 
+# DNS over TLS / DNS over HTTPS (Sprint 30.5)
+rustls = "0.23"
+tokio-rustls = "0.26"
+rustls-pemfile = "2.1"
+hyper-rustls = { version = "0.27", features = ["http1", "http2", "tls12"] }
+
 # GeoIP Database for geo-aware DNS (Sprint 30.3)
 # Optional: Only needed if using MaxMind GeoLite2 database
 maxminddb = { version = "0.24", optional = true }

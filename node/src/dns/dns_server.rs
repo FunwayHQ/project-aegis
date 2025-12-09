@@ -464,6 +464,43 @@ impl DnsServer {
     pub fn config(&self) -> &DnsConfig {
         &self.config
     }
+
+    /// Handle a raw DNS query and return a raw DNS response
+    ///
+    /// This method is used by DoT and DoH servers to process DNS queries.
+    pub async fn handle_query_bytes(&self, query_bytes: &[u8], client_ip: IpAddr) -> Result<Vec<u8>, DnsError> {
+        // Parse query
+        let query = Message::from_vec(query_bytes)
+            .map_err(|e| DnsError::ServerError(format!("Failed to parse query: {}", e)))?;
+
+        // Build response
+        let response = Self::build_response(&query, &self.zone_store, &self.config, client_ip).await;
+
+        // Serialize response
+        response
+            .to_vec()
+            .map_err(|e| DnsError::ServerError(format!("Failed to serialize response: {}", e)))
+    }
+}
+
+// Implement DnsHandler trait for DoT server
+#[async_trait::async_trait]
+impl crate::dns::dot_server::DnsHandler for DnsServer {
+    async fn handle_query(&self, query: &[u8], client_ip: IpAddr) -> Result<Vec<u8>, crate::dns::dot_server::DotError> {
+        self.handle_query_bytes(query, client_ip)
+            .await
+            .map_err(|e| crate::dns::dot_server::DotError::HandlerError(e.to_string()))
+    }
+}
+
+// Implement DnsHandler trait for DoH server
+#[async_trait::async_trait]
+impl crate::dns::doh_server::DnsHandler for DnsServer {
+    async fn handle_query(&self, query: &[u8], client_ip: IpAddr) -> Result<Vec<u8>, crate::dns::doh_server::DohError> {
+        self.handle_query_bytes(query, client_ip)
+            .await
+            .map_err(|e| crate::dns::doh_server::DohError::HandlerError(e.to_string()))
+    }
 }
 
 /// Convert AEGIS record type to Hickory record type
