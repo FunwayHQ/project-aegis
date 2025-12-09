@@ -1,0 +1,39 @@
+# AEGIS Decentralized Edge Network - robots.txt
+# https://aegis.funwayinteractive.com
+
+# Allow all crawlers to access the site
+User-agent: *
+Allow: /
+
+# Allow Google specific bots
+User-agent: Googlebot
+Allow: /
+
+User-agent: Googlebot-Image
+Allow: /
+
+# Allow Bing
+User-agent: Bingbot
+Allow: /
+
+# Allow social media crawlers for rich previews
+User-agent: Twitterbot
+Allow: /
+
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /
+
+# Disallow common non-content paths (if they exist)
+Disallow: /admin/
+Disallow: /private/
+Disallow: /.git/
+Disallow: /*.json$
+
+# Sitemap location
+Sitemap: https://aegis.funwayinteractive.com/sitemap.xml
+
+# Host directive for preferred domain
+Host: https://aegis.funwayinteractive.com
