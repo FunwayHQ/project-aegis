@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AEGIS - Decentralized Edge Network | Web3 CDN</title>
-    <meta name="description" content="AEGIS is a blockchain-powered global edge network providing decentralized CDN, DDoS protection, and edge compute as an alternative to centralized providers.">
+    <meta name="description" content="AEGIS is a blockchain-powered global edge network providing decentralized CDN, authoritative DNS with DNSSEC and DoH/DoT, DDoS protection, and edge compute as an alternative to centralized providers.">
 
     <!-- Canonical URL -->
     <link rel="canonical" href="https://aegis.funwayinteractive.com/" />
@@ -24,7 +24,7 @@
     <meta name="twitter:image" content="https://aegis.funwayinteractive.com/images/twitter-card.png">
 
     <!-- Additional SEO Meta Tags -->
-    <meta name="keywords" content="decentralized CDN, Web3, blockchain, edge network, DDoS protection, IPFS, Solana, edge compute, censorship resistant">
+    <meta name="keywords" content="decentralized CDN, Web3, blockchain, edge network, DDoS protection, IPFS, Solana, edge compute, censorship resistant, decentralized DNS, DNSSEC, DNS over HTTPS, DoH, DoT, authoritative DNS">
     <meta name="author" content="AEGIS">
     <meta name="robots" content="index, follow">
     <meta name="theme-color" content="#1EB5B0">
@@ -37,7 +37,7 @@
         "name": "AEGIS",
         "url": "https://aegis.funwayinteractive.com",
         "logo": "https://aegis.funwayinteractive.com/images/AEGIS-logo.svg",
-        "description": "AEGIS is a blockchain-powered global edge network providing decentralized CDN, DDoS protection, and edge compute.",
+        "description": "AEGIS is a blockchain-powered global edge network providing decentralized CDN, authoritative DNS with DNSSEC and DoH/DoT, DDoS protection, and edge compute.",
         "sameAs": [
             "https://github.com/FunwayHQ/project-aegis"
         ]
@@ -111,6 +111,7 @@
                 <div class="hidden md:flex space-x-8">
                     <a href="#features" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Features</a>
                     <a href="#cdn" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">CDN</a>
+                    <a href="#dns" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">DNS</a>
                     <a href="#technology" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Technology</a>
                     <a href="#tokenomics" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Tokenomics</a>
                     <a href="#roadmap" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Roadmap</a>
@@ -139,6 +140,7 @@
             <div class="px-4 pt-2 pb-4 space-y-2">
                 <a href="#features" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Features</a>
                 <a href="#cdn" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">CDN</a>
+                <a href="#dns" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">DNS</a>
                 <a href="#technology" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Technology</a>
                 <a href="#tokenomics" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Tokenomics</a>
                 <a href="#roadmap" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Roadmap</a>
@@ -423,8 +425,198 @@
         </div>
     </section>
 
+    <!-- DNS Section -->
+    <section id="dns" class="py-20 px-4">
+        <div class="max-w-7xl mx-auto">
+            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Decentralized DNS</h2>
+            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
+                Authoritative DNS with DNSSEC, DoH/DoT support, and intelligent geo-routing
+            </p>
+
+            <!-- DNS Features Grid -->
+            <div class="grid md:grid-cols-3 gap-8 mb-16">
+                <!-- Authoritative DNS -->
+                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-teal/50 transition-all card-glow">
+                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-4 text-white">Authoritative DNS</h3>
+                    <p class="text-gray-300 leading-relaxed mb-4">
+                        Full authoritative DNS server built on Hickory DNS (Rust). Support for A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, and SRV records.
+                    </p>
+                    <div class="text-sm text-aegis-teal">
+                        Just point your nameservers to AEGIS and we handle the rest
+                    </div>
+                </div>
+
+                <!-- DNSSEC -->
+                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-cyan/20 hover:border-aegis-cyan/50 transition-all card-glow">
+                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-cyan to-aegis-lightblue rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-4 text-white">DNSSEC Signing</h3>
+                    <p class="text-gray-300 leading-relaxed mb-4">
+                        Cryptographic signatures on all DNS responses using Ed25519. Automatic key generation, RRSIG records, and DS record export for registrars.
+                    </p>
+                    <div class="text-sm text-aegis-cyan">
+                        One-click DNSSEC enablement with automatic re-signing
+                    </div>
+                </div>
+
+                <!-- DNS over HTTPS/TLS -->
+                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-lightblue/20 hover:border-aegis-lightblue/50 transition-all card-glow">
+                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-lightblue to-aegis-purple rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
+                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <h3 class="text-2xl font-bold mb-4 text-white">Encrypted DNS</h3>
+                    <p class="text-gray-300 leading-relaxed mb-4">
+                        DNS over HTTPS (DoH) and DNS over TLS (DoT) support for privacy. ISPs and attackers cannot snoop on your DNS queries.
+                    </p>
+                    <div class="text-sm text-aegis-lightblue">
+                        RFC 8484 compliant DoH endpoint at /dns-query
+                    </div>
+                </div>
+            </div>
+
+            <!-- Geo-Aware Resolution -->
+            <div class="grid md:grid-cols-2 gap-8 mb-16">
+                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-teal/30 p-8">
+                    <h3 class="text-3xl font-bold mb-6 flex items-center">
+                        <span class="w-3 h-3 bg-aegis-teal rounded-full mr-3"></span>
+                        Intelligent Geo-Routing
+                    </h3>
+                    <p class="text-gray-400 mb-6 leading-relaxed">
+                        DNS queries automatically return the IP of the nearest healthy edge node based on client location
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">GeoIP Resolution</div>
+                                <div class="text-sm text-gray-400">MaxMind GeoLite2 database for accurate client location detection</div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">Health-Aware Routing</div>
+                                <div class="text-sm text-gray-400">Automatic failover to healthy nodes, unhealthy nodes excluded from responses</div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">Low Latency</div>
+                                <div class="text-sm text-gray-400">Haversine distance calculation returns the 3 nearest edge nodes</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DNS Management API -->
+                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-cyan/30 p-8">
+                    <h3 class="text-3xl font-bold mb-6 flex items-center">
+                        <span class="w-3 h-3 bg-aegis-cyan rounded-full mr-3"></span>
+                        Full Management API
+                    </h3>
+                    <p class="text-gray-400 mb-6 leading-relaxed">
+                        Complete REST API for DNS zone and record management with TypeScript SDK
+                    </p>
+                    <div class="space-y-4">
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">Zone Management</div>
+                                <div class="text-sm text-gray-400">Create, update, delete zones with SQLite persistence</div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">Record CRUD</div>
+                                <div class="text-sm text-gray-400">Full record management with TTL and priority support</div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
+                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
+                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                                </svg>
+                            </div>
+                            <div>
+                                <div class="font-bold text-white mb-1">Analytics</div>
+                                <div class="text-sm text-gray-400">Query statistics, per-zone metrics, and traffic insights</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- DNS CLI Example -->
+            <div class="max-w-3xl mx-auto">
+                <div class="bg-darkGrey rounded-2xl border border-aegis-teal/30 overflow-hidden">
+                    <div class="flex items-center px-4 py-3 bg-darkGrey/80 border-b border-aegis-teal/20">
+                        <div class="flex space-x-2">
+                            <div class="w-3 h-3 bg-red-500 rounded-full"></div>
+                            <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                            <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                        </div>
+                        <span class="ml-4 text-sm text-gray-400">Terminal - DNS Management</span>
+                    </div>
+                    <div class="p-6 font-mono text-sm">
+                        <div class="text-gray-400"># Create a new DNS zone</div>
+                        <div class="text-aegis-cyan mb-3">$ aegis-cli dns create-zone --domain example.com --proxied</div>
+
+                        <div class="text-gray-500 mb-1">Zone created: example.com</div>
+                        <div class="text-gray-500 mb-3">Nameservers: ns1.aegis.network, ns2.aegis.network</div>
+
+                        <div class="text-gray-400"># Add an A record</div>
+                        <div class="text-aegis-cyan mb-3">$ aegis-cli dns add-record -d example.com -n www -t A -v 192.168.1.1</div>
+
+                        <div class="text-gray-400"># Enable DNSSEC</div>
+                        <div class="text-aegis-cyan mb-3">$ aegis-cli dns enable-dnssec --domain example.com</div>
+
+                        <div class="text-gray-500 mb-1">DNSSEC enabled!</div>
+                        <div class="text-aegis-teal">DS Record: example.com. IN DS 12345 15 2 abc123...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Technology Stack Section -->
-    <section id="technology" class="py-20 px-4">
+    <section id="technology" class="py-20 px-4 bg-darkGrey/30">
         <div class="max-w-7xl mx-auto">
             <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Technology Stack</h2>
             <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
