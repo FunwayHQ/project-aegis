@@ -595,6 +595,17 @@ aegis-cdn list
     - Teams.test.tsx: 19 tests (CRUD, invitations, role management)
     - Billing.test.tsx: 25 tests (usage display, plans, billing history)
   - Light theme design consistent with AEGIS branding
+- ✅ **Sprint 19.7:** Website DNS Section Update
+  - Added comprehensive DNS section to landing page (between CDN and Technology)
+  - **Features showcased:**
+    - Authoritative DNS (Hickory DNS, all record types)
+    - DNSSEC signing (Ed25519, auto key generation, DS record export)
+    - Encrypted DNS (DoH/DoT support, RFC 8484 compliant)
+    - Intelligent geo-routing (GeoIP, health-aware, Haversine distance)
+    - Full management API (zone/record CRUD, TypeScript SDK)
+  - CLI code example for DNS operations
+  - Updated navigation (desktop + mobile) with DNS link
+  - Updated SEO meta tags and structured data with DNS keywords
 
 ### Phase 4: Advanced Security & Mainnet (Sprints 19-30)
 
