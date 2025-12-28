@@ -1,0 +1,37 @@
+# Private Peering Partner 1
+name: private1
+description: "Large Content Provider - Private Peering"
+
+# BGP session details
+neighbor_ip: 203.0.113.1
+neighbor_as: 65003
+peer_type: private
+
+# Strong authentication for private peering
+authentication:
+  enabled: true
+  password: "CHANGE_THIS_SECURE_PASSWORD_2"
+
+# Direct interconnect (no multihop)
+multihop: 0
+
+# Traffic engineering
+local_pref: 300        # Highest preference for private peering
+prepend_count: 0
+
+# Route limits
+import_limit: 10000
+export_limit: 10
+
+# BFD for fast failover
+bfd_enabled: true
+
+# Peer status
+enabled: true
+
+# Documentation
+metadata:
+  contact: "peering@contentprovider.example.com"
+  contract: "AEGIS-PRIVATE-2024-001"
+  bandwidth: "100 Gbps"
+  location: "Cross-connect in Equinix DC5"

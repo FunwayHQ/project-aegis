@@ -1,0 +1,38 @@
+# Transit Provider 1 - Primary upstream
+name: transit1
+description: "Primary Transit Provider"
+
+# BGP session details
+neighbor_ip: 192.0.2.1
+neighbor_as: 65001
+peer_type: transit
+
+# Authentication (required for production)
+authentication:
+  enabled: true
+  password: "CHANGE_THIS_SECURE_PASSWORD_1"
+
+# eBGP multihop (if not directly connected)
+multihop: 2
+
+# Traffic engineering
+local_pref: 100        # Default preference
+prepend_count: 0       # No AS path prepending
+
+# Route limits
+import_limit: 100000
+export_limit: 10
+
+# Enable BFD fast failover
+bfd_enabled: true
+
+# Peer status
+enabled: true
+
+# Documentation
+metadata:
+  contact: "noc@transit1.example.com"
+  phone: "+1-555-0100"
+  contract: "AEGIS-TRANSIT-2024-001"
+  bandwidth: "10 Gbps"
+  location: "Equinix NY5"

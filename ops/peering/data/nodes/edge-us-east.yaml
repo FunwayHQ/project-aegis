@@ -1,0 +1,35 @@
+# AEGIS Edge Node - US East (Virginia)
+node_name: edge-us-east
+router_id: 10.0.1.1
+location: "US East (Ashburn, Virginia)"
+
+# Network interfaces
+interfaces:
+  primary: eth0
+  loopback: lo
+
+# Anycast IPs assigned to this node's loopback
+anycast_ips:
+  v4: 203.0.113.1/32
+  v6: 2001:db8::1/128
+
+# BGP peers for this location
+peers:
+  - transit1
+  - ixp1
+  - private1
+
+# Node-specific overrides for peers
+# These settings override the peer's default configuration
+overrides:
+  transit1:
+    local_pref: 150  # Slightly prefer transit at this location
+  private1:
+    local_pref: 400  # Strongly prefer private peering here
+
+# Node metadata for monitoring and documentation
+metadata:
+  datacenter: "Equinix DC5"
+  rack: "A15"
+  deployed_at: "2024-01-15"
+  contact: "ops@aegis.network"

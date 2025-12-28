@@ -1,0 +1,35 @@
+# Internet Exchange Point 1
+name: ixp1
+description: "DE-CIX New York Route Server"
+
+# BGP session details
+neighbor_ip: 198.51.100.1
+neighbor_as: 65002
+peer_type: ixp
+
+# IXP route servers typically don't need authentication
+authentication:
+  enabled: false
+
+# Route server client (receive routes from RS)
+rs_client: true
+
+# Traffic engineering
+local_pref: 200        # Prefer IXP over transit
+prepend_count: 0
+
+# Route limits (IXP route servers send many routes)
+import_limit: 500000
+export_limit: 10
+
+# BFD may not be supported by all IXPs
+bfd_enabled: false
+
+# Peer status
+enabled: true
+
+# Documentation
+metadata:
+  contact: "noc@de-cix.net"
+  peering_db: "https://www.peeringdb.com/ix/123"
+  location: "165 Halsey St, Newark, NJ"

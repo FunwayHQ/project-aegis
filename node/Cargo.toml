@@ -98,6 +98,10 @@ tokio-rustls = "0.26"
 rustls-pemfile = "2.1"
 hyper-rustls = { version = "0.27", features = ["http1", "http2", "tls12"] }
 
+# ACME/Let's Encrypt certificate automation
+instant-acme = "0.8"  # ACME protocol client (RFC 8555)
+rcgen = "0.13"  # X.509 certificate generation for CSR
+
 # GeoIP Database for geo-aware DNS (Sprint 30.3)
 # Optional: Only needed if using MaxMind GeoLite2 database
 maxminddb = { version = "0.24", optional = true }

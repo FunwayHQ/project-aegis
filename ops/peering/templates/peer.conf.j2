@@ -1,0 +1,46 @@
+{# BGP Peer Configuration Template #}
+{# Renders a single BGP peer protocol block #}
+
+# Peer: {{ peer.name }} ({{ peer.peer_type | default('private') }})
+# {{ peer.description | default('No description') }}
+{% if peer.metadata %}
+# Contact: {{ peer.metadata.contact | default('N/A') }}
+# Bandwidth: {{ peer.metadata.bandwidth | default('N/A') }}
+{% endif %}
+protocol bgp {{ peer.name }} from bgp_peer {
+    description "{{ peer.description | default(peer.name) }}";
+    neighbor {{ peer.neighbor_ip }} as {{ peer.neighbor_as }};
+{% if peer.authentication and peer.authentication.enabled %}
+    password "{{ peer.authentication.password }}";
+{% endif %}
+{% if peer.multihop %}
+    multihop {{ peer.multihop }};
+{% endif %}
+{% if peer.local_pref %}
+    default bgp_local_pref {{ peer.local_pref }};
+{% endif %}
+{% if peer.peer_type == 'ixp' and peer.rs_client | default(true) %}
+    rs client;
+{% endif %}
+{% if peer.passive | default(false) %}
+    passive on;
+{% endif %}
+{% if peer.bfd_enabled | default(global.bfd.enabled | default(true)) %}
+    bfd on;
+{% endif %}
+{% if peer.import_limit %}
+    ipv4 {
+        import limit {{ peer.import_limit }} action restart;
+    };
+{% endif %}
+{% if peer.prepend_count and peer.prepend_count > 0 %}
+    ipv4 {
+        export filter {
+            {% for i in range(peer.prepend_count) %}
+            bgp_path.prepend(AEGIS_AS);
+            {% endfor %}
+            accept;
+        };
+    };
+{% endif %}
+}

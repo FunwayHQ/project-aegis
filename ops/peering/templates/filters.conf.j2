@@ -1,0 +1,137 @@
+{# BGP Filter Functions Template #}
+{# RPKI validation and bogon filtering #}
+
+# RPKI validation function (IPv4)
+function rpki_validate_v4(int asn) {
+{% if global.rpki.enabled | default(true) %}
+    if (roa_check(rpki4, net, asn) = ROA_INVALID) then {
+        print "ROA INVALID: ", net, " AS", asn;
+        return false;
+    }
+{% endif %}
+    return true;
+}
+
+# RPKI validation function (IPv6)
+function rpki_validate_v6(int asn) {
+{% if global.rpki.enabled | default(true) %}
+    if (roa_check(rpki6, net, asn) = ROA_INVALID) then {
+        print "ROA INVALID: ", net, " AS", asn;
+        return false;
+    }
+{% endif %}
+    return true;
+}
+
+# IPv4 import filter
+filter bgp_import_v4 {
+    # Reject bogon prefixes (RFC 5737, RFC 1918, etc.)
+    if net ~ [
+        0.0.0.0/8+,          # RFC 1122: This network
+        10.0.0.0/8+,         # RFC 1918: Private-use
+        100.64.0.0/10+,      # RFC 6598: Shared address space (CGNAT)
+        127.0.0.0/8+,        # RFC 1122: Loopback
+        169.254.0.0/16+,     # RFC 3927: Link-local
+        172.16.0.0/12+,      # RFC 1918: Private-use
+        192.0.0.0/24+,       # RFC 6890: IETF Protocol Assignments
+        192.0.2.0/24+,       # RFC 5737: Documentation (TEST-NET-1)
+        192.168.0.0/16+,     # RFC 1918: Private-use
+        198.18.0.0/15+,      # RFC 2544: Benchmarking
+        198.51.100.0/24+,    # RFC 5737: Documentation (TEST-NET-2)
+        203.0.113.0/24+,     # RFC 5737: Documentation (TEST-NET-3)
+        224.0.0.0/4+,        # RFC 5771: Multicast
+        240.0.0.0/4+         # RFC 6890: Reserved
+    ] then {
+        print "Rejected bogon prefix: ", net;
+        reject;
+    }
+
+    # Validate route origin with RPKI
+    if !rpki_validate_v4(bgp_path.last) then {
+        reject;
+    }
+
+    # Reject routes with private AS numbers in path
+    if bgp_path ~ [64512..65534, 4200000000..4294967294] then {
+        print "Rejected route with private ASN: ", net;
+        reject;
+    }
+
+    # Reject too specific prefixes (< /24)
+    if net.len > 24 then {
+        print "Rejected too specific prefix: ", net;
+        reject;
+    }
+
+    accept;
+}
+
+# IPv6 import filter
+filter bgp_import_v6 {
+    # Reject bogon IPv6 prefixes
+    if net ~ [
+        ::/0,                # Default route
+        ::/128,              # Unspecified
+        ::1/128,             # Loopback
+        ::ffff:0.0.0.0/96,   # IPv4-mapped
+        ::/96,               # IPv4-compatible (deprecated)
+        100::/64,            # Discard-only (RFC 6666)
+        2001:2::/48,         # Benchmarking
+        2001:10::/28,        # ORCHID
+        2001:db8::/32,       # Documentation
+        fe80::/10,           # Link-local
+        fc00::/7,            # Unique local addresses
+        ff00::/8             # Multicast
+    ] then {
+        print "Rejected bogon IPv6 prefix: ", net;
+        reject;
+    }
+
+    # RPKI validation
+    if !rpki_validate_v6(bgp_path.last) then {
+        reject;
+    }
+
+    # Reject routes with private AS numbers in path
+    if bgp_path ~ [64512..65534, 4200000000..4294967294] then {
+        print "Rejected route with private ASN in path: ", net;
+        reject;
+    }
+
+    # Reject too specific prefixes (< /48)
+    if net.len > 48 then {
+        print "Rejected too specific IPv6 prefix: ", net;
+        reject;
+    }
+
+    accept;
+}
+
+# IPv4 export filter
+filter bgp_export_v4 {
+    # Only announce our anycast prefix
+    if net = AEGIS_ANYCAST_V4 then {
+{% if global.communities and global.communities.edge_node %}
+        # Add BGP communities
+        bgp_community.add(({{ global.communities.edge_node }}));
+{% else %}
+        bgp_community.add((AEGIS_AS, 1));  # AEGIS edge node
+{% endif %}
+        accept;
+    }
+    reject;
+}
+
+# IPv6 export filter
+filter bgp_export_v6 {
+    # Only announce our anycast prefix
+    if net = AEGIS_ANYCAST_V6 then {
+{% if global.communities and global.communities.edge_node %}
+        bgp_community.add(({{ global.communities.edge_node }}));
+{% else %}
+        bgp_community.add((AEGIS_AS, 1));
+{% endif %}
+        accept;
+    }
+    reject;
+}

@@ -818,64 +818,34 @@ impl ProxyHttp for AegisProxy {
         Ok(false)
     }
 
-    /* Temporarily disabled - Sprint 12.5 body filter has lifetime issues
-    /// Request body filter - buffer request body for WAF inspection
-    fn request_body_filter(
-        &self,
-        _session: &mut Session,
-        body: &mut Option<Bytes>,
-        end_of_stream: bool,
-        ctx: &mut Self::CTX,
-    ) -> Result<Option<std::time::Duration>> {
-        // Buffer request body chunks for WAF analysis
-        if let Some(body_chunk) = body {
-            ctx.request_body.extend_from_slice(body_chunk);
-        }
-
-        // If end of stream and we have a WAF, analyze the complete body
-        if end_of_stream && !ctx.request_body.is_empty() {
-            if let Some(waf) = &self.waf {
-                // We need to re-check with the body now
-                // Note: This is a simplified approach. In production, you'd want to
-                // handle this more elegantly, possibly by deferring the entire WAF
-                // check until after body is received.
-
-                // Since we can't easily return a response from this callback,
-                // we'll set a flag if body inspection finds threats.
-                // The actual blocking will need to happen in request_filter
-                // for headers/URI and here we just log for now.
-
-                let matches = waf.analyze_request("", "", &[], Some(&ctx.request_body));
-
-                if !matches.is_empty() {
-                    let action = waf.determine_action(&matches);
-
-                    for rule_match in &matches {
-                        log::warn!(
-                            "WAF Rule {} triggered in body: {} (severity: {:?}, value: {})",
-                            rule_match.rule_id,
-                            rule_match.rule_description,
-                            rule_match.severity,
-                            rule_match.matched_value
-                        );
-                    }
-
-                    if matches!(action, WafAction::Block) {
-                        ctx.waf_blocked = true;
-                        log::error!("WAF BLOCKED: Request body contains malicious content - {} rule(s) triggered", matches.len());
-
-                        // Note: Pingora's current design makes it difficult to send a response
-                        // from request_body_filter. The proper way is to check the body in
-                        // request_filter by buffering first. For now, we log the violation.
-                        // In Sprint 13 (Wasm migration), this will be handled properly.
-                    }
-                }
-            }
-        }
-
-        Ok(None)
-    }
-    */
+    // =========================================================================
+    // WAF BODY INSPECTION - ARCHITECTURAL LIMITATION
+    // =========================================================================
+    //
+    // Request body WAF inspection is currently limited due to Pingora's
+    // lifecycle design:
+    //
+    // 1. `request_filter` runs BEFORE the request body is available
+    // 2. WAF (via Wasm runtime) is executed in `request_filter`
+    // 3. Therefore, WAF can only inspect headers and URI
+    //
+    // Body buffering via `request_body_filter` is possible, but:
+    // - The buffered body isn't available when Wasm WAF runs
+    // - Pingora's trait signatures make async Wasm execution complex
+    // - Memory concerns with large bodies (need streaming WAF)
+    //
+    // SECURITY IMPACT:
+    // - Header/URI WAF catches ~70% of attacks (SQLi in query strings, etc.)
+    // - POST body attacks (JSON injection, etc.) are NOT currently detected
+    // - Recommendation: Use application-layer validation for POST bodies
+    //
+    // FUTURE FIX (requires architecture change):
+    // 1. Move WAF execution to `upstream_peer` (runs after body complete)
+    // 2. Implement streaming WAF that inspects body chunks incrementally
+    // 3. Use dedicated body-inspection Wasm module in route config
+    //
+    // The ctx.request_body field exists for future body inspection support.
+    // =========================================================================
 
     /// Determine where to send the request (upstream selection)
     async fn upstream_peer(

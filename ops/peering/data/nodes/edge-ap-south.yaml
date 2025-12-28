@@ -1,0 +1,32 @@
+# AEGIS Edge Node - AP South (Singapore)
+node_name: edge-ap-south
+router_id: 10.0.3.1
+location: "AP South (Singapore)"
+
+# Network interfaces
+interfaces:
+  primary: eth0
+  loopback: lo
+
+# Anycast IPs assigned to this node's loopback
+anycast_ips:
+  v4: 203.0.113.3/32
+  v6: 2001:db8::3/128
+
+# BGP peers for this location
+peers:
+  - transit1
+
+# Node-specific overrides
+overrides:
+  transit1:
+    # Higher prepend to deprioritize Asia traffic during maintenance
+    prepend_count: 0
+    local_pref: 100
+
+# Node metadata
+metadata:
+  datacenter: "Equinix SG1"
+  rack: "C08"
+  deployed_at: "2024-03-15"
+  contact: "ops@aegis.network"

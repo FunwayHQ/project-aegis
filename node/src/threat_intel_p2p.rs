@@ -8,7 +8,7 @@ use libp2p::{
     kad::{self, store::MemoryStore, Mode as KadMode},
     mdns,
     noise,
-    swarm::{NetworkBehaviour, SwarmEvent},
+    swarm::{behaviour::toggle::Toggle, NetworkBehaviour, SwarmEvent},
     tcp, yamux, Multiaddr, PeerId, Swarm, SwarmBuilder,
 };
 use serde::{Deserialize, Serialize};
@@ -489,7 +489,8 @@ impl ThreatIntelligence {
 #[derive(NetworkBehaviour)]
 pub struct ThreatIntelBehaviour {
     pub gossipsub: gossipsub::Behaviour,
-    pub mdns: mdns::tokio::Behaviour,
+    /// mDNS for local peer discovery - wrapped in Toggle for production disabling (Y6.10)
+    pub mdns: Toggle<mdns::tokio::Behaviour>,
     pub kad: kad::Behaviour<MemoryStore>,
     pub identify: identify::Behaviour,
 }
@@ -1444,6 +1445,7 @@ impl ThreatIntelP2P {
 
         // Clone config for use in closure
         let bootstrap_peers = config.bootstrap_peers.clone();
+        let enable_mdns = config.enable_mdns;
 
         // Build swarm using the new builder API
         let swarm = SwarmBuilder::with_existing_identity(keypair.clone())
@@ -1477,9 +1479,18 @@ impl ThreatIntelP2P {
                 gossipsub.subscribe(&topic)
                     .expect("Failed to subscribe to topic");
 
-                // Create mDNS behaviour for local peer discovery
-                let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
-                    .expect("Failed to create mDNS behaviour");
+                // Y6.10: Conditionally create mDNS behaviour for local peer discovery
+                // In production builds, mDNS should be disabled to prevent local network attacks
+                let mdns = if enable_mdns {
+                    info!("mDNS enabled for local peer discovery (dev mode)");
+                    Toggle::from(Some(
+                        mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
+                            .expect("Failed to create mDNS behaviour")
+                    ))
+                } else {
+                    info!("mDNS disabled (production security hardening Y6.10)");
+                    Toggle::from(None)
+                };
 
                 // Create Kademlia DHT for global peer discovery
                 let store = MemoryStore::new(peer_id);
@@ -1540,6 +1551,7 @@ impl ThreatIntelP2P {
 
         // Clone config for use in closure
         let bootstrap_peers = config.bootstrap_peers.clone();
+        let enable_mdns = config.enable_mdns;
 
         // Build swarm using the new builder API
         let swarm = SwarmBuilder::with_existing_identity(keypair.clone())
@@ -1573,9 +1585,18 @@ impl ThreatIntelP2P {
                 gossipsub.subscribe(&topic)
                     .expect("Failed to subscribe to topic");
 
-                // Create mDNS behaviour for local peer discovery
-                let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
-                    .expect("Failed to create mDNS behaviour");
+                // Y6.10: Conditionally create mDNS behaviour for local peer discovery
+                // In production builds, mDNS should be disabled to prevent local network attacks
+                let mdns = if enable_mdns {
+                    info!("mDNS enabled for local peer discovery (dev mode)");
+                    Toggle::from(Some(
+                        mdns::tokio::Behaviour::new(mdns::Config::default(), peer_id)
+                            .expect("Failed to create mDNS behaviour")
+                    ))
+                } else {
+                    info!("mDNS disabled (production security hardening Y6.10)");
+                    Toggle::from(None)
+                };
 
                 // Create Kademlia DHT for global peer discovery
                 let store = MemoryStore::new(peer_id);

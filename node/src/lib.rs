@@ -75,3 +75,6 @@ pub mod ddos_api;
 
 // Sprint 30: DNS Infrastructure
 pub mod dns;
+
+// Sprint 30.5: ACME/Let's Encrypt Certificate Automation
+pub mod acme;

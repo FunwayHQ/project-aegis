@@ -35,6 +35,15 @@ const MAX_MODULE_SIZE: usize = 10 * 1024 * 1024;
 /// IPFS download timeout (30 seconds)
 const IPFS_TIMEOUT_SECS: u64 = 30;
 
+/// Default maximum cache size (1GB)
+const DEFAULT_MAX_CACHE_SIZE: u64 = 1024 * 1024 * 1024;
+
+/// Minimum cache size (100MB) - cannot be set lower
+const MIN_CACHE_SIZE: u64 = 100 * 1024 * 1024;
+
+/// Target cache size after eviction (80% of max to avoid constant eviction)
+const CACHE_EVICTION_TARGET_PERCENT: u64 = 80;
+
 /// Default IPFS API endpoint (local node)
 const DEFAULT_IPFS_API: &str = "http://127.0.0.1:5001";
 
@@ -317,6 +326,26 @@ impl BandwidthTracker {
     }
 }
 
+/// Get configured max cache size from environment or use default
+fn get_max_cache_size() -> u64 {
+    std::env::var("AEGIS_IPFS_CACHE_SIZE_MB")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|mb| (mb * 1024 * 1024).max(MIN_CACHE_SIZE))
+        .unwrap_or(DEFAULT_MAX_CACHE_SIZE)
+}
+
+/// Cache entry metadata for LRU tracking
+#[derive(Debug, Clone)]
+struct CacheEntry {
+    /// CID of the cached module
+    cid: String,
+    /// Size in bytes
+    size: u64,
+    /// Last access time (for LRU eviction)
+    last_access: std::time::SystemTime,
+}
+
 /// IPFS client for Wasm module distribution
 pub struct IpfsClient {
     /// IPFS HTTP API client
@@ -330,6 +359,9 @@ pub struct IpfsClient {
 
     /// SECURITY FIX (X4.12): Bandwidth tracker for rate limiting
     bandwidth_tracker: Arc<RwLock<BandwidthTracker>>,
+
+    /// Maximum cache size in bytes (for LRU eviction)
+    max_cache_size: u64,
 }
 
 impl IpfsClient {
@@ -367,7 +399,15 @@ impl IpfsClient {
             cache_dir,
             http_client,
             bandwidth_tracker: Arc::new(RwLock::new(BandwidthTracker::new())),
+            max_cache_size: get_max_cache_size(),
         })
+    }
+
+    /// Create a new IPFS client with custom cache size limit
+    pub fn with_cache_limit(api_endpoint: &str, cache_dir: Option<PathBuf>, max_cache_mb: u64) -> Result<Self> {
+        let mut client = Self::with_config(api_endpoint, cache_dir)?;
+        client.max_cache_size = (max_cache_mb * 1024 * 1024).max(MIN_CACHE_SIZE);
+        Ok(client)
     }
 
     /// Upload a Wasm module to IPFS
@@ -701,6 +741,10 @@ impl IpfsClient {
             Ok(bytes) => {
                 // Verify cached content still matches CID
                 if self.verify_cid(cid, &bytes).is_ok() {
+                    // Touch file for LRU tracking (update access time)
+                    if let Err(e) = self.touch_cache_file(cid).await {
+                        debug!("Failed to touch cache file for LRU (non-fatal): {}", e);
+                    }
                     Ok(Some(bytes))
                 } else {
                     warn!("Cached module CID mismatch, removing: {}", cid);
@@ -715,7 +759,7 @@ impl IpfsClient {
         }
     }
 
-    /// Save module to local cache
+    /// Save module to local cache with LRU eviction
     async fn save_to_cache(&self, cid: &str, wasm_bytes: &[u8]) -> Result<()> {
         // Create cache directory if it doesn't exist
         fs::create_dir_all(&self.cache_dir)
@@ -737,7 +781,151 @@ impl IpfsClient {
             .context("Failed to sync cache file")?;
 
         debug!("Cached module locally: {}", cache_path.display());
+
+        // Trigger LRU eviction if cache exceeds max size
+        if let Err(e) = self.evict_lru_if_needed().await {
+            warn!("LRU eviction failed (non-fatal): {}", e);
+        }
+
         Ok(())
+    }
+
+    /// Evict least recently used modules if cache exceeds max size
+    ///
+    /// LRU eviction strategy:
+    /// 1. Scan cache directory for all .wasm files
+    /// 2. If total size > max_cache_size, evict oldest accessed files
+    /// 3. Target 80% of max size to avoid constant eviction
+    pub async fn evict_lru_if_needed(&self) -> Result<EvictionResult> {
+        if !self.cache_dir.exists() {
+            return Ok(EvictionResult {
+                evicted_count: 0,
+                evicted_bytes: 0,
+                remaining_count: 0,
+                remaining_bytes: 0,
+            });
+        }
+
+        // Collect all cache entries with metadata
+        let mut entries: Vec<CacheEntry> = Vec::new();
+        let mut total_size = 0u64;
+
+        let mut dir_entries = fs::read_dir(&self.cache_dir)
+            .await
+            .context("Failed to read cache directory")?;
+
+        while let Some(entry) = dir_entries.next_entry().await? {
+            let path = entry.path();
+            if path.extension() == Some(std::ffi::OsStr::new("wasm")) {
+                if let Ok(metadata) = entry.metadata().await {
+                    let size = metadata.len();
+                    total_size += size;
+
+                    // Get last access time (fall back to modified time)
+                    let last_access = metadata
+                        .accessed()
+                        .or_else(|_| metadata.modified())
+                        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+                    // Extract CID from filename
+                    if let Some(stem) = path.file_stem() {
+                        entries.push(CacheEntry {
+                            cid: stem.to_string_lossy().to_string(),
+                            size,
+                            last_access,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check if eviction is needed
+        if total_size <= self.max_cache_size {
+            debug!(
+                "Cache size {} bytes is within limit {} bytes, no eviction needed",
+                total_size, self.max_cache_size
+            );
+            return Ok(EvictionResult {
+                evicted_count: 0,
+                evicted_bytes: 0,
+                remaining_count: entries.len(),
+                remaining_bytes: total_size,
+            });
+        }
+
+        // Calculate target size (80% of max to avoid thrashing)
+        let target_size = (self.max_cache_size * CACHE_EVICTION_TARGET_PERCENT) / 100;
+
+        info!(
+            "Cache size {} bytes exceeds limit {} bytes, evicting to target {} bytes",
+            total_size, self.max_cache_size, target_size
+        );
+
+        // Sort by last access time (oldest first for eviction)
+        entries.sort_by(|a, b| a.last_access.cmp(&b.last_access));
+
+        let mut evicted_count = 0usize;
+        let mut evicted_bytes = 0u64;
+        let mut current_size = total_size;
+
+        // Evict oldest entries until we're at target size
+        for entry in &entries {
+            if current_size <= target_size {
+                break;
+            }
+
+            let cache_path = self.cache_dir.join(format!("{}.wasm", entry.cid));
+            match fs::remove_file(&cache_path).await {
+                Ok(()) => {
+                    info!(
+                        "LRU evicted: {} ({} bytes, last accessed: {:?})",
+                        entry.cid, entry.size, entry.last_access
+                    );
+                    current_size -= entry.size;
+                    evicted_count += 1;
+                    evicted_bytes += entry.size;
+                }
+                Err(e) => {
+                    warn!("Failed to evict cached module {}: {}", entry.cid, e);
+                }
+            }
+        }
+
+        info!(
+            "LRU eviction complete: evicted {} modules ({} bytes), remaining {} bytes",
+            evicted_count, evicted_bytes, current_size
+        );
+
+        Ok(EvictionResult {
+            evicted_count,
+            evicted_bytes,
+            remaining_count: entries.len() - evicted_count,
+            remaining_bytes: current_size,
+        })
+    }
+
+    /// Touch a cached file to update its access time (for LRU tracking)
+    async fn touch_cache_file(&self, cid: &str) -> Result<()> {
+        let cache_path = self.cache_dir.join(format!("{}.wasm", cid));
+        if cache_path.exists() {
+            // Open and close the file to update access time
+            // On most systems, this updates atime
+            let _ = fs::File::open(&cache_path).await?;
+            debug!("Touched cache file for LRU: {}", cid);
+        }
+        Ok(())
+    }
+
+    /// Get current max cache size setting
+    pub fn max_cache_size(&self) -> u64 {
+        self.max_cache_size
+    }
+
+    /// Set max cache size and trigger eviction if needed
+    pub async fn set_max_cache_size(&mut self, max_size_mb: u64) -> Result<EvictionResult> {
+        self.max_cache_size = (max_size_mb * 1024 * 1024).max(MIN_CACHE_SIZE);
+        info!("Updated max cache size to {} bytes", self.max_cache_size);
+        self.evict_lru_if_needed().await
     }
 
     /// Verify that the downloaded content matches the CID
@@ -906,6 +1094,19 @@ pub struct CacheStats {
 
     /// Total size of cached modules in bytes
     pub total_size_bytes: u64,
+}
+
+/// Result of LRU cache eviction operation
+#[derive(Debug, Clone)]
+pub struct EvictionResult {
+    /// Number of modules evicted
+    pub evicted_count: usize,
+    /// Total bytes freed by eviction
+    pub evicted_bytes: u64,
+    /// Number of modules remaining in cache
+    pub remaining_count: usize,
+    /// Total bytes remaining in cache
+    pub remaining_bytes: u64,
 }
 
 impl Default for IpfsClient {
@@ -1541,5 +1742,260 @@ mod tests {
         assert!(MIN_CID_LENGTH >= 32, "Min CID length should be at least 32");
         assert!(MAX_CID_LENGTH <= 256, "Max CID length should be reasonable");
         assert!(MIN_CID_LENGTH < MAX_CID_LENGTH);
+    }
+
+    // ========================================================================
+    // LRU Cache Eviction Tests
+    // ========================================================================
+
+    #[test]
+    fn test_lru_cache_constants() {
+        // Verify LRU cache constants are sensible
+        assert_eq!(DEFAULT_MAX_CACHE_SIZE, 1024 * 1024 * 1024); // 1GB
+        assert_eq!(MIN_CACHE_SIZE, 100 * 1024 * 1024); // 100MB minimum
+        assert_eq!(CACHE_EVICTION_TARGET_PERCENT, 80); // Evict to 80% to avoid thrashing
+        assert!(MIN_CACHE_SIZE < DEFAULT_MAX_CACHE_SIZE);
+    }
+
+    #[test]
+    fn test_lru_cache_entry_struct() {
+        // Test CacheEntry struct creation
+        let entry = CacheEntry {
+            cid: "QmTest123".to_string(),
+            size: 1024 * 1024, // 1MB
+            last_access: std::time::SystemTime::now(),
+        };
+
+        assert_eq!(entry.cid, "QmTest123");
+        assert_eq!(entry.size, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_lru_eviction_result_struct() {
+        // Test EvictionResult struct
+        let result = EvictionResult {
+            evicted_count: 5,
+            evicted_bytes: 10 * 1024 * 1024, // 10MB
+            remaining_count: 10,
+            remaining_bytes: 50 * 1024 * 1024, // 50MB
+        };
+
+        assert_eq!(result.evicted_count, 5);
+        assert_eq!(result.evicted_bytes, 10 * 1024 * 1024);
+        assert_eq!(result.remaining_count, 10);
+        assert_eq!(result.remaining_bytes, 50 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_lru_cache_limit_constructor() {
+        // Test client creation with custom cache limit
+        let client = IpfsClient::with_cache_limit(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test-lru")),
+            500, // 500MB
+        )
+        .unwrap();
+
+        // Should be 500MB
+        assert_eq!(client.max_cache_size(), 500 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_lru_cache_limit_enforces_minimum() {
+        // Test that cache limit enforces minimum size
+        let client = IpfsClient::with_cache_limit(
+            DEFAULT_IPFS_API,
+            Some(PathBuf::from("/tmp/aegis-test-lru-min")),
+            10, // Only 10MB - below minimum
+        )
+        .unwrap();
+
+        // Should be enforced to MIN_CACHE_SIZE (100MB)
+        assert_eq!(client.max_cache_size(), MIN_CACHE_SIZE);
+    }
+
+    #[test]
+    fn test_lru_get_max_cache_size_env_var() {
+        // Test get_max_cache_size respects environment variable
+        // When env var is not set, should return DEFAULT_MAX_CACHE_SIZE
+        std::env::remove_var("AEGIS_IPFS_CACHE_SIZE_MB");
+        assert_eq!(get_max_cache_size(), DEFAULT_MAX_CACHE_SIZE);
+    }
+
+    #[tokio::test]
+    async fn test_lru_eviction_empty_cache() {
+        // Test eviction when cache directory doesn't exist
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("nonexistent");
+
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        let result = client.evict_lru_if_needed().await.unwrap();
+
+        assert_eq!(result.evicted_count, 0);
+        assert_eq!(result.evicted_bytes, 0);
+        assert_eq!(result.remaining_count, 0);
+        assert_eq!(result.remaining_bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lru_eviction_under_limit() {
+        // Test eviction when cache is under limit - should not evict
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        // Create a small test file (1KB)
+        let test_file = cache_dir.join("QmTestSmall123456789012345678901234.wasm");
+        fs::write(&test_file, vec![0u8; 1024]).await.unwrap();
+
+        let mut client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        // Set cache limit to 1MB (well above our 1KB file)
+        client.max_cache_size = 1024 * 1024;
+
+        let result = client.evict_lru_if_needed().await.unwrap();
+
+        assert_eq!(result.evicted_count, 0);
+        assert_eq!(result.evicted_bytes, 0);
+        assert!(test_file.exists(), "File should not be evicted");
+    }
+
+    #[tokio::test]
+    async fn test_lru_eviction_over_limit() {
+        // Test eviction when cache exceeds limit
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        // Create files totaling more than our test limit
+        // File 1: 60KB (older)
+        let old_file = cache_dir.join("QmOldFile1234567890123456789012345.wasm");
+        fs::write(&old_file, vec![0u8; 60 * 1024]).await.unwrap();
+
+        // Sleep briefly to ensure different timestamps
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        // File 2: 60KB (newer)
+        let new_file = cache_dir.join("QmNewFile1234567890123456789012345.wasm");
+        fs::write(&new_file, vec![0u8; 60 * 1024]).await.unwrap();
+
+        let mut client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        // Set cache limit to 100KB (total is 120KB, so should evict ~24KB to reach 80KB target)
+        client.max_cache_size = 100 * 1024;
+
+        let result = client.evict_lru_if_needed().await.unwrap();
+
+        // Should have evicted at least one file
+        assert!(result.evicted_count >= 1, "Should evict at least 1 file");
+        assert!(result.evicted_bytes > 0, "Should have evicted some bytes");
+
+        // The older file should be evicted first (LRU)
+        assert!(!old_file.exists(), "Older file should be evicted");
+        // Newer file should remain
+        assert!(new_file.exists(), "Newer file should remain");
+    }
+
+    #[tokio::test]
+    async fn test_lru_set_max_cache_size() {
+        // Test dynamic cache size adjustment
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let mut client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        // Initial size should be default
+        assert_eq!(client.max_cache_size(), get_max_cache_size());
+
+        // Set new size (200MB)
+        let result = client.set_max_cache_size(200).await.unwrap();
+
+        // Should be 200MB now
+        assert_eq!(client.max_cache_size(), 200 * 1024 * 1024);
+
+        // Eviction result should be returned (even if nothing evicted)
+        assert_eq!(result.evicted_count, 0);
+    }
+
+    #[tokio::test]
+    async fn test_lru_touch_cache_file() {
+        // Test that touching a cache file updates its access time
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        // Create a test file
+        let test_cid = "QmTouchTest1234567890123456789012";
+        let test_file = cache_dir.join(format!("{}.wasm", test_cid));
+        fs::write(&test_file, vec![0u8; 1024]).await.unwrap();
+
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        // Touch should succeed
+        let result = client.touch_cache_file(test_cid).await;
+        assert!(result.is_ok(), "Touch should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_lru_touch_nonexistent_file() {
+        // Test touching a file that doesn't exist (should not error)
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        // Touch non-existent file should succeed (no-op)
+        let result = client.touch_cache_file("QmNonExistent12345678901234567890").await;
+        assert!(result.is_ok(), "Touch of nonexistent file should not error");
+    }
+
+    #[tokio::test]
+    async fn test_lru_cache_stats_with_files() {
+        // Test cache_stats returns correct values
+        let temp_dir = tempfile::tempdir().unwrap();
+        let cache_dir = temp_dir.path().join("cache");
+        fs::create_dir_all(&cache_dir).await.unwrap();
+
+        // Create test files
+        fs::write(cache_dir.join("QmFile1234567890123456789012345678.wasm"), vec![0u8; 1024]).await.unwrap();
+        fs::write(cache_dir.join("QmFile2234567890123456789012345678.wasm"), vec![0u8; 2048]).await.unwrap();
+
+        let client = IpfsClient::with_config(
+            DEFAULT_IPFS_API,
+            Some(cache_dir),
+        )
+        .unwrap();
+
+        let stats = client.cache_stats().await.unwrap();
+
+        assert_eq!(stats.module_count, 2);
+        assert_eq!(stats.total_size_bytes, 1024 + 2048);
     }
 }
