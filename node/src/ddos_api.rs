@@ -26,6 +26,37 @@ use tokio::sync::broadcast;
 use tracing::{debug, error, info, warn};
 
 // =============================================================================
+// SECURITY: Request body size limits
+// =============================================================================
+
+/// Maximum allowed request body size (64KB for API requests)
+/// Prevents memory exhaustion from maliciously large request bodies
+const MAX_REQUEST_BODY_SIZE: usize = 64 * 1024;
+
+/// Read request body with size limit
+async fn read_body_limited(body: Body) -> Result<Vec<u8>, String> {
+    use futures::StreamExt;
+
+    let mut total_size = 0usize;
+    let mut result = Vec::new();
+
+    let mut stream = body;
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = chunk_result.map_err(|e| format!("Error reading body: {}", e))?;
+        total_size += chunk.len();
+        if total_size > MAX_REQUEST_BODY_SIZE {
+            return Err(format!(
+                "Request body size exceeds maximum allowed {} bytes",
+                MAX_REQUEST_BODY_SIZE
+            ));
+        }
+        result.extend_from_slice(&chunk);
+    }
+
+    Ok(result)
+}
+
+// =============================================================================
 // API RESPONSE
 // =============================================================================
 
@@ -248,8 +279,13 @@ impl DDoSApi {
             return Ok(self.error_response(StatusCode::BAD_REQUEST, "Domain is required"));
         }
 
-        // Parse request body
-        let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
+        // Parse request body with size limit
+        let body_bytes = match read_body_limited(req.into_body()).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(self.error_response(StatusCode::PAYLOAD_TOO_LARGE, &e));
+            }
+        };
         let mut policy: DDoSPolicy = match serde_json::from_slice(&body_bytes) {
             Ok(p) => p,
             Err(e) => {
@@ -285,8 +321,13 @@ impl DDoSApi {
             return Ok(self.error_response(StatusCode::BAD_REQUEST, "Domain is required"));
         }
 
-        // Parse request body
-        let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
+        // Parse request body with size limit
+        let body_bytes = match read_body_limited(req.into_body()).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(self.error_response(StatusCode::PAYLOAD_TOO_LARGE, &e));
+            }
+        };
         let update: DDoSPolicyUpdate = match serde_json::from_slice(&body_bytes) {
             Ok(u) => u,
             Err(e) => {
@@ -365,7 +406,13 @@ impl DDoSApi {
     }
 
     async fn handle_add_to_blocklist(&self, req: Request<Body>) -> Result<Response<Body>> {
-        let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
+        // Parse request body with size limit
+        let body_bytes = match read_body_limited(req.into_body()).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(self.error_response(StatusCode::PAYLOAD_TOO_LARGE, &e));
+            }
+        };
         let request: BlockIpRequest = match serde_json::from_slice(&body_bytes) {
             Ok(r) => r,
             Err(e) => {
@@ -428,7 +475,13 @@ impl DDoSApi {
     }
 
     async fn handle_add_to_allowlist(&self, req: Request<Body>) -> Result<Response<Body>> {
-        let body_bytes = hyper::body::to_bytes(req.into_body()).await?;
+        // Parse request body with size limit
+        let body_bytes = match read_body_limited(req.into_body()).await {
+            Ok(b) => b,
+            Err(e) => {
+                return Ok(self.error_response(StatusCode::PAYLOAD_TOO_LARGE, &e));
+            }
+        };
         let request: AllowIpRequest = match serde_json::from_slice(&body_bytes) {
             Ok(r) => r,
             Err(e) => {

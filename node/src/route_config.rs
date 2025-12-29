@@ -20,6 +20,14 @@ pub const MIN_ROUTE_PRIORITY: i32 = 0;
 /// Maximum allowed route priority
 pub const MAX_ROUTE_PRIORITY: i32 = 10_000;
 
+// ============================================================================
+// Security Fix: Input size validation to prevent DoS via large configs
+// ============================================================================
+
+/// Maximum allowed route config size (1MB)
+/// Prevents memory exhaustion from maliciously large YAML/TOML configs
+pub const MAX_ROUTE_CONFIG_SIZE: usize = 1024 * 1024;
+
 /// Route configuration validation error
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RouteConfigError {
@@ -31,6 +39,8 @@ pub enum RouteConfigError {
     EmptyRouteName,
     /// Duplicate route name
     DuplicateRouteName(String),
+    /// Config size exceeds maximum allowed
+    ConfigTooLarge { size: usize, max: usize },
 }
 
 impl std::fmt::Display for RouteConfigError {
@@ -51,6 +61,13 @@ impl std::fmt::Display for RouteConfigError {
             }
             RouteConfigError::DuplicateRouteName(name) => {
                 write!(f, "Duplicate route name: {}", name)
+            }
+            RouteConfigError::ConfigTooLarge { size, max } => {
+                write!(
+                    f,
+                    "Route config size {} bytes exceeds maximum allowed {} bytes",
+                    size, max
+                )
             }
         }
     }
@@ -475,12 +492,40 @@ impl RouteConfig {
     }
 
     /// Load from YAML string
+    ///
+    /// # Security
+    /// Validates input size to prevent DoS attacks via large configs.
+    /// Maximum size is `MAX_ROUTE_CONFIG_SIZE` (1MB).
     pub fn from_yaml(yaml: &str) -> anyhow::Result<Self> {
+        // Security: Validate input size before parsing
+        if yaml.len() > MAX_ROUTE_CONFIG_SIZE {
+            return Err(anyhow::anyhow!(
+                "{}",
+                RouteConfigError::ConfigTooLarge {
+                    size: yaml.len(),
+                    max: MAX_ROUTE_CONFIG_SIZE
+                }
+            ));
+        }
         serde_yaml::from_str(yaml).map_err(|e| anyhow::anyhow!("Failed to parse route config: {}", e))
     }
 
     /// Load from TOML string
+    ///
+    /// # Security
+    /// Validates input size to prevent DoS attacks via large configs.
+    /// Maximum size is `MAX_ROUTE_CONFIG_SIZE` (1MB).
     pub fn from_toml(toml: &str) -> anyhow::Result<Self> {
+        // Security: Validate input size before parsing
+        if toml.len() > MAX_ROUTE_CONFIG_SIZE {
+            return Err(anyhow::anyhow!(
+                "{}",
+                RouteConfigError::ConfigTooLarge {
+                    size: toml.len(),
+                    max: MAX_ROUTE_CONFIG_SIZE
+                }
+            ));
+        }
         toml::from_str(toml).map_err(|e| anyhow::anyhow!("Failed to parse route config: {}", e))
     }
 

@@ -104,7 +104,8 @@ rcgen = "0.13"  # X.509 certificate generation for CSR
 
 # GeoIP Database for geo-aware DNS (Sprint 30.3)
 # Optional: Only needed if using MaxMind GeoLite2 database
-maxminddb = { version = "0.24", optional = true }
+# SECURITY FIX: Updated from 0.24 to 0.27 to fix RUSTSEC-2025-0132 (unsound mmap)
+maxminddb = { version = "0.27", optional = true }
 
 # eBPF/XDP (Linux only)
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -163,6 +164,18 @@ name = "aegis-dns"
 path = "src/main_dns.rs"
 
 # Security notes:
-# - RUSTSEC-2024-0437 (protobuf): Transitive via prometheus 0.13 → pingora-core
+# - RUSTSEC-2024-0437 (protobuf 2.28.0): Transitive via prometheus 0.13 → pingora-core
 #   Upstream fix: https://github.com/cloudflare/pingora/pull/708
-#   Risk: Low (protobuf only used for prometheus push gateway text format, not exposed to untrusted input)
+#   Risk: LOW - protobuf only used for prometheus push gateway text format, not exposed to untrusted input
+#   Mitigation: Will be fixed when pingora updates prometheus dependency
+#
+# - RUSTSEC-2024-0336 (rustls 0.20.9): Transitive via ipfs-api-backend-hyper → hyper-rustls 0.23
+#   Severity: HIGH (7.5) - Infinite loop in complete_io on malicious server response
+#   Risk: LOW - Only used for fetching Wasm modules from IPFS (internal operation)
+#   Mitigation: IPFS connections are to trusted nodes or public gateways, not arbitrary servers
+#   TODO: Replace ipfs-api-backend-hyper when upstream updates hyper-rustls
+#
+# - RUSTSEC-2025-0009 (ring 0.16.20): Transitive via rustls 0.20.9
+#   Risk: LOW - Same mitigation as rustls above
+#
+# - RUSTSEC-2025-0132 (maxminddb): FIXED - Updated to 0.27
