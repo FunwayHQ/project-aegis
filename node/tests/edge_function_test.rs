@@ -75,6 +75,7 @@ async fn test_edge_function_runtime_creation() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_load_edge_function_module() {
     let runtime = WasmRuntime::new().unwrap();
     let wasm_bytes = create_test_wasm_module();
@@ -199,6 +200,7 @@ async fn test_edge_function_without_cache() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_module_hot_reload() {
     let runtime = WasmRuntime::new().unwrap();
     let wasm_bytes = create_test_wasm_module();
@@ -234,6 +236,7 @@ async fn test_module_hot_reload() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_edge_function_list_modules() {
     let runtime = WasmRuntime::new().unwrap();
     let wasm_bytes = create_test_wasm_module();
@@ -255,6 +258,7 @@ async fn test_edge_function_list_modules() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_edge_function_module_type_validation() {
     let runtime = WasmRuntime::new().unwrap();
     let wasm_bytes = create_test_wasm_module();

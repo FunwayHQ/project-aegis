@@ -157,6 +157,7 @@ fn create_header_reader_test_wat() -> String {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_request_context_access() -> Result<()> {
     // Create Wasm runtime
     let runtime = WasmRuntime::new()?;
@@ -209,6 +210,7 @@ async fn test_request_context_access() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_response_manipulation() -> Result<()> {
     // Create Wasm runtime
     let runtime = WasmRuntime::new()?;
@@ -262,6 +264,7 @@ async fn test_response_manipulation() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_early_termination() -> Result<()> {
     // Create Wasm runtime
     let runtime = WasmRuntime::new()?;
@@ -298,6 +301,7 @@ async fn test_early_termination() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_header_reading() -> Result<()> {
     // Create Wasm runtime
     let runtime = WasmRuntime::new()?;
@@ -344,6 +348,7 @@ async fn test_header_reading() -> Result<()> {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_multiple_response_headers() -> Result<()> {
     // Create Wasm runtime
     let runtime = WasmRuntime::new()?;

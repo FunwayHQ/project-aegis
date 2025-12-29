@@ -3,12 +3,15 @@
 /// Tests for the recommended security improvements:
 /// 1. CRLF injection prevention in header values
 /// 2. HTTP POST/PUT/DELETE support with body size and content-type validation
+///
+/// Note: These tests require the `dev_unsigned_modules` feature to load unsigned Wasm modules.
 
 use aegis_node::wasm_runtime::{WasmRuntime, WasmModuleType, WasmExecutionContext};
 use anyhow::Result;
 
 /// Test CRLF injection prevention in response_set_header
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_crlf_injection_prevention_set_header() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -62,6 +65,7 @@ async fn test_crlf_injection_prevention_set_header() -> Result<()> {
 
 /// Test CRLF injection prevention in response_add_header
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_crlf_injection_prevention_add_header() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -112,6 +116,7 @@ async fn test_crlf_injection_prevention_add_header() -> Result<()> {
 
 /// Test that valid headers (without CRLF) are still accepted
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_valid_headers_accepted() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -193,6 +198,7 @@ async fn test_valid_headers_accepted() -> Result<()> {
 
 /// Test HTTP POST with body size limit enforcement
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_http_post_body_size_limit() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -246,6 +252,7 @@ async fn test_http_post_body_size_limit() -> Result<()> {
 
 /// Test HTTP PUT with body size limit enforcement
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_http_put_body_size_limit() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -295,6 +302,7 @@ async fn test_http_put_body_size_limit() -> Result<()> {
 
 /// Test HTTP POST with missing Content-Type
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_http_post_missing_content_type() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -346,6 +354,7 @@ async fn test_http_post_missing_content_type() -> Result<()> {
 
 /// Test HTTP PUT with missing Content-Type
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_http_put_missing_content_type() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -395,6 +404,7 @@ async fn test_http_put_missing_content_type() -> Result<()> {
 
 /// Test HTTP DELETE (should work without body or Content-Type)
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_http_delete_url_validation() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 
@@ -441,6 +451,7 @@ async fn test_http_delete_url_validation() -> Result<()> {
 
 /// Test that carriage return (\r) alone is also blocked
 #[tokio::test]
+#[cfg_attr(not(feature = "dev_unsigned_modules"), ignore = "Requires dev_unsigned_modules feature")]
 async fn test_cr_only_injection_blocked() -> Result<()> {
     let runtime = WasmRuntime::new()?;
 

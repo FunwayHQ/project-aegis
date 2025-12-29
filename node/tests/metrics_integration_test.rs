@@ -136,14 +136,14 @@ async fn test_requests_per_second_calculation() {
         collector.record_request(10.0).await;
     }
 
-    // Wait a bit
-    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    // Wait at least 1 second for RPS calculation (uses elapsed().as_secs())
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
 
     collector.calculate_rps().await;
     let metrics = collector.get_metrics().await;
 
-    // Should have calculated some RPS
-    assert!(metrics.requests_per_second > 0.0);
+    // Should have calculated some RPS (10 requests over ~1 second = ~10 RPS)
+    assert!(metrics.requests_per_second > 0.0, "RPS should be > 0 after 1 second");
     assert_eq!(metrics.requests_total, 10);
 }
 
@@ -482,7 +482,11 @@ async fn test_json_deserialization() {
         "proxy_status": "running",
         "cache_status": "connected",
         "uptime_seconds": 7200,
-        "timestamp": 1700491530
+        "timestamp": 1700491530,
+        "waf_requests_analyzed": 500,
+        "waf_requests_blocked": 25,
+        "waf_requests_logged": 50,
+        "waf_rules_triggered": 100
     }"#;
 
     let metrics: NodeMetrics = serde_json::from_str(json).unwrap();

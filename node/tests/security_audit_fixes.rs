@@ -301,7 +301,8 @@ mod waf_regexset_tests {
             .map(|i| WafRule {
                 id: 900000 + i as u32,
                 description: format!("Test rule {}", i),
-                pattern: Regex::new(&format!(r"test_pattern_{}", i)).unwrap(),
+                // Use word boundary to prevent test_pattern_5 matching test_pattern_50
+                pattern: Regex::new(&format!(r"test_pattern_{}\b", i)).unwrap(),
                 severity: Severity::Warning,
                 category: "test".to_string(),
             })
