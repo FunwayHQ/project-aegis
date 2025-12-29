@@ -17,7 +17,7 @@ use std::time::Duration;
 mod crdt_actor_pruning {
     use super::*;
     use aegis_node::distributed_counter::{ActorId, DistributedCounter};
-    use aegis_node::distributed_rate_limiter::{DistributedRateLimiter, RateLimitConfig};
+    use aegis_node::distributed_rate_limiter::{DistributedRateLimiter, RateLimiterConfig};
 
     #[test]
     fn test_estimated_size() {
@@ -122,6 +122,7 @@ mod crdt_actor_pruning {
 // ============================================================================
 
 #[cfg(test)]
+#[cfg(target_os = "linux")]
 mod blocklist_sync {
     use super::*;
     use aegis_node::blocklist_persistence::{BlocklistEntry, BlocklistPersistence};

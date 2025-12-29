@@ -693,11 +693,10 @@ fn verify_challenge_solution(challenge: &Challenge, solution: &ChallengeSolution
     }
 }
 
-fn generate_valid_token(ip: &str) -> String {
-    format!(
-        "eyJhbGciOiJFZDI1NTE5In0.eyJpcCI6Int9IiwiZXhwIjoxOTk5OTk5OTk5fQ.sig",
-        ip
-    )
+fn generate_valid_token(_ip: &str) -> String {
+    // Mock token - the ip parameter is accepted for API compatibility but not used
+    // The base64 payload contains {"ip":"{}","exp":1999999999}
+    "eyJhbGciOiJFZDI1NTE5In0.eyJpcCI6Int9IiwiZXhwIjoxOTk5OTk5OTk5fQ.sig".to_string()
 }
 
 fn verify_token(token: &str, expected_ip: &str) -> Result<(), &'static str> {

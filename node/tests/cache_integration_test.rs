@@ -3,10 +3,10 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_cache_key_generation() {
-    let key1 = generate_cache_key("GET", "/api/users");
+    let key1 = generate_cache_key("GET", "/api/users").unwrap();
     assert_eq!(key1, "aegis:cache:GET:/api/users");
 
-    let key2 = generate_cache_key("GET", "/api/posts?page=1");
+    let key2 = generate_cache_key("GET", "/api/posts?page=1").unwrap();
     assert_eq!(key2, "aegis:cache:GET:/api/posts?page=1");
 
     // Keys should be different for different paths
@@ -16,13 +16,13 @@ async fn test_cache_key_generation() {
 #[tokio::test]
 async fn test_cache_key_consistency() {
     // Same input should generate same key
-    let key1 = generate_cache_key("GET", "/test");
-    let key2 = generate_cache_key("GET", "/test");
+    let key1 = generate_cache_key("GET", "/test").unwrap();
+    let key2 = generate_cache_key("GET", "/test").unwrap();
     assert_eq!(key1, key2);
 
     // Different methods should generate different keys
-    let get_key = generate_cache_key("GET", "/resource");
-    let post_key = generate_cache_key("POST", "/resource");
+    let get_key = generate_cache_key("GET", "/resource").unwrap();
+    let post_key = generate_cache_key("POST", "/resource").unwrap();
     assert_ne!(get_key, post_key);
 }
 

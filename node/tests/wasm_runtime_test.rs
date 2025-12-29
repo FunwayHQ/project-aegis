@@ -9,6 +9,8 @@
 
 use aegis_node::wasm_runtime::*;
 use anyhow::Result;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[test]
@@ -110,6 +112,9 @@ fn test_wasm_module_type() {
         signature: None,
         public_key: None,
         signature_verified: false,
+        content_hash: "abc123".to_string(),
+        last_integrity_check: std::time::Instant::now(),
+        ref_count: Arc::new(AtomicUsize::new(1)),
     };
 
     assert_eq!(metadata.module_type, Waf);

@@ -11,7 +11,7 @@
 ///   cargo run --example distributed_rate_limit_demo
 
 use anyhow::Result;
-use node::{
+use aegis_node::{
     distributed_rate_limiter::{DistributedRateLimiter, RateLimitDecision, RateLimiterConfig},
     nats_sync::NatsConfig,
 };
@@ -58,6 +58,7 @@ async fn main() -> Result<()> {
             stream_name: "DEMO_STATE".to_string(),
             counter_subject: "demo.rate.counter".to_string(),
             consumer_name: "demo-consumer".to_string(),
+            ..Default::default()
         },
         window_duration_secs: 30,
         max_requests: 10,
@@ -243,11 +244,17 @@ async fn show_all_counts(
 async fn check_nats_connection() -> Result<()> {
     let client = async_nats::connect("nats://localhost:4222").await?;
 
-    // Try to access JetStream
+    // Try to access JetStream by getting or creating a test stream
     let jetstream = async_nats::jetstream::new(client);
 
-    // List streams to verify JetStream is enabled
-    let _ = jetstream.streams().await?;
+    // Verify JetStream is enabled by attempting to get/create a stream
+    let _ = jetstream
+        .get_or_create_stream(async_nats::jetstream::stream::Config {
+            name: "DEMO_CONNECTION_TEST".to_string(),
+            subjects: vec!["demo.test.>".to_string()],
+            ..Default::default()
+        })
+        .await?;
 
     Ok(())
 }
