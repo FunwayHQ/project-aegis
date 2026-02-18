@@ -1,296 +1,280 @@
-// AEGIS Website JavaScript
+// ================================================================
+// AEGIS — Command Nexus Interactive Layer
+// ================================================================
 
-// Mobile Menu Toggle
-const mobileMenuButton = document.getElementById('mobile-menu-button');
-const mobileMenu = document.getElementById('mobile-menu');
-const menuIcon = document.getElementById('menu-icon');
-const closeIcon = document.getElementById('close-icon');
+(function () {
+  'use strict';
 
-if (mobileMenuButton && mobileMenu) {
-    mobileMenuButton.addEventListener('click', () => {
-        mobileMenu.classList.toggle('hidden');
-        menuIcon.classList.toggle('hidden');
-        closeIcon.classList.toggle('hidden');
-    });
+  // ---------- Navbar Scroll ----------
+  const navbar = document.getElementById('navbar');
+  let ticking = false;
 
-    // Close mobile menu when clicking on a link
-    const mobileMenuLinks = mobileMenu.querySelectorAll('a');
-    mobileMenuLinks.forEach(link => {
-        link.addEventListener('click', () => {
-            mobileMenu.classList.add('hidden');
-            menuIcon.classList.remove('hidden');
-            closeIcon.classList.add('hidden');
-        });
-    });
-}
-
-// Smooth scroll for anchor links
-document.querySelectorAll('a[href^="#"]').forEach(anchor => {
-    anchor.addEventListener('click', function (e) {
-        const href = this.getAttribute('href');
-        if (href === '#') return;
-
-        e.preventDefault();
-        const target = document.querySelector(href);
-        if (target) {
-            const offset = 80; // Account for fixed navbar
-            const targetPosition = target.offsetTop - offset;
-
-            window.scrollTo({
-                top: targetPosition,
-                behavior: 'smooth'
-            });
-        }
-    });
-});
-
-// Navbar scroll effect
-let lastScroll = 0;
-const navbar = document.getElementById('navbar');
-
-window.addEventListener('scroll', () => {
-    const currentScroll = window.pageYOffset;
-
-    if (currentScroll <= 0) {
-        navbar.style.boxShadow = 'none';
-        return;
+  function updateNavbar() {
+    if (window.scrollY > 40) {
+      navbar.classList.add('scrolled');
+    } else {
+      navbar.classList.remove('scrolled');
     }
+    ticking = false;
+  }
 
-    // Add shadow when scrolling
-    navbar.style.boxShadow = '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)';
+  window.addEventListener('scroll', () => {
+    if (!ticking) {
+      requestAnimationFrame(updateNavbar);
+      ticking = true;
+    }
+  }, { passive: true });
 
-    lastScroll = currentScroll;
-});
+  // ---------- Mobile Menu ----------
+  const menuBtn = document.getElementById('mobile-menu-button');
+  const mobileMenu = document.getElementById('mobile-menu');
+  const menuIcon = document.getElementById('menu-icon');
+  const closeIcon = document.getElementById('close-icon');
 
-// Animate stats on scroll using Intersection Observer
-const observerOptions = {
-    threshold: 0.5,
-    rootMargin: '0px 0px -100px 0px'
-};
-
-const statsObserver = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-        if (entry.isIntersecting && !entry.target.classList.contains('animated')) {
-            entry.target.classList.add('animated');
-            animateNumber(entry.target);
-        }
+  if (menuBtn && mobileMenu) {
+    menuBtn.addEventListener('click', () => {
+      mobileMenu.classList.toggle('hidden');
+      menuIcon.classList.toggle('hidden');
+      closeIcon.classList.toggle('hidden');
     });
-}, observerOptions);
 
-// Observe all stat numbers
-document.querySelectorAll('.stat-number').forEach(stat => {
-    statsObserver.observe(stat);
-});
+    mobileMenu.querySelectorAll('a').forEach(link => {
+      link.addEventListener('click', () => {
+        mobileMenu.classList.add('hidden');
+        menuIcon.classList.remove('hidden');
+        closeIcon.classList.add('hidden');
+      });
+    });
+  }
 
-// Animate number counting
-function animateNumber(element) {
-    const text = element.textContent.trim();
-    const hasPercent = text.includes('%');
-    const hasPlus = text.includes('+');
+  // ---------- Smooth Scroll ----------
+  document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+    anchor.addEventListener('click', function (e) {
+      const href = this.getAttribute('href');
+      if (href === '#') return;
+      e.preventDefault();
+      const target = document.querySelector(href);
+      if (target) {
+        const offset = 80;
+        window.scrollTo({
+          top: target.offsetTop - offset,
+          behavior: 'smooth'
+        });
+      }
+    });
+  });
 
-    // Extract number from text
-    const match = text.match(/(\d+(?:\.\d+)?)/);
+  // ---------- Scroll Reveal ----------
+  const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        revealObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.08, rootMargin: '0px 0px -60px 0px' });
+
+  document.querySelectorAll('.reveal').forEach(el => {
+    revealObserver.observe(el);
+  });
+
+  // ---------- Stat Counter Animation ----------
+  function animateCounter(el) {
+    const text = el.textContent.trim();
+    const match = text.match(/^([\d.]+)(.*)$/);
     if (!match) return;
 
-    const targetNumber = parseFloat(match[1]);
-    const duration = 2000;
-    const steps = 60;
-    const increment = targetNumber / steps;
-    let current = 0;
-    let step = 0;
+    const target = parseFloat(match[1]);
+    const suffix = match[2];
+    const isDecimal = match[1].includes('.');
+    const decimalPlaces = isDecimal ? match[1].split('.')[1].length : 0;
+    const duration = 1800;
+    const start = performance.now();
 
-    const timer = setInterval(() => {
-        step++;
-        current = Math.min(current + increment, targetNumber);
+    function step(now) {
+      const elapsed = now - start;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = target * eased;
 
-        if (hasPercent && text.includes('.')) {
-            element.textContent = current.toFixed(3) + '%';
-        } else if (hasPercent) {
-            element.textContent = Math.floor(current) + '%';
-        } else if (hasPlus) {
-            element.textContent = Math.floor(current) + '+';
-        } else if (text === '1B') {
-            element.textContent = '1B';
-        } else if (text === '7d') {
-            element.textContent = '7d';
-        } else if (text.includes('.')) {
-            element.textContent = current.toFixed(2);
-        } else {
-            element.textContent = Math.floor(current);
-        }
+      if (isDecimal) {
+        el.textContent = current.toFixed(decimalPlaces) + suffix;
+      } else {
+        el.textContent = Math.floor(current) + suffix;
+      }
 
-        if (step >= steps) {
-            element.textContent = text; // Restore original text
-            clearInterval(timer);
-        }
-    }, duration / steps);
-}
+      if (progress < 1) {
+        requestAnimationFrame(step);
+      } else {
+        el.textContent = text;
+      }
+    }
 
-// Add fade-in animation for sections
-const fadeObserver = new IntersectionObserver((entries) => {
+    requestAnimationFrame(step);
+  }
+
+  const counterObserver = new IntersectionObserver((entries) => {
     entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            entry.target.style.opacity = '1';
-            entry.target.style.transform = 'translateY(0)';
-        }
+      if (entry.isIntersecting && !entry.target.dataset.animated) {
+        entry.target.dataset.animated = 'true';
+        entry.target.classList.add('stat-animated');
+        animateCounter(entry.target);
+      }
     });
-}, { threshold: 0.1 });
+  }, { threshold: 0.5 });
 
-document.querySelectorAll('section').forEach(section => {
-    section.style.opacity = '0';
-    section.style.transform = 'translateY(20px)';
-    section.style.transition = 'opacity 0.6s ease, transform 0.6s ease';
-    fadeObserver.observe(section);
-});
+  document.querySelectorAll('.stat-number').forEach(el => {
+    counterObserver.observe(el);
+  });
 
-// Particle background effect (simple version, desktop only)
-function createParticles() {
-    const canvas = document.createElement('canvas');
-    canvas.classList.add('particle-bg');
-    canvas.style.position = 'fixed';
-    canvas.style.top = '0';
-    canvas.style.left = '0';
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.pointerEvents = 'none';
-    canvas.style.zIndex = '-1';
-    document.body.appendChild(canvas);
-
-    const ctx = canvas.getContext('2d');
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-
-    const particles = [];
-    const particleCount = 50;
-
-    class Particle {
-        constructor() {
-            this.x = Math.random() * canvas.width;
-            this.y = Math.random() * canvas.height;
-            this.size = Math.random() * 2 + 1;
-            this.speedX = (Math.random() - 0.5) * 0.5;
-            this.speedY = (Math.random() - 0.5) * 0.5;
-            this.opacity = Math.random() * 0.5 + 0.2;
-        }
-
-        update() {
-            this.x += this.speedX;
-            this.y += this.speedY;
-
-            if (this.x > canvas.width) this.x = 0;
-            if (this.x < 0) this.x = canvas.width;
-            if (this.y > canvas.height) this.y = 0;
-            if (this.y < 0) this.y = canvas.height;
-        }
-
-        draw() {
-            ctx.fillStyle = `rgba(30, 181, 176, ${this.opacity})`;
-            ctx.beginPath();
-            ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Draw connections to nearby particles
-            particles.forEach(particle => {
-                const dx = this.x - particle.x;
-                const dy = this.y - particle.y;
-                const distance = Math.sqrt(dx * dx + dy * dy);
-
-                if (distance < 100) {
-                    ctx.strokeStyle = `rgba(16, 247, 205, ${0.2 * (1 - distance / 100)})`;
-                    ctx.lineWidth = 1;
-                    ctx.beginPath();
-                    ctx.moveTo(this.x, this.y);
-                    ctx.lineTo(particle.x, particle.y);
-                    ctx.stroke();
-                }
-            });
-        }
-    }
-
-    for (let i = 0; i < particleCount; i++) {
-        particles.push(new Particle());
-    }
-
-    function animate() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        particles.forEach(particle => {
-            particle.update();
-            particle.draw();
+  // ---------- Benchmark Bar Animation ----------
+  const benchObserver = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        entry.target.querySelectorAll('.bench-fill').forEach((bar, i) => {
+          setTimeout(() => bar.classList.add('animated'), i * 120);
         });
-        requestAnimationFrame(animate);
+        benchObserver.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.3 });
+
+  document.querySelectorAll('.bench-group').forEach(el => {
+    benchObserver.observe(el);
+  });
+
+  // ---------- Hero Network Visualization ----------
+  function createNetworkCanvas() {
+    const canvas = document.getElementById('hero-network');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+    function resize() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      canvas.style.width = rect.width + 'px';
+      canvas.style.height = rect.height + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
 
-    animate();
+    resize();
+    window.addEventListener('resize', resize);
 
-    window.addEventListener('resize', () => {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
-    });
-}
+    const w = () => canvas.width / dpr;
+    const h = () => canvas.height / dpr;
 
-// Initialize particles on desktop only
-if (window.innerWidth > 768) {
-    createParticles();
-}
+    // Nodes
+    const nodeCount = Math.min(Math.floor(w() / 25), 45);
+    const nodes = [];
 
-// Add hover effect to cards
-const cards = document.querySelectorAll('.group');
-cards.forEach(card => {
-    card.addEventListener('mouseenter', () => {
-        card.style.transform = 'translateY(-4px)';
-    });
-    card.addEventListener('mouseleave', () => {
-        card.style.transform = 'translateY(0)';
-    });
-});
+    for (let i = 0; i < nodeCount; i++) {
+      nodes.push({
+        x: Math.random() * w(),
+        y: Math.random() * h(),
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.3,
+        r: Math.random() * 1.5 + 0.8,
+        pulse: Math.random() * Math.PI * 2,
+        pulseSpeed: 0.02 + Math.random() * 0.02
+      });
+    }
 
-// Button ripple effect
-document.querySelectorAll('a[class*="bg-gradient"], button').forEach(button => {
-    button.addEventListener('click', function(e) {
-        const ripple = document.createElement('span');
-        const rect = this.getBoundingClientRect();
-        const size = Math.max(rect.width, rect.height);
-        const x = e.clientX - rect.left - size / 2;
-        const y = e.clientY - rect.top - size / 2;
+    // Traveling packets
+    const packets = [];
+    function spawnPacket() {
+      if (packets.length > 6) return;
+      const a = Math.floor(Math.random() * nodes.length);
+      let b = Math.floor(Math.random() * nodes.length);
+      if (a === b) b = (a + 1) % nodes.length;
+      packets.push({ from: a, to: b, t: 0, speed: 0.008 + Math.random() * 0.008 });
+    }
 
-        ripple.style.width = ripple.style.height = size + 'px';
-        ripple.style.left = x + 'px';
-        ripple.style.top = y + 'px';
-        ripple.style.position = 'absolute';
-        ripple.style.borderRadius = '50%';
-        ripple.style.background = 'rgba(255, 255, 255, 0.5)';
-        ripple.style.transform = 'scale(0)';
-        ripple.style.animation = 'ripple 0.6s ease-out';
-        ripple.style.pointerEvents = 'none';
+    function draw() {
+      ctx.clearRect(0, 0, w(), h());
+      const cw = w();
+      const ch = h();
 
-        const style = document.createElement('style');
-        style.textContent = `
-            @keyframes ripple {
-                to {
-                    transform: scale(4);
-                    opacity: 0;
-                }
-            }
-        `;
-        if (!document.querySelector('style[data-ripple]')) {
-            style.setAttribute('data-ripple', '');
-            document.head.appendChild(style);
+      // Update nodes
+      for (const node of nodes) {
+        node.x += node.vx;
+        node.y += node.vy;
+        node.pulse += node.pulseSpeed;
+
+        if (node.x < 0 || node.x > cw) node.vx *= -1;
+        if (node.y < 0 || node.y > ch) node.vy *= -1;
+        node.x = Math.max(0, Math.min(cw, node.x));
+        node.y = Math.max(0, Math.min(ch, node.y));
+      }
+
+      // Draw connections
+      const maxDist = 160;
+      for (let i = 0; i < nodes.length; i++) {
+        for (let j = i + 1; j < nodes.length; j++) {
+          const dx = nodes[i].x - nodes[j].x;
+          const dy = nodes[i].y - nodes[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < maxDist) {
+            const alpha = (1 - dist / maxDist) * 0.12;
+            ctx.strokeStyle = `rgba(30, 181, 176, ${alpha})`;
+            ctx.lineWidth = 0.6;
+            ctx.beginPath();
+            ctx.moveTo(nodes[i].x, nodes[i].y);
+            ctx.lineTo(nodes[j].x, nodes[j].y);
+            ctx.stroke();
+          }
         }
+      }
 
-        this.style.position = 'relative';
-        this.style.overflow = 'hidden';
-        this.appendChild(ripple);
+      // Draw nodes
+      for (const node of nodes) {
+        const pulseR = node.r + Math.sin(node.pulse) * 0.4;
+        ctx.fillStyle = `rgba(30, 181, 176, ${0.4 + Math.sin(node.pulse) * 0.2})`;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, pulseR, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-        setTimeout(() => {
-            ripple.remove();
-        }, 600);
-    });
-});
+      // Draw traveling packets
+      for (let i = packets.length - 1; i >= 0; i--) {
+        const p = packets[i];
+        p.t += p.speed;
+        if (p.t >= 1) { packets.splice(i, 1); continue; }
 
-// Log version with styled console
-console.log(
-    '%c AEGIS v2.0.0 ',
-    'background: linear-gradient(135deg, #1EB5B0, #10F7CD); color: white; padding: 8px 16px; font-weight: bold; font-size: 14px; border-radius: 4px;'
-);
-console.log('%cDecentralized Edge Network - Community Owned', 'color: #10F7CD; font-size: 12px; margin-top: 4px;');
-console.log('%c98% Phase 1 Complete | 4 Smart Contracts | 150+ Tests', 'color: #1EB5B0; font-size: 11px; margin-top: 2px;');
+        const from = nodes[p.from];
+        const to = nodes[p.to];
+        const x = from.x + (to.x - from.x) * p.t;
+        const y = from.y + (to.y - from.y) * p.t;
+
+        ctx.fillStyle = `rgba(16, 247, 205, ${0.8 - p.t * 0.6})`;
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Glow
+        ctx.fillStyle = `rgba(16, 247, 205, ${0.15 - p.t * 0.1})`;
+        ctx.beginPath();
+        ctx.arc(x, y, 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      if (Math.random() < 0.03) spawnPacket();
+      requestAnimationFrame(draw);
+    }
+
+    draw();
+  }
+
+  if (window.innerWidth > 640) {
+    createNetworkCanvas();
+  }
+
+  // ---------- Console Branding ----------
+  console.log(
+    '%c AEGIS v3.0 ',
+    'background: linear-gradient(135deg, #1EB5B0, #10F7CD); color: #030712; padding: 8px 20px; font-weight: 800; font-size: 14px; border-radius: 6px; font-family: Syne, sans-serif;'
+  );
+  console.log('%cDecentralized Edge Network — Community Owned', 'color: #10F7CD; font-size: 11px; font-family: monospace;');
+})();

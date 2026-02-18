@@ -27,7 +27,7 @@
     <meta name="keywords" content="decentralized CDN, Web3, blockchain, edge network, DDoS protection, IPFS, Solana, edge compute, censorship resistant, decentralized DNS, DNSSEC, DNS over HTTPS, DoH, DoT, authoritative DNS">
     <meta name="author" content="AEGIS">
     <meta name="robots" content="index, follow">
-    <meta name="theme-color" content="#1EB5B0">
+    <meta name="theme-color" content="#030712">
 
     <!-- Structured Data - Organization -->
     <script type="application/ld+json">
@@ -61,10 +61,10 @@
     }
     </script>
 
-    <!-- Google Fonts -->
+    <!-- Fonts: Syne (display) + DM Sans (body) + JetBrains Mono (code) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=JetBrains+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -73,23 +73,24 @@
             theme: {
                 extend: {
                     colors: {
-                        primary: '#007AFF',
-                        secondary: '#1EB5B0',
-                        darkBg: '#0A0E27',
-                        darkGrey: '#1A1D2E',
-                        mediumGrey: '#2D3142',
-                        lightGrey: '#4F5D75',
+                        deep: '#030712',
+                        surface: '#0a1128',
+                        elevated: '#111a3a',
                         aegis: {
                             teal: '#1EB5B0',
+                            cyan: '#10F7CD',
                             darkblue: '#1E478B',
                             lightblue: '#4CB1CC',
-                            cyan: '#10F7CD',
                             mediumblue: '#207D9C',
-                            purple: '#212382'
+                            purple: '#818cf8',
+                            indigo: '#212382',
+                            warm: '#fbbf24'
                         }
                     },
                     fontFamily: {
-                        sans: ['Inter', 'system-ui', 'sans-serif']
+                        display: ['Syne', 'system-ui', 'sans-serif'],
+                        sans: ['DM Sans', 'system-ui', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
                     }
                 }
             }
@@ -97,37 +98,44 @@
     </script>
     <link rel="stylesheet" href="css/style.css">
 </head>
-<body class="bg-darkBg text-white font-sans">
-    <!-- Navigation -->
-    <nav id="navbar" class="fixed w-full bg-white shadow-md z-50 border-b border-gray-200 transition-all">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="flex justify-between items-center h-24 md:h-28">
-                <!-- Logo -->
-                <div class="flex items-center">
-                    <img src="images/AEGIS-logo.svg" alt="AEGIS Logo" class="h-32 w-32 md:h-48 md:w-48" width="192" height="192">
-                </div>
+<body class="bg-deep text-gray-300 font-sans antialiased">
 
-                <!-- Desktop Navigation -->
-                <div class="hidden md:flex space-x-8">
-                    <a href="#features" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Features</a>
-                    <a href="#cdn" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">CDN</a>
-                    <a href="#dns" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">DNS</a>
-                    <a href="#technology" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Technology</a>
-                    <a href="#tokenomics" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Tokenomics</a>
-                    <a href="#roadmap" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Roadmap</a>
-                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="text-gray-700 hover:text-aegis-teal transition-colors font-medium">Docs</a>
+    <!-- Grain Texture Overlay -->
+    <div class="grain" aria-hidden="true"></div>
+
+    <!-- ============================================================
+         NAVIGATION
+         ============================================================ -->
+    <nav id="navbar" class="nav-glass fixed w-full z-50">
+        <div class="max-w-7xl mx-auto px-5 sm:px-8">
+            <div class="flex justify-between items-center h-20 md:h-24">
+                <!-- Logo -->
+                <a href="#" class="flex items-center gap-1 shrink-0">
+                    <img src="images/AEGIS-logo.svg" alt="AEGIS" class="h-24 w-24 md:h-36 md:w-36" width="144" height="144">
+                </a>
+
+                <!-- Desktop Nav -->
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#features" class="nav-link">Features</a>
+                    <a href="#cdn" class="nav-link">CDN</a>
+                    <a href="#dns" class="nav-link">DNS</a>
+                    <a href="#technology" class="nav-link">Technology</a>
+                    <a href="#tokenomics" class="nav-link">Tokenomics</a>
+                    <a href="#roadmap" class="nav-link">Roadmap</a>
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="nav-link">Docs</a>
                 </div>
 
                 <!-- Desktop CTA -->
-                <div class="hidden md:flex items-center space-x-4">
-                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="px-6 py-2.5 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold hover:shadow-lg hover:shadow-aegis-cyan/50 transition-all">
+                <div class="hidden md:block">
+                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="btn-primary text-sm py-2.5 px-5">
                         Get Started
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
                     </a>
                 </div>
 
                 <!-- Mobile Menu Button -->
-                <button id="mobile-menu-button" class="md:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors" aria-label="Toggle menu">
-                    <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <button id="mobile-menu-button" class="md:hidden p-2 rounded-lg hover:bg-white/5 transition-colors" aria-label="Toggle menu">
+                    <svg class="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path id="menu-icon" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
                         <path id="close-icon" class="hidden" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                     </svg>
@@ -136,609 +144,499 @@
         </div>
 
         <!-- Mobile Menu -->
-        <div id="mobile-menu" class="hidden md:hidden bg-white border-t border-gray-200">
-            <div class="px-4 pt-2 pb-4 space-y-2">
-                <a href="#features" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Features</a>
-                <a href="#cdn" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">CDN</a>
-                <a href="#dns" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">DNS</a>
-                <a href="#technology" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Technology</a>
-                <a href="#tokenomics" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Tokenomics</a>
-                <a href="#roadmap" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Roadmap</a>
-                <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 rounded-lg text-gray-700 hover:bg-gray-100 hover:text-aegis-teal transition-colors">Docs</a>
-                <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 mt-2 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold text-center">Get Started</a>
+        <div id="mobile-menu" class="hidden md:hidden border-t border-white/5 bg-deep/95 backdrop-blur-xl">
+            <div class="px-5 py-4 space-y-1">
+                <a href="#features" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">Features</a>
+                <a href="#cdn" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">CDN</a>
+                <a href="#dns" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">DNS</a>
+                <a href="#technology" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">Technology</a>
+                <a href="#tokenomics" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">Tokenomics</a>
+                <a href="#roadmap" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">Roadmap</a>
+                <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="block px-4 py-3 rounded-lg text-gray-300 hover:bg-white/5 hover:text-aegis-teal transition-colors text-sm">Docs</a>
+                <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="block mt-3 text-center btn-primary text-sm py-3">Get Started</a>
             </div>
         </div>
     </nav>
 
-    <!-- Main Content Landmark for Accessibility -->
+    <!-- ============================================================
+         MAIN CONTENT
+         ============================================================ -->
     <main id="main-content">
 
-    <!-- Hero Section -->
-    <section class="pt-36 md:pt-40 pb-16 px-4 relative overflow-hidden">
-        <!-- Background World Map -->
-        <div class="absolute inset-0 flex items-center justify-center opacity-20 pointer-events-none">
-            <img src="images/world.svg" alt="Global Network" class="w-full h-auto max-w-6xl object-contain" width="1152" height="600" loading="lazy" style="filter: invert(65%) sepia(45%) saturate(600%) hue-rotate(155deg) brightness(95%) contrast(90%);">
+    <!-- ==================== HERO ==================== -->
+    <section class="relative min-h-screen flex items-center pt-16 overflow-hidden hero-gradient grid-bg">
+        <!-- Network Canvas -->
+        <div class="hero-canvas">
+            <canvas id="hero-network" class="w-full h-full"></canvas>
         </div>
 
-        <!-- Animated Network Nodes (Optional Decorative Elements) -->
-        <div class="absolute inset-0 pointer-events-none">
-            <div class="absolute top-1/4 left-1/4 w-3 h-3 bg-aegis-teal rounded-full animate-pulse"></div>
-            <div class="absolute top-1/3 right-1/3 w-2 h-2 bg-aegis-cyan rounded-full animate-pulse" style="animation-delay: 0.5s"></div>
-            <div class="absolute bottom-1/3 left-1/3 w-3 h-3 bg-aegis-lightblue rounded-full animate-pulse" style="animation-delay: 1s"></div>
-            <div class="absolute top-1/2 right-1/4 w-2 h-2 bg-aegis-purple rounded-full animate-pulse" style="animation-delay: 1.5s"></div>
-        </div>
+        <!-- Ambient Glow Orbs -->
+        <div class="glow-orb w-[700px] h-[700px] bg-aegis-teal/[0.04] -top-48 left-1/2 -translate-x-1/2" aria-hidden="true"></div>
+        <div class="glow-orb w-[500px] h-[500px] bg-aegis-indigo/[0.05] bottom-0 -left-48" aria-hidden="true"></div>
 
-        <div class="max-w-7xl mx-auto relative z-10">
-            <div class="text-center mb-16">
-                <h1 class="text-5xl md:text-7xl font-bold mb-6 text-white leading-tight">
-                    Unstoppable Edge.<br/>Community-Owned CDN.
+        <div class="relative z-10 max-w-7xl mx-auto px-5 sm:px-8 py-24 md:py-32">
+            <div class="max-w-4xl">
+                <!-- Eyebrow -->
+                <div class="reveal flex flex-wrap items-center gap-2 sm:gap-3 mb-8">
+                    <span class="badge badge-complete">
+                        <span class="w-1.5 h-1.5 bg-aegis-cyan rounded-full"></span>
+                        29 of 30 Sprints Complete
+                    </span>
+                    <span class="badge badge-metric">
+                        840+ Tests Passing
+                    </span>
+                </div>
+
+                <!-- Heading -->
+                <h1 class="reveal reveal-delay-1 heading-xl text-white text-4xl sm:text-5xl md:text-7xl lg:text-8xl mb-8">
+                    The Unstoppable<br>
+                    <span class="gradient-text">Edge Network</span>
                 </h1>
-                <p class="text-xl md:text-2xl text-gray-300 max-w-3xl mx-auto mb-10 leading-relaxed">
-                    A Web3-native, blockchain-powered global edge network designed as a decentralized alternative to centralized CDN and edge security providers.
+
+                <!-- Sub -->
+                <p class="reveal reveal-delay-2 text-lg md:text-xl text-gray-400 max-w-2xl mb-12 leading-relaxed">
+                    A blockchain-powered global edge network. Decentralized CDN, kernel-level DDoS protection, and Wasm edge compute &mdash; owned by the community, not a corporation.
                 </p>
-                <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="px-8 py-4 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold hover:shadow-lg hover:shadow-aegis-cyan/50 transition-all text-lg">
+
+                <!-- CTAs -->
+                <div class="reveal reveal-delay-3 flex flex-col sm:flex-row gap-4">
+                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="btn-primary text-base">
                         Launch App
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
                     </a>
-                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="px-8 py-4 border-2 border-aegis-teal text-white rounded-lg font-semibold hover:bg-aegis-teal/10 transition-all text-lg">
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="btn-outline text-base">
                         Read Whitepaper
                     </a>
                 </div>
             </div>
         </div>
+
+        <!-- Bottom fade -->
+        <div class="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-deep to-transparent"></div>
     </section>
 
-    <!-- Metrics Bar -->
-    <section class="py-8 px-4 bg-darkGrey/50 border-y border-aegis-teal/20">
+    <!-- ==================== METRICS BAR ==================== -->
+    <section class="relative py-6 px-5 sm:px-8 border-y border-white/[0.04]">
         <div class="max-w-7xl mx-auto">
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-8">
-                <div class="text-center">
-                    <div class="text-sm text-gray-400 mb-2">Smart Contracts</div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-cyan stat-number">5</div>
-                    <div class="text-xs text-aegis-teal mt-1">Deployed on Devnet</div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                <div class="metric-glow text-center py-4 px-3 rounded-xl">
+                    <div class="text-xs uppercase tracking-widest text-gray-500 mb-2 font-medium">Smart Contracts</div>
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-cyan stat-number">5</div>
+                    <div class="text-xs text-aegis-teal/70 mt-1">Deployed on Devnet</div>
                 </div>
-                <div class="text-center md:border-l border-aegis-teal/20">
-                    <div class="text-sm text-gray-400 mb-2">Test Coverage</div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-lightblue stat-number">600+</div>
-                    <div class="text-xs text-aegis-teal mt-1">Tests Passing</div>
+                <div class="metric-glow text-center py-4 px-3 rounded-xl md:border-l md:border-white/[0.04]">
+                    <div class="text-xs uppercase tracking-widest text-gray-500 mb-2 font-medium">Test Coverage</div>
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-lightblue stat-number">840+</div>
+                    <div class="text-xs text-aegis-teal/70 mt-1">Tests Passing</div>
                 </div>
-                <div class="text-center md:border-l border-aegis-teal/20">
-                    <div class="text-sm text-gray-400 mb-2">Target Uptime</div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-purple stat-number">99.999%</div>
-                    <div class="text-xs text-aegis-teal mt-1">Five Nines</div>
+                <div class="metric-glow text-center py-4 px-3 rounded-xl md:border-l md:border-white/[0.04]">
+                    <div class="text-xs uppercase tracking-widest text-gray-500 mb-2 font-medium">Target Uptime</div>
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-purple stat-number">99.999%</div>
+                    <div class="text-xs text-aegis-teal/70 mt-1">Five Nines</div>
                 </div>
-                <div class="text-center md:border-l border-aegis-teal/20">
-                    <div class="text-sm text-gray-400 mb-2">Development</div>
-                    <div class="text-3xl md:text-4xl font-bold gradient-text stat-number">97%</div>
-                    <div class="text-xs text-aegis-teal mt-1">29 of 30 Sprints</div>
+                <div class="metric-glow text-center py-4 px-3 rounded-xl md:border-l md:border-white/[0.04]">
+                    <div class="text-xs uppercase tracking-widest text-gray-500 mb-2 font-medium">Development</div>
+                    <div class="text-3xl md:text-4xl font-display font-800 gradient-text stat-number">97%</div>
+                    <div class="text-xs text-aegis-teal/70 mt-1">29 of 30 Sprints</div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Why AEGIS Section -->
-    <section id="features" class="py-20 px-4">
+    <!-- ==================== WHY AEGIS (FEATURES) ==================== -->
+    <section id="features" class="py-28 px-5 sm:px-8 relative section-gradient">
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Why AEGIS?</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Decentralized infrastructure that eliminates single points of failure
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Core Advantages</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Why AEGIS?</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Decentralized infrastructure that eliminates single points of failure</p>
+            </div>
 
-            <div class="grid md:grid-cols-3 gap-8">
-                <!-- Card 1 -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-cyan/50 hover:bg-darkGrey/80 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                        </svg>
+            <!-- Bento Grid -->
+            <div class="grid md:grid-cols-3 gap-5">
+                <!-- Card 1 — Large -->
+                <div class="reveal reveal-delay-1 card p-8 md:row-span-2 flex flex-col justify-between">
+                    <div>
+                        <div class="icon-box w-12 h-12 bg-aegis-teal/10 mb-6">
+                            <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
+                            </svg>
+                        </div>
+                        <h3 class="heading-md text-white text-2xl mb-4">Censorship Resistant</h3>
+                        <p class="text-gray-400 leading-relaxed mb-6">
+                            No single point of control. Content served from thousands of independent nodes worldwide ensures your data stays accessible, always.
+                        </p>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Censorship Resistant</h3>
-                    <p class="text-gray-300 leading-relaxed">
-                        No single point of control. Content served from thousands of independent nodes worldwide ensures your data stays accessible, always.
-                    </p>
+                    <div class="flex items-center gap-3 pt-6 border-t border-white/[0.06]">
+                        <span class="w-2 h-2 bg-aegis-cyan rounded-full"></span>
+                        <span class="text-sm text-gray-500">IPFS content addressing + P2P distribution</span>
+                    </div>
                 </div>
 
                 <!-- Card 2 -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-cyan/50 hover:bg-darkGrey/80 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-cyan to-aegis-lightblue rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                <div class="reveal reveal-delay-2 card p-8">
+                    <div class="icon-box w-12 h-12 bg-aegis-cyan/10 mb-6">
+                        <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/>
                         </svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Lightning Fast</h3>
-                    <p class="text-gray-300 leading-relaxed">
-                        BGP Anycast routing connects users to the nearest edge node. Rust-powered Pingora proxy delivers lt 60ms TTFB with zero-downtime upgrades.
+                    <h3 class="heading-md text-white text-xl mb-3">Lightning Fast</h3>
+                    <p class="text-gray-400 leading-relaxed text-sm">
+                        BGP Anycast routing connects users to the nearest edge node. Rust-powered Pingora proxy delivers &lt;60ms TTFB with zero-downtime upgrades.
                     </p>
                 </div>
 
                 <!-- Card 3 -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-cyan/50 hover:bg-darkGrey/80 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-lightblue to-aegis-purple rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                <div class="reveal reveal-delay-3 card p-8">
+                    <div class="icon-box w-12 h-12 bg-aegis-purple/10 mb-6">
+                        <svg class="w-6 h-6 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
                         </svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Enterprise Security</h3>
-                    <p class="text-gray-300 leading-relaxed">
-                        eBPF/XDP DDoS protection at kernel level. OWASP-compliant WAF running in isolated Wasm sandboxes. Memory-safe Rust throughout.
+                    <h3 class="heading-md text-white text-xl mb-3">Enterprise Security</h3>
+                    <p class="text-gray-400 leading-relaxed text-sm">
+                        eBPF/XDP DDoS protection at kernel level. OWASP-compliant WAF in isolated Wasm sandboxes. Memory-safe Rust throughout.
+                    </p>
+                </div>
+
+                <!-- Card 4 -->
+                <div class="reveal reveal-delay-2 card p-8">
+                    <div class="icon-box w-12 h-12 bg-aegis-warm/10 mb-6">
+                        <svg class="w-6 h-6 text-aegis-warm" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                    </div>
+                    <h3 class="heading-md text-white text-xl mb-3">Community Owned</h3>
+                    <p class="text-gray-400 leading-relaxed text-sm">
+                        $AEGIS token on Solana. Node operators earn rewards for uptime. DAO governance gives the community full control.
+                    </p>
+                </div>
+
+                <!-- Card 5 -->
+                <div class="reveal reveal-delay-3 card p-8">
+                    <div class="icon-box w-12 h-12 bg-aegis-lightblue/10 mb-6">
+                        <svg class="w-6 h-6 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
+                        </svg>
+                    </div>
+                    <h3 class="heading-md text-white text-xl mb-3">Edge Compute</h3>
+                    <p class="text-gray-400 leading-relaxed text-sm">
+                        Deploy custom Wasm modules to the edge. Route-based dispatch pipelines chain WAF, auth, rate limiting, and custom logic.
                     </p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- CDN Section -->
-    <section id="cdn" class="py-20 px-4 bg-darkGrey/30">
+    <!-- ==================== CDN SECTION ==================== -->
+    <section id="cdn" class="py-28 px-5 sm:px-8">
+        <div class="section-line mb-28"></div>
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Decentralized CDN</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Content delivery without central control. Deploy static sites for free.
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Content Delivery</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Decentralized CDN</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Content delivery without central control. Deploy static sites for free.</p>
+            </div>
 
-            <!-- How It Works -->
-            <div class="grid md:grid-cols-4 gap-6 mb-16">
-                <!-- Step 1 -->
-                <div class="text-center p-6 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 relative">
-                    <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 w-8 h-8 bg-aegis-teal rounded-full flex items-center justify-center text-white font-bold text-sm">1</div>
-                    <div class="w-16 h-16 bg-aegis-teal/10 rounded-xl mx-auto mb-4 mt-4 flex items-center justify-center">
-                        <svg class="w-8 h-8 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
-                        </svg>
-                    </div>
-                    <h3 class="font-bold text-white mb-2">Initialize</h3>
-                    <p class="text-sm text-gray-400">aegis-cdn init my-site</p>
+            <!-- Steps -->
+            <div class="reveal grid grid-cols-2 md:grid-cols-4 gap-4 mb-16">
+                <div class="card-sm p-6 text-center">
+                    <div class="w-8 h-8 rounded-full bg-aegis-teal/15 text-aegis-teal font-mono text-sm font-semibold flex items-center justify-center mx-auto mb-4">1</div>
+                    <div class="font-semibold text-white text-sm mb-1">Initialize</div>
+                    <div class="text-xs text-gray-500 font-mono">aegis-cdn init</div>
                 </div>
-
-                <!-- Arrow -->
-                <div class="hidden md:flex items-center justify-center">
-                    <svg class="w-8 h-8 text-aegis-teal/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
-                    </svg>
+                <div class="card-sm p-6 text-center">
+                    <div class="w-8 h-8 rounded-full bg-aegis-cyan/15 text-aegis-cyan font-mono text-sm font-semibold flex items-center justify-center mx-auto mb-4">2</div>
+                    <div class="font-semibold text-white text-sm mb-1">Deploy</div>
+                    <div class="text-xs text-gray-500 font-mono">aegis-cdn deploy</div>
                 </div>
-
-                <!-- Step 2 -->
-                <div class="text-center p-6 bg-darkGrey/50 rounded-2xl border border-aegis-cyan/20 relative">
-                    <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 w-8 h-8 bg-aegis-cyan rounded-full flex items-center justify-center text-white font-bold text-sm">2</div>
-                    <div class="w-16 h-16 bg-aegis-cyan/10 rounded-xl mx-auto mb-4 mt-4 flex items-center justify-center">
-                        <svg class="w-8 h-8 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
-                        </svg>
-                    </div>
-                    <h3 class="font-bold text-white mb-2">Deploy</h3>
-                    <p class="text-sm text-gray-400">aegis-cdn deploy public/</p>
+                <div class="card-sm p-6 text-center">
+                    <div class="w-8 h-8 rounded-full bg-aegis-lightblue/15 text-aegis-lightblue font-mono text-sm font-semibold flex items-center justify-center mx-auto mb-4">3</div>
+                    <div class="font-semibold text-white text-sm mb-1">IPFS Distribution</div>
+                    <div class="text-xs text-gray-500">Content-addressed</div>
                 </div>
-
-                <!-- Arrow -->
-                <div class="hidden md:flex items-center justify-center">
-                    <svg class="w-8 h-8 text-aegis-cyan/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
-                    </svg>
-                </div>
-
-                <!-- Step 3 -->
-                <div class="text-center p-6 bg-darkGrey/50 rounded-2xl border border-aegis-lightblue/20 relative md:col-start-1">
-                    <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 w-8 h-8 bg-aegis-lightblue rounded-full flex items-center justify-center text-white font-bold text-sm">3</div>
-                    <div class="w-16 h-16 bg-aegis-lightblue/10 rounded-xl mx-auto mb-4 mt-4 flex items-center justify-center">
-                        <svg class="w-8 h-8 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-                    <h3 class="font-bold text-white mb-2">IPFS Distribution</h3>
-                    <p class="text-sm text-gray-400">Content-addressed storage</p>
-                </div>
-
-                <!-- Arrow -->
-                <div class="hidden md:flex items-center justify-center">
-                    <svg class="w-8 h-8 text-aegis-lightblue/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/>
-                    </svg>
-                </div>
-
-                <!-- Step 4 -->
-                <div class="text-center p-6 bg-darkGrey/50 rounded-2xl border border-aegis-purple/20 relative">
-                    <div class="absolute -top-3 left-1/2 transform -translate-x-1/2 w-8 h-8 bg-aegis-purple rounded-full flex items-center justify-center text-white font-bold text-sm">4</div>
-                    <div class="w-16 h-16 bg-aegis-purple/10 rounded-xl mx-auto mb-4 mt-4 flex items-center justify-center">
-                        <svg class="w-8 h-8 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                        </svg>
-                    </div>
-                    <h3 class="font-bold text-white mb-2">Global Edge</h3>
-                    <p class="text-sm text-gray-400">Served from nearest node</p>
+                <div class="card-sm p-6 text-center">
+                    <div class="w-8 h-8 rounded-full bg-aegis-purple/15 text-aegis-purple font-mono text-sm font-semibold flex items-center justify-center mx-auto mb-4">4</div>
+                    <div class="font-semibold text-white text-sm mb-1">Global Edge</div>
+                    <div class="text-xs text-gray-500">Nearest node serves</div>
                 </div>
             </div>
 
-            <!-- CDN Features Grid -->
-            <div class="grid md:grid-cols-3 gap-8">
-                <!-- IPFS Integration -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-teal/50 transition-all">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-xl mb-6 flex items-center justify-center">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                        </svg>
+            <!-- CDN Feature Cards -->
+            <div class="grid md:grid-cols-3 gap-5 mb-16">
+                <div class="reveal reveal-delay-1 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-teal/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">IPFS Storage</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        Content stored on IPFS with content-addressed CIDs. No central server can block or censor your content.
-                    </p>
-                    <div class="text-sm text-aegis-teal">
-                        Multi-tier CDN fallback: local cache, IPFS node, public gateways
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">IPFS Storage</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">Content stored on IPFS with content-addressed CIDs. No central server can block or censor your content.</p>
+                    <p class="text-xs text-aegis-teal/80">Multi-tier CDN fallback: local cache, IPFS node, public gateways</p>
                 </div>
-
-                <!-- Zero Token Cost -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-cyan/20 hover:border-aegis-cyan/50 transition-all">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-cyan to-aegis-lightblue rounded-xl mb-6 flex items-center justify-center">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
+                <div class="reveal reveal-delay-2 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-cyan/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Free Static Hosting</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        Deploy HTML, CSS, JS, and images without $AEGIS tokens. No subscription fees for static content.
-                    </p>
-                    <div class="text-sm text-aegis-cyan">
-                        Optional: Filecoin pinning for guaranteed long-term storage
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">Free Static Hosting</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">Deploy HTML, CSS, JS, and images without $AEGIS tokens. No subscription fees for static content.</p>
+                    <p class="text-xs text-aegis-cyan/80">Optional: Filecoin pinning for guaranteed long-term storage</p>
                 </div>
-
-                <!-- Built-in Security -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-lightblue/20 hover:border-aegis-lightblue/50 transition-all">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-lightblue to-aegis-purple rounded-xl mb-6 flex items-center justify-center">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                        </svg>
+                <div class="reveal reveal-delay-3 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-purple/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Security by Default</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        Every deployment includes WAF protection and bot management. No extra configuration needed.
-                    </p>
-                    <div class="text-sm text-aegis-lightblue">
-                        Route-based module pipelines for custom security rules
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">Security by Default</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">Every deployment includes WAF protection and bot management. No extra configuration needed.</p>
+                    <p class="text-xs text-aegis-purple/80">Route-based module pipelines for custom security rules</p>
                 </div>
             </div>
 
-            <!-- Code Example -->
-            <div class="mt-16 max-w-3xl mx-auto">
-                <div class="bg-darkGrey rounded-2xl border border-aegis-teal/30 overflow-hidden">
-                    <div class="flex items-center px-4 py-3 bg-darkGrey/80 border-b border-aegis-teal/20">
-                        <div class="flex space-x-2">
-                            <div class="w-3 h-3 bg-red-500 rounded-full"></div>
-                            <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                            <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-                        </div>
-                        <span class="ml-4 text-sm text-gray-400">Terminal</span>
+            <!-- Terminal -->
+            <div class="reveal max-w-3xl mx-auto">
+                <div class="terminal">
+                    <div class="terminal-header">
+                        <div class="terminal-dot bg-red-500/80"></div>
+                        <div class="terminal-dot bg-yellow-500/80"></div>
+                        <div class="terminal-dot bg-green-500/80"></div>
+                        <span class="ml-4 text-xs text-gray-500 font-mono">Terminal</span>
                     </div>
-                    <div class="p-6 font-mono text-sm">
-                        <div class="text-gray-400"># Initialize a new project</div>
+                    <div class="p-4 sm:p-6 font-mono text-xs sm:text-sm leading-relaxed overflow-x-auto">
+                        <div class="text-gray-500"># Initialize a new project</div>
                         <div class="text-aegis-cyan mb-3">$ aegis-cdn init my-website</div>
-
-                        <div class="text-gray-400"># Deploy to the decentralized CDN</div>
+                        <div class="text-gray-500"># Deploy to the decentralized CDN</div>
                         <div class="text-aegis-cyan mb-3">$ aegis-cdn deploy public/</div>
-
-                        <div class="text-gray-500 mb-1">IPFS CID: QmXyz...abc123</div>
-                        <div class="text-gray-500 mb-1">Gateway: https://ipfs.io/ipfs/QmXyz...</div>
-                        <div class="text-aegis-teal">Deployment complete!</div>
+                        <div class="text-gray-600 mb-1">IPFS CID: QmXyz...abc123</div>
+                        <div class="text-gray-600 mb-1">Gateway: https://ipfs.io/ipfs/QmXyz...</div>
+                        <div class="text-aegis-teal font-medium">Deployment complete!</div>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- DNS Section -->
-    <section id="dns" class="py-20 px-4">
+    <!-- ==================== DNS SECTION ==================== -->
+    <section id="dns" class="py-28 px-5 sm:px-8 section-gradient">
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Decentralized DNS</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Authoritative DNS with DNSSEC, DoH/DoT support, and intelligent geo-routing
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Domain Name System</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Decentralized DNS</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Authoritative DNS with DNSSEC, DoH/DoT support, and intelligent geo-routing</p>
+            </div>
 
-            <!-- DNS Features Grid -->
-            <div class="grid md:grid-cols-3 gap-8 mb-16">
-                <!-- Authoritative DNS -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 hover:border-aegis-teal/50 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
-                        </svg>
+            <!-- DNS Feature Cards -->
+            <div class="grid md:grid-cols-3 gap-5 mb-16">
+                <div class="reveal reveal-delay-1 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-teal/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Authoritative DNS</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        Full authoritative DNS server built on Hickory DNS (Rust). Support for A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, and SRV records.
-                    </p>
-                    <div class="text-sm text-aegis-teal">
-                        Just point your nameservers to AEGIS and we handle the rest
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">Authoritative DNS</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">Full authoritative DNS server built on Hickory DNS (Rust). Support for A, AAAA, CNAME, MX, TXT, NS, SOA, CAA, and SRV records.</p>
+                    <p class="text-xs text-aegis-teal/80">Just point your nameservers to AEGIS and we handle the rest</p>
                 </div>
-
-                <!-- DNSSEC -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-cyan/20 hover:border-aegis-cyan/50 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-cyan to-aegis-lightblue rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                        </svg>
+                <div class="reveal reveal-delay-2 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-cyan/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">DNSSEC Signing</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        Cryptographic signatures on all DNS responses using Ed25519. Automatic key generation, RRSIG records, and DS record export for registrars.
-                    </p>
-                    <div class="text-sm text-aegis-cyan">
-                        One-click DNSSEC enablement with automatic re-signing
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">DNSSEC Signing</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">Cryptographic signatures on all DNS responses using Ed25519. Automatic key generation, RRSIG records, and DS record export.</p>
+                    <p class="text-xs text-aegis-cyan/80">One-click DNSSEC enablement with automatic re-signing</p>
                 </div>
-
-                <!-- DNS over HTTPS/TLS -->
-                <div class="group p-8 bg-darkGrey/50 rounded-2xl border border-aegis-lightblue/20 hover:border-aegis-lightblue/50 transition-all card-glow">
-                    <div class="w-14 h-14 bg-gradient-to-br from-aegis-lightblue to-aegis-purple rounded-xl mb-6 flex items-center justify-center group-hover:scale-110 transition-transform">
-                        <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/>
-                        </svg>
+                <div class="reveal reveal-delay-3 card p-7">
+                    <div class="icon-box w-10 h-10 bg-aegis-purple/10 mb-5">
+                        <svg class="w-5 h-5 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z"/></svg>
                     </div>
-                    <h3 class="text-2xl font-bold mb-4 text-white">Encrypted DNS</h3>
-                    <p class="text-gray-300 leading-relaxed mb-4">
-                        DNS over HTTPS (DoH) and DNS over TLS (DoT) support for privacy. ISPs and attackers cannot snoop on your DNS queries.
-                    </p>
-                    <div class="text-sm text-aegis-lightblue">
-                        RFC 8484 compliant DoH endpoint at /dns-query
-                    </div>
+                    <h3 class="heading-md text-white text-lg mb-2">Encrypted DNS</h3>
+                    <p class="text-gray-400 text-sm leading-relaxed mb-4">DNS over HTTPS (DoH) and DNS over TLS (DoT) support for privacy. ISPs and attackers cannot snoop on your DNS queries.</p>
+                    <p class="text-xs text-aegis-purple/80">RFC 8484 compliant DoH endpoint at /dns-query</p>
                 </div>
             </div>
 
-            <!-- Geo-Aware Resolution -->
-            <div class="grid md:grid-cols-2 gap-8 mb-16">
-                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-teal/30 p-8">
-                    <h3 class="text-3xl font-bold mb-6 flex items-center">
-                        <span class="w-3 h-3 bg-aegis-teal rounded-full mr-3"></span>
+            <!-- Geo Routing + Management API -->
+            <div class="grid md:grid-cols-2 gap-5 mb-16">
+                <div class="reveal card p-7">
+                    <h3 class="heading-md text-white text-xl mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-aegis-teal rounded-full"></span>
                         Intelligent Geo-Routing
                     </h3>
-                    <p class="text-gray-400 mb-6 leading-relaxed">
-                        DNS queries automatically return the IP of the nearest healthy edge node based on client location
-                    </p>
-                    <div class="space-y-4">
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
-                                </svg>
+                    <p class="text-gray-500 text-sm mb-6">DNS queries automatically return the IP of the nearest healthy edge node</p>
+                    <div class="space-y-3">
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8">
+                                <svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">GeoIP Resolution</div>
-                                <div class="text-sm text-gray-400">MaxMind GeoLite2 database for accurate client location detection</div>
+                                <div class="font-semibold text-white text-sm">GeoIP Resolution</div>
+                                <div class="text-xs text-gray-500">MaxMind GeoLite2 database for accurate client location</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                </svg>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8">
+                                <svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">Health-Aware Routing</div>
-                                <div class="text-sm text-gray-400">Automatic failover to healthy nodes, unhealthy nodes excluded from responses</div>
+                                <div class="font-semibold text-white text-sm">Health-Aware Routing</div>
+                                <div class="text-xs text-gray-500">Automatic failover to healthy nodes</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                                </svg>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8">
+                                <svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">Low Latency</div>
-                                <div class="text-sm text-gray-400">Haversine distance calculation returns the 3 nearest edge nodes</div>
+                                <div class="font-semibold text-white text-sm">Low Latency</div>
+                                <div class="text-xs text-gray-500">Haversine distance returns 3 nearest edge nodes</div>
                             </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- DNS Management API -->
-                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-cyan/30 p-8">
-                    <h3 class="text-3xl font-bold mb-6 flex items-center">
-                        <span class="w-3 h-3 bg-aegis-cyan rounded-full mr-3"></span>
+                <div class="reveal reveal-delay-1 card p-7">
+                    <h3 class="heading-md text-white text-xl mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-aegis-cyan rounded-full"></span>
                         Full Management API
                     </h3>
-                    <p class="text-gray-400 mb-6 leading-relaxed">
-                        Complete REST API for DNS zone and record management with TypeScript SDK
-                    </p>
-                    <div class="space-y-4">
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                                </svg>
+                    <p class="text-gray-500 text-sm mb-6">Complete REST API for DNS zone and record management with TypeScript SDK</p>
+                    <div class="space-y-3">
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8">
+                                <svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">Zone Management</div>
-                                <div class="text-sm text-gray-400">Create, update, delete zones with SQLite persistence</div>
+                                <div class="font-semibold text-white text-sm">Zone Management</div>
+                                <div class="text-xs text-gray-500">Create, update, delete zones with SQLite persistence</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-                                </svg>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8">
+                                <svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">Record CRUD</div>
-                                <div class="text-sm text-gray-400">Full record management with TTL and priority support</div>
+                                <div class="font-semibold text-white text-sm">Record CRUD</div>
+                                <div class="text-xs text-gray-500">Full record management with TTL and priority support</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
-                                </svg>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8">
+                                <svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
                             </div>
                             <div>
-                                <div class="font-bold text-white mb-1">Analytics</div>
-                                <div class="text-sm text-gray-400">Query statistics, per-zone metrics, and traffic insights</div>
+                                <div class="font-semibold text-white text-sm">Analytics</div>
+                                <div class="text-xs text-gray-500">Query statistics, per-zone metrics, and traffic insights</div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- DNS CLI Example -->
-            <div class="max-w-3xl mx-auto">
-                <div class="bg-darkGrey rounded-2xl border border-aegis-teal/30 overflow-hidden">
-                    <div class="flex items-center px-4 py-3 bg-darkGrey/80 border-b border-aegis-teal/20">
-                        <div class="flex space-x-2">
-                            <div class="w-3 h-3 bg-red-500 rounded-full"></div>
-                            <div class="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                            <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-                        </div>
-                        <span class="ml-4 text-sm text-gray-400">Terminal - DNS Management</span>
+            <!-- DNS Terminal -->
+            <div class="reveal max-w-3xl mx-auto">
+                <div class="terminal">
+                    <div class="terminal-header">
+                        <div class="terminal-dot bg-red-500/80"></div>
+                        <div class="terminal-dot bg-yellow-500/80"></div>
+                        <div class="terminal-dot bg-green-500/80"></div>
+                        <span class="ml-4 text-xs text-gray-500 font-mono">Terminal &mdash; DNS Management</span>
                     </div>
-                    <div class="p-6 font-mono text-sm">
-                        <div class="text-gray-400"># Create a new DNS zone</div>
+                    <div class="p-4 sm:p-6 font-mono text-xs sm:text-sm leading-relaxed overflow-x-auto">
+                        <div class="text-gray-500"># Create a new DNS zone</div>
                         <div class="text-aegis-cyan mb-3">$ aegis-cli dns create-zone --domain example.com --proxied</div>
-
-                        <div class="text-gray-500 mb-1">Zone created: example.com</div>
-                        <div class="text-gray-500 mb-3">Nameservers: ns1.aegis.network, ns2.aegis.network</div>
-
-                        <div class="text-gray-400"># Add an A record</div>
+                        <div class="text-gray-600 mb-1">Zone created: example.com</div>
+                        <div class="text-gray-600 mb-3">Nameservers: ns1.aegis.network, ns2.aegis.network</div>
+                        <div class="text-gray-500"># Add an A record</div>
                         <div class="text-aegis-cyan mb-3">$ aegis-cli dns add-record -d example.com -n www -t A -v 192.168.1.1</div>
-
-                        <div class="text-gray-400"># Enable DNSSEC</div>
+                        <div class="text-gray-500"># Enable DNSSEC</div>
                         <div class="text-aegis-cyan mb-3">$ aegis-cli dns enable-dnssec --domain example.com</div>
-
-                        <div class="text-gray-500 mb-1">DNSSEC enabled!</div>
-                        <div class="text-aegis-teal">DS Record: example.com. IN DS 12345 15 2 abc123...</div>
+                        <div class="text-gray-600 mb-1">DNSSEC enabled!</div>
+                        <div class="text-aegis-teal font-medium">DS Record: example.com. IN DS 12345 15 2 abc123...</div>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Technology Stack Section -->
-    <section id="technology" class="py-20 px-4 bg-darkGrey/30">
+    <!-- ==================== TECHNOLOGY STACK ==================== -->
+    <section id="technology" class="py-28 px-5 sm:px-8">
+        <div class="section-line mb-28"></div>
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Technology Stack</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Memory-safe architecture designed to eliminate failure modes
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Architecture</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Technology Stack</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Memory-safe architecture designed to eliminate failure modes</p>
+            </div>
 
-            <div class="grid md:grid-cols-2 gap-12">
+            <div class="grid md:grid-cols-2 gap-5">
                 <!-- Data Plane -->
-                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-teal/30 p-8">
-                    <h3 class="text-3xl font-bold mb-6 flex items-center">
-                        <span class="w-3 h-3 bg-aegis-teal rounded-full mr-3"></span>
+                <div class="reveal card p-7">
+                    <h3 class="heading-md text-white text-xl mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-aegis-teal rounded-full"></span>
                         The Data Plane
                     </h3>
-                    <p class="text-gray-400 mb-6 leading-relaxed">
-                        High-performance request processing optimized for speed and reliability
-                    </p>
-                    <div class="space-y-4">
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-                                </svg>
-                            </div>
+                    <p class="text-gray-500 text-sm mb-6">High-performance request processing optimized for speed and reliability</p>
+                    <div class="space-y-3">
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8"><svg class="w-4 h-4 text-aegis-teal" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">Pingora Proxy (Rust)</div>
-                                <div class="text-sm text-gray-400">Multi-threaded reverse proxy with work-stealing, connection reuse, TLS 1.3 termination</div>
+                                <div class="font-semibold text-white text-sm">Pingora Proxy (Rust)</div>
+                                <div class="text-xs text-gray-500">Multi-threaded reverse proxy with work-stealing, connection reuse, TLS 1.3</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="currentColor" viewBox="0 0 24 24">
-                                    <rect x="3" y="3" width="18" height="18" rx="2"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8"><svg class="w-4 h-4 text-aegis-teal" fill="currentColor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">DragonflyDB Cache</div>
-                                <div class="text-sm text-gray-400">Multi-threaded Redis replacement with 25x throughput, Dash-table indexing</div>
+                                <div class="font-semibold text-white text-sm">DragonflyDB Cache</div>
+                                <div class="text-xs text-gray-500">Multi-threaded Redis replacement with 25x throughput</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8"><svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">Cilium (eBPF/XDP)</div>
-                                <div class="text-sm text-gray-400">Kernel-level DDoS mitigation, drops malicious packets at NIC driver (nanosecond latency)</div>
+                                <div class="font-semibold text-white text-sm">Cilium (eBPF/XDP)</div>
+                                <div class="text-xs text-gray-500">Kernel-level DDoS mitigation at NIC driver (nanosecond latency)</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-teal/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-teal/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-teal/8"><svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">Coraza WAF (Wasm)</div>
-                                <div class="text-sm text-gray-400">OWASP CRS-compatible firewall in isolated sandbox, protects against SQLi, XSS, Layer 7 attacks</div>
+                                <div class="font-semibold text-white text-sm">Coraza WAF (Wasm)</div>
+                                <div class="text-xs text-gray-500">OWASP CRS-compatible firewall in isolated sandbox</div>
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Control Plane -->
-                <div class="bg-darkGrey/50 rounded-2xl border border-aegis-cyan/30 p-8">
-                    <h3 class="text-3xl font-bold mb-6 flex items-center">
-                        <span class="w-3 h-3 bg-aegis-cyan rounded-full mr-3"></span>
+                <div class="reveal reveal-delay-1 card p-7">
+                    <h3 class="heading-md text-white text-xl mb-2 flex items-center gap-2">
+                        <span class="w-2 h-2 bg-aegis-cyan rounded-full"></span>
                         The Control Plane
                     </h3>
-                    <p class="text-gray-400 mb-6 leading-relaxed">
-                        Orchestration and state management with fault isolation
-                    </p>
-                    <div class="space-y-4">
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="currentColor" viewBox="0 0 24 24">
-                                    <circle cx="12" cy="12" r="10"/>
-                                </svg>
-                            </div>
+                    <p class="text-gray-500 text-sm mb-6">Orchestration and state management with fault isolation</p>
+                    <div class="space-y-3">
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8"><svg class="w-4 h-4 text-aegis-cyan" fill="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">K3s (Lightweight K8s)</div>
-                                <div class="text-sm text-gray-400">Single <100MB binary, manages River, DragonflyDB, BIRD across global fleet</div>
+                                <div class="font-semibold text-white text-sm">K3s (Lightweight K8s)</div>
+                                <div class="text-xs text-gray-500">Single &lt;100MB binary for managing the global fleet</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8"><svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">FluxCD + Flagger</div>
-                                <div class="text-sm text-gray-400">GitOps config sync, progressive canary deployments with auto-rollback on errors</div>
+                                <div class="font-semibold text-white text-sm">FluxCD + Flagger</div>
+                                <div class="text-xs text-gray-500">GitOps config sync, canary deployments with auto-rollback</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8"><svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16V4m0 0L3 8m4-4l4 4m6 0v12m0 0l4-4m-4 4l-4-4"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">CRDTs + NATS JetStream</div>
-                                <div class="text-sm text-gray-400">Eventual consistency for distributed state, active-active replication, leaf nodes operate autonomously</div>
+                                <div class="font-semibold text-white text-sm">CRDTs + NATS JetStream</div>
+                                <div class="text-xs text-gray-500">Eventual consistency, active-active replication</div>
                             </div>
                         </div>
-
-                        <div class="flex items-start space-x-4 p-4 rounded-lg hover:bg-aegis-cyan/5 transition-colors">
-                            <div class="flex-shrink-0 w-12 h-12 bg-aegis-cyan/10 rounded-lg flex items-center justify-center">
-                                <svg class="w-6 h-6 text-aegis-cyan" fill="currentColor" viewBox="0 0 24 24">
-                                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                                </svg>
-                            </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg hover:bg-white/[0.02] transition-colors">
+                            <div class="icon-box w-9 h-9 bg-aegis-cyan/8"><svg class="w-4 h-4 text-aegis-cyan" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg></div>
                             <div>
-                                <div class="font-bold text-white mb-1">Solana Blockchain</div>
-                                <div class="text-sm text-gray-400">Node registry, staking, rewards, DAO governance - all on-chain with fast, low-cost transactions</div>
+                                <div class="font-semibold text-white text-sm">Solana Blockchain</div>
+                                <div class="text-xs text-gray-500">Node registry, staking, rewards, DAO governance on-chain</div>
                             </div>
                         </div>
                     </div>
@@ -747,643 +645,357 @@
         </div>
     </section>
 
-    <!-- Performance Benchmarks Section -->
-    <section id="performance" class="py-20 px-4 bg-darkGrey/30">
+    <!-- ==================== PERFORMANCE BENCHMARKS ==================== -->
+    <section id="performance" class="py-28 px-5 sm:px-8 section-gradient">
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Performance Benchmarks</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Sub-microsecond response times. Benchmarked with Criterion.
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Benchmarked with Criterion</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Performance</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Sub-microsecond response times across every critical path</p>
+            </div>
 
-            <!-- Performance Stats Grid -->
-            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-                <!-- WAF Analysis -->
-                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-teal/30 hover:border-aegis-teal/60 transition-all text-center">
-                    <div class="w-12 h-12 bg-aegis-teal/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
-                        <svg class="w-6 h-6 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
-                        </svg>
-                    </div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-teal mb-2">1.5μs</div>
-                    <div class="text-white font-semibold mb-1">WAF Analysis</div>
-                    <div class="text-sm text-gray-400">66x faster than 100μs target</div>
+            <!-- Headline Metrics -->
+            <div class="reveal grid grid-cols-2 lg:grid-cols-4 gap-4 mb-12">
+                <div class="card p-6 text-center">
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-teal mb-1">1.5<span class="text-lg">&#956;s</span></div>
+                    <div class="text-white text-sm font-semibold mb-1">WAF Analysis</div>
+                    <span class="badge badge-complete text-[10px]">66x faster than target</span>
                 </div>
-
-                <!-- Route Matching -->
-                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-cyan/30 hover:border-aegis-cyan/60 transition-all text-center">
-                    <div class="w-12 h-12 bg-aegis-cyan/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
-                        <svg class="w-6 h-6 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
-                        </svg>
-                    </div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-cyan mb-2">65ns</div>
-                    <div class="text-white font-semibold mb-1">Route Matching</div>
-                    <div class="text-sm text-gray-400">Pre-compiled regex patterns</div>
+                <div class="card p-6 text-center">
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-cyan mb-1">65<span class="text-lg">ns</span></div>
+                    <div class="text-white text-sm font-semibold mb-1">Route Matching</div>
+                    <span class="badge badge-complete text-[10px]">Pre-compiled regex</span>
                 </div>
-
-                <!-- CRDT Operations -->
-                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-lightblue/30 hover:border-aegis-lightblue/60 transition-all text-center">
-                    <div class="w-12 h-12 bg-aegis-lightblue/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
-                        <svg class="w-6 h-6 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-                        </svg>
-                    </div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-lightblue mb-2">23ns</div>
-                    <div class="text-white font-semibold mb-1">CRDT Increment</div>
-                    <div class="text-sm text-gray-400">Distributed state sync</div>
+                <div class="card p-6 text-center">
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-lightblue mb-1">23<span class="text-lg">ns</span></div>
+                    <div class="text-white text-sm font-semibold mb-1">CRDT Increment</div>
+                    <span class="badge badge-complete text-[10px]">Distributed state sync</span>
                 </div>
-
-                <!-- Cache Operations -->
-                <div class="p-6 bg-darkGrey/80 rounded-2xl border border-aegis-purple/30 hover:border-aegis-purple/60 transition-all text-center">
-                    <div class="w-12 h-12 bg-aegis-purple/20 rounded-xl mx-auto mb-4 flex items-center justify-center">
-                        <svg class="w-6 h-6 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
-                        </svg>
-                    </div>
-                    <div class="text-3xl md:text-4xl font-bold text-aegis-purple mb-2">103ns</div>
-                    <div class="text-white font-semibold mb-1">Cache Key Gen</div>
-                    <div class="text-sm text-gray-400">DragonflyDB operations</div>
+                <div class="card p-6 text-center">
+                    <div class="text-3xl md:text-4xl font-display font-800 text-aegis-purple mb-1">103<span class="text-lg">ns</span></div>
+                    <div class="text-white text-sm font-semibold mb-1">Cache Key Gen</div>
+                    <span class="badge badge-complete text-[10px]">DragonflyDB ops</span>
                 </div>
             </div>
 
-            <!-- Benchmark Details Table -->
-            <div class="max-w-4xl mx-auto bg-darkGrey/50 rounded-2xl border border-aegis-teal/20 overflow-hidden">
-                <div class="px-6 py-4 bg-darkGrey/80 border-b border-aegis-teal/20">
-                    <h3 class="text-xl font-bold text-white">Sprint 25 Benchmark Results</h3>
-                    <p class="text-sm text-gray-400 mt-1">Criterion benchmarks on Apple M-series, compiled with --release</p>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full">
-                        <thead class="bg-darkGrey/30">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-sm font-semibold text-gray-300">Operation</th>
-                                <th class="px-6 py-3 text-right text-sm font-semibold text-gray-300">Time</th>
-                                <th class="px-6 py-3 text-right text-sm font-semibold text-gray-300">Target</th>
-                                <th class="px-6 py-3 text-center text-sm font-semibold text-gray-300">Status</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-aegis-teal/10">
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">WAF Clean Request</td>
-                                <td class="px-6 py-4 text-right text-aegis-teal font-mono">1.51 μs</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;100 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">66x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">WAF SQLi Detection</td>
-                                <td class="px-6 py-4 text-right text-aegis-teal font-mono">2.44 μs</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;100 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">41x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">Compiled Route Match (Regex)</td>
-                                <td class="px-6 py-4 text-right text-aegis-cyan font-mono">65 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">15x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">Compiled Route Match (Exact)</td>
-                                <td class="px-6 py-4 text-right text-aegis-cyan font-mono">18 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">55x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">CRDT Increment</td>
-                                <td class="px-6 py-4 text-right text-aegis-lightblue font-mono">23 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">43x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">CRDT Merge</td>
-                                <td class="px-6 py-4 text-right text-aegis-lightblue font-mono">46 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">21x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">Cache Key Generation</td>
-                                <td class="px-6 py-4 text-right text-aegis-purple font-mono">103 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">9x FASTER</span></td>
-                            </tr>
-                            <tr class="hover:bg-aegis-teal/5 transition-colors">
-                                <td class="px-6 py-4 text-white">Cache-Control Parse</td>
-                                <td class="px-6 py-4 text-right text-aegis-purple font-mono">269 ns</td>
-                                <td class="px-6 py-4 text-right text-gray-400 font-mono">&lt;1 μs</td>
-                                <td class="px-6 py-4 text-center"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs font-semibold">3x FASTER</span></td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <div class="px-6 py-4 bg-darkGrey/30 border-t border-aegis-teal/20">
-                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                        <div class="text-sm text-gray-400">
-                            <span class="text-aegis-teal font-semibold">All targets exceeded.</span> Benchmarks run on every PR via GitHub Actions CI.
+            <!-- Benchmark Detail -->
+            <div class="reveal max-w-4xl mx-auto bench-group">
+                <div class="card overflow-hidden">
+                    <div class="px-6 py-4 border-b border-white/[0.04]">
+                        <h3 class="heading-md text-white text-lg">Sprint 25 Benchmark Results</h3>
+                        <p class="text-xs text-gray-500 mt-1">Criterion benchmarks on Apple M-series, compiled with --release</p>
+                    </div>
+                    <div class="divide-y divide-white/[0.03]">
+                        <!-- Benchmark Rows — mobile: stacked, desktop: grid -->
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">WAF Clean Request</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-teal">1.51 &#956;s</span><span class="badge badge-complete text-[10px]">66x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 98%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">WAF Clean Request</div><div class="col-span-2 text-sm text-right font-mono text-aegis-teal">1.51 &#956;s</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 98%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">66x</span></div></div>
                         </div>
-                        <a href="https://github.com/FunwayHQ/project-aegis/blob/main/node/benches/performance.rs" target="_blank" rel="noopener noreferrer" class="text-sm text-aegis-cyan hover:text-white transition-colors font-medium">
-                            View Benchmark Code →
-                        </a>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">WAF SQLi Detection</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-teal">2.44 &#956;s</span><span class="badge badge-complete text-[10px]">41x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 95%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">WAF SQLi Detection</div><div class="col-span-2 text-sm text-right font-mono text-aegis-teal">2.44 &#956;s</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 95%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">41x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">Route Match (Regex)</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-cyan">65 ns</span><span class="badge badge-complete text-[10px]">15x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 85%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">Route Match (Regex)</div><div class="col-span-2 text-sm text-right font-mono text-aegis-cyan">65 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 85%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">15x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">Route Match (Exact)</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-cyan">18 ns</span><span class="badge badge-complete text-[10px]">55x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 97%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">Route Match (Exact)</div><div class="col-span-2 text-sm text-right font-mono text-aegis-cyan">18 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 97%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">55x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">CRDT Increment</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-lightblue">23 ns</span><span class="badge badge-complete text-[10px]">43x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 93%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">CRDT Increment</div><div class="col-span-2 text-sm text-right font-mono text-aegis-lightblue">23 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 93%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">43x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">CRDT Merge</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-lightblue">46 ns</span><span class="badge badge-complete text-[10px]">21x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 88%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">CRDT Merge</div><div class="col-span-2 text-sm text-right font-mono text-aegis-lightblue">46 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 88%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">21x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">Cache Key Gen</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-purple">103 ns</span><span class="badge badge-complete text-[10px]">9x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 75%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">Cache Key Generation</div><div class="col-span-2 text-sm text-right font-mono text-aegis-purple">103 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 75%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">9x</span></div></div>
+                        </div>
+                        <div class="px-4 sm:px-6 py-4 hover:bg-white/[0.015] transition-colors">
+                            <div class="sm:hidden"><div class="flex items-center justify-between mb-2"><span class="text-sm text-white">Cache-Ctrl Parse</span><span class="flex items-center gap-2"><span class="text-sm font-mono text-aegis-purple">269 ns</span><span class="badge badge-complete text-[10px]">3x</span></span></div><div class="bench-bar"><div class="bench-fill" style="width: 60%"></div></div></div>
+                            <div class="hidden sm:grid sm:grid-cols-12 sm:items-center"><div class="col-span-5 text-sm text-white">Cache-Control Parse</div><div class="col-span-2 text-sm text-right font-mono text-aegis-purple">269 ns</div><div class="col-span-3 px-4"><div class="bench-bar"><div class="bench-fill" style="width: 60%"></div></div></div><div class="col-span-2 text-right"><span class="badge badge-complete text-[10px]">3x</span></div></div>
+                        </div>
+                    </div>
+                    <div class="px-6 py-4 border-t border-white/[0.04] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <span class="text-xs text-gray-500"><span class="text-aegis-teal font-semibold">All targets exceeded.</span> Benchmarks run on every PR via CI.</span>
+                        <a href="https://github.com/FunwayHQ/project-aegis/blob/main/node/benches/performance.rs" target="_blank" rel="noopener noreferrer" class="text-xs text-aegis-cyan hover:text-white transition-colors font-medium">View Benchmark Code &rarr;</a>
                     </div>
                 </div>
             </div>
 
             <!-- Key Optimizations -->
-            <div class="mt-12 grid md:grid-cols-3 gap-6">
-                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-teal/20">
-                    <div class="flex items-center mb-3">
-                        <div class="w-8 h-8 bg-aegis-teal/20 rounded-lg flex items-center justify-center mr-3">
-                            <svg class="w-4 h-4 text-aegis-teal" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/>
-                            </svg>
-                        </div>
-                        <h4 class="font-bold text-white">Pre-compiled Regex</h4>
+            <div class="reveal grid md:grid-cols-3 gap-4 mt-10 max-w-4xl mx-auto">
+                <div class="card-sm p-5">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-4 h-4 text-aegis-teal" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M11.3 1.046A1 1 0 0112 2v5h4a1 1 0 01.82 1.573l-7 10A1 1 0 018 18v-5H4a1 1 0 01-.82-1.573l7-10a1 1 0 011.12-.38z" clip-rule="evenodd"/></svg>
+                        <span class="font-semibold text-white text-sm">Pre-compiled Regex</span>
                     </div>
-                    <p class="text-sm text-gray-400">Route patterns compiled once at load, cached with Arc&lt;Regex&gt;. 1,770x faster than runtime compilation.</p>
+                    <p class="text-xs text-gray-500">Route patterns compiled once at load. 1,770x faster than runtime compilation.</p>
                 </div>
-
-                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-cyan/20">
-                    <div class="flex items-center mb-3">
-                        <div class="w-8 h-8 bg-aegis-cyan/20 rounded-lg flex items-center justify-center mr-3">
-                            <svg class="w-4 h-4 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20">
-                                <path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/>
-                                <path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/>
-                                <path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/>
-                            </svg>
-                        </div>
-                        <h4 class="font-bold text-white">Lock-Free CRDTs</h4>
+                <div class="card-sm p-5">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-4 h-4 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20"><path d="M3 12v3c0 1.657 3.134 3 7 3s7-1.343 7-3v-3c0 1.657-3.134 3-7 3s-7-1.343-7-3z"/><path d="M3 7v3c0 1.657 3.134 3 7 3s7-1.343 7-3V7c0 1.657-3.134 3-7 3S3 8.657 3 7z"/><path d="M17 5c0 1.657-3.134 3-7 3S3 6.657 3 5s3.134-3 7-3 7 1.343 7 3z"/></svg>
+                        <span class="font-semibold text-white text-sm">Lock-Free CRDTs</span>
                     </div>
-                    <p class="text-sm text-gray-400">Conflict-free replicated data types enable sub-microsecond distributed state operations.</p>
+                    <p class="text-xs text-gray-500">Conflict-free replicated data types for sub-microsecond distributed state.</p>
                 </div>
-
-                <div class="p-6 bg-darkGrey/50 rounded-xl border border-aegis-purple/20">
-                    <div class="flex items-center mb-3">
-                        <div class="w-8 h-8 bg-aegis-purple/20 rounded-lg flex items-center justify-center mr-3">
-                            <svg class="w-4 h-4 text-aegis-purple" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/>
-                            </svg>
-                        </div>
-                        <h4 class="font-bold text-white">Rust + Wasm</h4>
+                <div class="card-sm p-5">
+                    <div class="flex items-center gap-2 mb-2">
+                        <svg class="w-4 h-4 text-aegis-purple" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M12.316 3.051a1 1 0 01.633 1.265l-4 12a1 1 0 11-1.898-.632l4-12a1 1 0 011.265-.633zM5.707 6.293a1 1 0 010 1.414L3.414 10l2.293 2.293a1 1 0 11-1.414 1.414l-3-3a1 1 0 010-1.414l3-3a1 1 0 011.414 0zm8.586 0a1 1 0 011.414 0l3 3a1 1 0 010 1.414l-3 3a1 1 0 11-1.414-1.414L16.586 10l-2.293-2.293a1 1 0 010-1.414z" clip-rule="evenodd"/></svg>
+                        <span class="font-semibold text-white text-sm">Rust + Wasm</span>
                     </div>
-                    <p class="text-sm text-gray-400">Memory-safe code with zero-cost abstractions. WAF runs in isolated Wasm sandbox with fuel limits.</p>
+                    <p class="text-xs text-gray-500">Memory-safe code with zero-cost abstractions. WAF in isolated Wasm sandbox.</p>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- AEGIS Economy Section -->
-    <section id="tokenomics" class="py-20 px-4">
+    <!-- ==================== TOKENOMICS ==================== -->
+    <section id="tokenomics" class="py-28 px-5 sm:px-8">
+        <div class="section-line mb-28"></div>
         <div class="max-w-7xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">$AEGIS Economy</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Sustainable tokenomics powering the decentralized edge
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Token Economy</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">$AEGIS Economy</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Sustainable tokenomics powering the decentralized edge</p>
+            </div>
 
-            <!-- Tokenomics Flow -->
-            <div class="max-w-4xl mx-auto mb-16">
-                <div class="grid md:grid-cols-3 gap-6 md:gap-8">
-                    <!-- Service Consumers -->
-                    <div class="p-6 bg-darkGrey/80 rounded-2xl border-2 border-aegis-purple">
-                        <div class="text-center">
-                            <div class="w-16 h-16 bg-aegis-purple/20 rounded-full mx-auto mb-4 flex items-center justify-center">
-                                <svg class="w-8 h-8 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/>
-                                </svg>
-                            </div>
-                            <div class="font-bold text-white text-lg mb-2">Service Consumers</div>
-                            <div class="text-sm text-gray-400 mb-3">Developers & Enterprises</div>
-                            <div class="text-xs text-aegis-purple">Pay $AEGIS for CDN, DDoS protection, edge compute</div>
+            <!-- Economy Flow -->
+            <div class="reveal max-w-4xl mx-auto mb-16">
+                <div class="grid md:grid-cols-3 gap-5">
+                    <div class="card p-6 text-center border-aegis-indigo/30">
+                        <div class="w-14 h-14 bg-aegis-indigo/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"/></svg>
                         </div>
+                        <div class="font-semibold text-white mb-1">Service Consumers</div>
+                        <div class="text-xs text-gray-500 mb-3">Developers &amp; Enterprises</div>
+                        <div class="text-[11px] text-aegis-purple/80">Pay $AEGIS for CDN, DDoS protection, edge compute</div>
                     </div>
-
-                    <!-- Treasury -->
-                    <div class="p-6 bg-darkGrey/80 rounded-2xl border-2 border-aegis-teal">
-                        <div class="text-center">
-                            <div class="w-16 h-16 bg-aegis-teal/20 rounded-full mx-auto mb-4 flex items-center justify-center">
-                                <svg class="w-8 h-8 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>
-                                </svg>
-                            </div>
-                            <div class="font-bold text-white text-lg mb-2">DAO Treasury</div>
-                            <div class="text-sm text-gray-400 mb-3">Smart Contract Vault</div>
-                            <div class="text-xs text-aegis-teal">Distributes rewards, funds development, governance-controlled</div>
+                    <div class="card p-6 text-center border-aegis-teal/30">
+                        <div class="w-14 h-14 bg-aegis-teal/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg>
                         </div>
+                        <div class="font-semibold text-white mb-1">DAO Treasury</div>
+                        <div class="text-xs text-gray-500 mb-3">Smart Contract Vault</div>
+                        <div class="text-[11px] text-aegis-teal/80">Distributes rewards, funds development, governance</div>
                     </div>
-
-                    <!-- Node Operators -->
-                    <div class="p-6 bg-darkGrey/80 rounded-2xl border-2 border-aegis-cyan">
-                        <div class="text-center">
-                            <div class="w-16 h-16 bg-aegis-cyan/20 rounded-full mx-auto mb-4 flex items-center justify-center">
-                                <svg class="w-8 h-8 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/>
-                                </svg>
-                            </div>
-                            <div class="font-bold text-white text-lg mb-2">Node Operators</div>
-                            <div class="text-sm text-gray-400 mb-3">Hardware Contributors</div>
-                            <div class="text-xs text-aegis-cyan">Earn rewards for uptime, performance, and staking $AEGIS</div>
+                    <div class="card p-6 text-center border-aegis-cyan/30">
+                        <div class="w-14 h-14 bg-aegis-cyan/10 rounded-full mx-auto mb-4 flex items-center justify-center">
+                            <svg class="w-7 h-7 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
                         </div>
+                        <div class="font-semibold text-white mb-1">Node Operators</div>
+                        <div class="text-xs text-gray-500 mb-3">Hardware Contributors</div>
+                        <div class="text-[11px] text-aegis-cyan/80">Earn rewards for uptime, performance, staking</div>
                     </div>
                 </div>
-
-                <!-- Simple Flow Description -->
-                <div class="text-center mt-8 text-gray-400 text-sm">
-                    Service Consumers pay fees → Treasury distributes → Node Operators earn rewards → Ecosystem grows
+                <div class="text-center mt-6">
+                    <p class="text-xs text-gray-500">Consumers pay fees &rarr; Treasury distributes &rarr; Operators earn rewards &rarr; Ecosystem grows</p>
                 </div>
             </div>
 
             <!-- Token Stats -->
-            <div class="grid md:grid-cols-3 gap-8">
-                <div class="text-center p-8 bg-darkGrey/50 rounded-2xl border border-aegis-teal/20">
-                    <div class="text-5xl md:text-6xl font-bold gradient-text mb-4">1B</div>
-                    <div class="text-xl text-white font-semibold mb-2">Total Supply</div>
-                    <div class="text-gray-400">Fixed supply, deflationary mechanics</div>
+            <div class="reveal grid md:grid-cols-3 gap-5 mb-16">
+                <div class="card p-8 text-center">
+                    <div class="text-5xl font-display font-800 gradient-text mb-3">1B</div>
+                    <div class="text-white font-semibold mb-1">Total Supply</div>
+                    <div class="text-xs text-gray-500">Fixed supply, deflationary mechanics</div>
                 </div>
-                <div class="text-center p-8 bg-darkGrey/50 rounded-2xl border border-aegis-lightblue/20">
-                    <div class="text-5xl md:text-6xl font-bold text-aegis-lightblue mb-4">100</div>
-                    <div class="text-xl text-white font-semibold mb-2">Min Stake</div>
-                    <div class="text-gray-400">AEGIS tokens required to run a node</div>
+                <div class="card p-8 text-center">
+                    <div class="text-5xl font-display font-800 text-aegis-lightblue mb-3">100</div>
+                    <div class="text-white font-semibold mb-1">Min Stake</div>
+                    <div class="text-xs text-gray-500">AEGIS tokens to run a node</div>
                 </div>
-                <div class="text-center p-8 bg-darkGrey/50 rounded-2xl border border-aegis-purple/20">
-                    <div class="text-5xl md:text-6xl font-bold text-aegis-purple mb-4">7d</div>
-                    <div class="text-xl text-white font-semibold mb-2">Cooldown</div>
-                    <div class="text-gray-400">Unstaking period for security</div>
+                <div class="card p-8 text-center">
+                    <div class="text-5xl font-display font-800 text-aegis-purple mb-3">7d</div>
+                    <div class="text-white font-semibold mb-1">Cooldown</div>
+                    <div class="text-xs text-gray-500">Unstaking period for security</div>
                 </div>
             </div>
 
-            <!-- Smart Contracts Section -->
-            <div class="mt-16">
-                <h3 class="text-2xl md:text-3xl font-bold text-center mb-8">Smart Contracts on Solana Devnet</h3>
-                <div class="max-w-4xl mx-auto grid gap-4">
-                    <!-- Token Contract -->
-                    <div class="flex items-center justify-between p-4 bg-darkGrey/50 rounded-xl border border-aegis-teal/20 hover:border-aegis-teal/50 transition-colors">
-                        <div class="flex items-center space-x-4">
-                            <div class="w-10 h-10 bg-aegis-teal/20 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="font-semibold text-white">$AEGIS Token</div>
-                                <div class="text-sm text-gray-400">SPL Token Program</div>
-                            </div>
+            <!-- Smart Contracts -->
+            <div class="reveal max-w-4xl mx-auto">
+                <h3 class="heading-md text-white text-xl text-center mb-6">Smart Contracts on Solana Devnet</h3>
+                <div class="space-y-3">
+                    <div class="contract-row flex-col sm:flex-row gap-3 sm:gap-0">
+                        <div class="flex items-center gap-3">
+                            <div class="icon-box w-8 h-8 bg-aegis-teal/10"><svg class="w-4 h-4 text-aegis-teal" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></div>
+                            <div><div class="text-sm font-semibold text-white">$AEGIS Token</div><div class="text-[11px] text-gray-500">SPL Token Program</div></div>
                         </div>
-                        <a href="https://explorer.solana.com/address/9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-aegis-teal hover:text-aegis-cyan transition-colors truncate max-w-[180px] md:max-w-none">9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq</a>
+                        <a href="https://explorer.solana.com/address/9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-aegis-teal hover:text-aegis-cyan transition-colors truncate max-w-[260px] sm:max-w-none">9uVLmgqJz3nYcCxHVSAJA8bi6412LEZ5uGM5yguvKHRq</a>
                     </div>
-
-                    <!-- Registry Contract -->
-                    <div class="flex items-center justify-between p-4 bg-darkGrey/50 rounded-xl border border-aegis-lightblue/20 hover:border-aegis-lightblue/50 transition-colors">
-                        <div class="flex items-center space-x-4">
-                            <div class="w-10 h-10 bg-aegis-lightblue/20 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="font-semibold text-white">Node Registry</div>
-                                <div class="text-sm text-gray-400">On-chain node registration</div>
-                            </div>
+                    <div class="contract-row flex-col sm:flex-row gap-3 sm:gap-0">
+                        <div class="flex items-center gap-3">
+                            <div class="icon-box w-8 h-8 bg-aegis-lightblue/10"><svg class="w-4 h-4 text-aegis-lightblue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg></div>
+                            <div><div class="text-sm font-semibold text-white">Node Registry</div><div class="text-[11px] text-gray-500">On-chain registration</div></div>
                         </div>
-                        <a href="https://explorer.solana.com/address/4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-aegis-lightblue hover:text-aegis-cyan transition-colors truncate max-w-[180px] md:max-w-none">4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6</a>
+                        <a href="https://explorer.solana.com/address/4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-aegis-lightblue hover:text-aegis-cyan transition-colors truncate max-w-[260px] sm:max-w-none">4JRL443DxceXsgqqxmBt4tD8TecBBo9Xr5kTLNRupiG6</a>
                     </div>
-
-                    <!-- Staking Contract -->
-                    <div class="flex items-center justify-between p-4 bg-darkGrey/50 rounded-xl border border-aegis-cyan/20 hover:border-aegis-cyan/50 transition-colors">
-                        <div class="flex items-center space-x-4">
-                            <div class="w-10 h-10 bg-aegis-cyan/20 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="font-semibold text-white">Staking</div>
-                                <div class="text-sm text-gray-400">Security bonds & rewards</div>
-                            </div>
+                    <div class="contract-row flex-col sm:flex-row gap-3 sm:gap-0">
+                        <div class="flex items-center gap-3">
+                            <div class="icon-box w-8 h-8 bg-aegis-cyan/10"><svg class="w-4 h-4 text-aegis-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg></div>
+                            <div><div class="text-sm font-semibold text-white">Staking</div><div class="text-[11px] text-gray-500">Security bonds &amp; rewards</div></div>
                         </div>
-                        <a href="https://explorer.solana.com/address/EpkFmmfbR8HVDyJ1EZoWjM9WFuVDt4kXmVTvgkzxvr1N?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-aegis-cyan hover:text-white transition-colors truncate max-w-[180px] md:max-w-none">EpkFmmfbR8HVDyJ1EZoWjM9WFuVDt4kXmVTvgkzxvr1N</a>
+                        <a href="https://explorer.solana.com/address/EpkFmmfbR8HVDyJ1EZoWjM9WFuVDt4kXmVTvgkzxvr1N?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-aegis-cyan hover:text-white transition-colors truncate max-w-[260px] sm:max-w-none">EpkFmmfbR8HVDyJ1EZoWjM9WFuVDt4kXmVTvgkzxvr1N</a>
                     </div>
-
-                    <!-- Rewards Contract -->
-                    <div class="flex items-center justify-between p-4 bg-darkGrey/50 rounded-xl border border-aegis-purple/20 hover:border-aegis-purple/50 transition-colors">
-                        <div class="flex items-center space-x-4">
-                            <div class="w-10 h-10 bg-aegis-purple/20 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="font-semibold text-white">Rewards</div>
-                                <div class="text-sm text-gray-400">Performance-based distribution</div>
-                            </div>
+                    <div class="contract-row flex-col sm:flex-row gap-3 sm:gap-0">
+                        <div class="flex items-center gap-3">
+                            <div class="icon-box w-8 h-8 bg-aegis-purple/10"><svg class="w-4 h-4 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v13m0-13V6a2 2 0 112 2h-2zm0 0V5.5A2.5 2.5 0 109.5 8H12zm-7 4h14M5 12a2 2 0 110-4h14a2 2 0 110 4M5 12v7a2 2 0 002 2h10a2 2 0 002-2v-7"/></svg></div>
+                            <div><div class="text-sm font-semibold text-white">Rewards</div><div class="text-[11px] text-gray-500">Performance distribution</div></div>
                         </div>
-                        <a href="https://explorer.solana.com/address/8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-aegis-purple hover:text-aegis-cyan transition-colors truncate max-w-[180px] md:max-w-none">8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK</a>
+                        <a href="https://explorer.solana.com/address/8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-aegis-purple hover:text-aegis-cyan transition-colors truncate max-w-[260px] sm:max-w-none">8nr66XQcjr11HhMP9NU6d8j5iwX3yo59VDawQSmPWgnK</a>
                     </div>
-
-                    <!-- DAO Governance Contract -->
-                    <div class="flex items-center justify-between p-4 bg-darkGrey/50 rounded-xl border border-aegis-mediumblue/20 hover:border-aegis-mediumblue/50 transition-colors">
-                        <div class="flex items-center space-x-4">
-                            <div class="w-10 h-10 bg-aegis-mediumblue/20 rounded-lg flex items-center justify-center">
-                                <svg class="w-5 h-5 text-aegis-mediumblue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/>
-                                </svg>
-                            </div>
-                            <div>
-                                <div class="font-semibold text-white">DAO Governance</div>
-                                <div class="text-sm text-gray-400">Proposals, voting, treasury</div>
-                            </div>
+                    <div class="contract-row flex-col sm:flex-row gap-3 sm:gap-0">
+                        <div class="flex items-center gap-3">
+                            <div class="icon-box w-8 h-8 bg-aegis-mediumblue/10"><svg class="w-4 h-4 text-aegis-mediumblue" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"/></svg></div>
+                            <div><div class="text-sm font-semibold text-white">DAO Governance</div><div class="text-[11px] text-gray-500">Proposals, voting, treasury</div></div>
                         </div>
-                        <a href="https://explorer.solana.com/address/9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-xs font-mono text-aegis-mediumblue hover:text-aegis-cyan transition-colors truncate max-w-[180px] md:max-w-none">9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz</a>
+                        <a href="https://explorer.solana.com/address/9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz?cluster=devnet" target="_blank" rel="noopener noreferrer" class="text-[11px] font-mono text-aegis-mediumblue hover:text-aegis-cyan transition-colors truncate max-w-[260px] sm:max-w-none">9zQDZPNyDqVxevUAwaWTGGvCGwLSpfvkMn6aDKx7x6hz</a>
                     </div>
                 </div>
-                <p class="text-center text-gray-400 text-sm mt-6">All contracts deployed and verified on Solana Devnet. Click any address to view on Solana Explorer.</p>
+                <p class="text-center text-xs text-gray-500 mt-5">All contracts deployed and verified on Solana Devnet. Click any address to view on Solana Explorer.</p>
             </div>
         </div>
     </section>
 
-    <!-- Roadmap Section -->
-    <section id="roadmap" class="py-20 px-4 bg-darkGrey/30">
+    <!-- ==================== ROADMAP ==================== -->
+    <section id="roadmap" class="py-28 px-5 sm:px-8 section-gradient">
         <div class="max-w-5xl mx-auto">
-            <h2 class="text-4xl md:text-5xl font-bold text-center mb-4">Development Roadmap</h2>
-            <p class="text-xl text-gray-400 text-center mb-16 max-w-2xl mx-auto">
-                Building the future of decentralized edge infrastructure
-            </p>
+            <div class="reveal text-center mb-16">
+                <p class="text-xs uppercase tracking-[0.2em] text-aegis-teal font-semibold mb-4">Progress</p>
+                <h2 class="heading-lg text-white text-4xl md:text-5xl mb-4">Development Roadmap</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">Building the future of decentralized edge infrastructure</p>
+            </div>
 
-            <div class="relative space-y-12">
+            <div class="reveal space-y-2">
                 <!-- Phase 1 -->
-                <div class="flex items-start">
-                    <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-full flex items-center justify-center">
-                            <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-                            </svg>
-                        </div>
-                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-teal to-aegis-lightblue opacity-30 mt-2"></div>
+                <div class="timeline-node pl-10 pb-10 relative">
+                    <div class="absolute left-0 top-1 w-6 h-6 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                        <svg class="w-3.5 h-3.5 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                     </div>
-                    <div class="flex-1 pb-12">
-                        <div class="flex items-center mb-3">
-                            <h3 class="text-2xl font-bold text-white mr-4">Phase 1: Foundation</h3>
-                            <span class="px-3 py-1 bg-aegis-teal/20 text-aegis-teal rounded-full text-sm font-semibold">✓ COMPLETE</span>
-                        </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 1-6 | 100% Complete</div>
-                        <div class="grid sm:grid-cols-2 gap-4">
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">5 Smart Contracts Deployed</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">600+ Tests Passing</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">HTTP/HTTPS Proxy with Caching</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">CLI Tool Integration</span>
-                            </div>
-                        </div>
+                    <div class="flex flex-wrap items-center gap-3 mb-3">
+                        <h3 class="heading-md text-white text-xl">Phase 1: Foundation</h3>
+                        <span class="badge badge-complete">COMPLETE</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-4">Sprints 1-6 | 100% Complete</p>
+                    <div class="grid sm:grid-cols-2 gap-2">
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>5 Smart Contracts Deployed</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>840+ Tests Passing</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>HTTP/HTTPS Proxy with Caching</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>CLI Tool Integration</div>
                     </div>
                 </div>
 
                 <!-- Phase 2 -->
-                <div class="flex items-start">
-                    <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-full flex items-center justify-center">
-                            <svg class="w-4 h-4 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-                            </svg>
-                        </div>
-                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-teal to-aegis-mediumblue opacity-50 mt-2"></div>
+                <div class="timeline-node pl-10 pb-10 relative">
+                    <div class="absolute left-0 top-1 w-6 h-6 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                        <svg class="w-3.5 h-3.5 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                     </div>
-                    <div class="flex-1 pb-12">
-                        <div class="flex items-center mb-3">
-                            <h3 class="text-2xl font-bold text-white mr-4">Phase 2: Security & State</h3>
-                            <span class="px-3 py-1 bg-aegis-teal/20 text-aegis-teal rounded-full text-sm font-semibold">✓ COMPLETE + FINAL POLISH</span>
-                        </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 7-13.5 | 100% Complete (8 of 8) | Protocol & State Integrity</div>
-                        <div class="grid sm:grid-cols-2 gap-4">
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">eBPF/XDP DDoS Protection (TCP+UDP)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">WAF with Body Inspection</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">Bot Management (Wasm)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">IP Spoofing Protection (X-Forwarded-For)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">P2P Threat Intel + Persistent Blocklist</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">CRDTs + NATS (Auto-Cleanup)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">Verifiable Analytics</span>
-                            </div>
-                        </div>
+                    <div class="flex flex-wrap items-center gap-3 mb-3">
+                        <h3 class="heading-md text-white text-xl">Phase 2: Security &amp; State</h3>
+                        <span class="badge badge-complete">COMPLETE</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-4">Sprints 7-12 | 100% Complete</p>
+                    <div class="grid sm:grid-cols-2 gap-2">
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>eBPF/XDP DDoS Protection</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>WAF with Body Inspection</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>P2P Threat Intelligence</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>CRDTs + NATS JetStream</div>
                     </div>
                 </div>
 
                 <!-- Phase 3 -->
-                <div class="flex items-start">
-                    <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-gradient-to-br from-aegis-teal to-aegis-cyan rounded-full flex items-center justify-center">
-                            <svg class="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
-                                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/>
-                            </svg>
-                        </div>
-                        <div class="w-0.5 h-full bg-gradient-to-b from-aegis-teal to-aegis-mediumblue opacity-30 mt-2"></div>
+                <div class="timeline-node pl-10 pb-10 relative">
+                    <div class="absolute left-0 top-1 w-6 h-6 rounded-full bg-aegis-teal/20 flex items-center justify-center">
+                        <svg class="w-3.5 h-3.5 text-aegis-cyan" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
                     </div>
-                    <div class="flex-1 pb-12">
-                        <div class="flex items-center mb-3">
-                            <h3 class="text-2xl font-bold text-white mr-4">Phase 3: Edge Compute & Governance</h3>
-                            <span class="px-3 py-1 bg-aegis-teal/20 text-aegis-teal rounded-full text-sm font-semibold">✓ COMPLETE</span>
-                        </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 13-19.5 | 100% Complete | Edge Functions + DAO + DDoS Dashboard</div>
-                        <div class="grid sm:grid-cols-2 gap-4">
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">Wasm Edge Functions Runtime</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">Route-based Module Dispatch</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">IPFS/Filecoin CDN Integration</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">DAO Governance Contracts</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">DAO SDK, CLI & dApp</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
-                                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
-                                </svg>
-                                <span class="text-gray-300">DDoS Protection Dashboard</span>
-                            </div>
-                        </div>
+                    <div class="flex flex-wrap items-center gap-3 mb-3">
+                        <h3 class="heading-md text-white text-xl">Phase 3: Edge Compute &amp; Governance</h3>
+                        <span class="badge badge-complete">COMPLETE</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-4">Sprints 13-19.7 | 100% Complete</p>
+                    <div class="grid sm:grid-cols-2 gap-2">
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>Wasm Edge Functions Runtime</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>Route-based Module Dispatch</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>IPFS/Filecoin CDN</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/></svg>DAO SDK, CLI &amp; dApp</div>
                     </div>
                 </div>
 
                 <!-- Phase 4 -->
-                <div class="flex items-start">
-                    <div class="flex flex-col items-center mr-6 mt-2">
-                        <div class="w-6 h-6 bg-aegis-purple rounded-full flex items-center justify-center">
-                            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                            </svg>
-                        </div>
+                <div class="pl-10 relative">
+                    <div class="absolute left-0 top-1 w-6 h-6 rounded-full bg-aegis-purple/20 flex items-center justify-center">
+                        <svg class="w-3.5 h-3.5 text-aegis-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
                     </div>
-                    <div class="flex-1">
-                        <div class="flex items-center mb-3">
-                            <h3 class="text-2xl font-bold text-white mr-4">Phase 4: Advanced Security & Launch</h3>
-                            <span class="px-3 py-1 bg-aegis-purple/30 text-aegis-purple rounded-full text-sm font-semibold">92% COMPLETE</span>
-                        </div>
-                        <div class="text-sm text-gray-400 mb-4">Sprints 19-30 | Cloudflare Parity + Mainnet</div>
-                        <div class="grid sm:grid-cols-2 gap-4">
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">TLS Fingerprinting (JA3/JA4)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">JavaScript Challenges (Turnstile-like)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">Behavioral Analysis & Trust Scoring</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">Enhanced WAF (OWASP CRS + ML)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">API Security Suite (JWT/OAuth)</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <div class="w-5 h-5 border-2 border-aegis-purple/50 rounded mt-0.5 flex-shrink-0"></div>
-                                <span class="text-gray-300">Security Audit & Hardening</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <svg class="w-5 h-5 text-aegis-teal mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                                </svg>
-                                <span class="text-gray-300">Performance Benchmarking</span>
-                            </div>
-                            <div class="flex items-start space-x-2">
-                                <div class="w-5 h-5 border-2 border-aegis-purple/50 rounded mt-0.5 flex-shrink-0"></div>
-                                <span class="text-gray-300">Mainnet Launch & TGE</span>
-                            </div>
-                        </div>
+                    <div class="flex flex-wrap items-center gap-3 mb-3">
+                        <h3 class="heading-md text-white text-xl">Phase 4: Advanced Security &amp; Launch</h3>
+                        <span class="badge badge-progress">92% COMPLETE</span>
+                    </div>
+                    <p class="text-xs text-gray-500 mb-4">Sprints 19-30 | Cloudflare Parity + Mainnet</p>
+                    <div class="grid sm:grid-cols-2 gap-2">
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>TLS Fingerprinting (JA3/JA4)</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>JavaScript Challenges</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Behavioral Analysis &amp; Trust</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Enhanced WAF (OWASP CRS + ML)</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>API Security Suite (JWT/OAuth)</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><svg class="w-4 h-4 text-aegis-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Performance Benchmarking</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><div class="w-4 h-4 border border-aegis-purple/40 rounded shrink-0"></div>Security Audit &amp; Hardening</div>
+                        <div class="flex items-center gap-2 text-sm text-gray-400"><div class="w-4 h-4 border border-aegis-purple/40 rounded shrink-0"></div>Mainnet Launch &amp; TGE</div>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- CTA Section -->
-    <section class="py-20 px-4 bg-gradient-to-r from-aegis-darkblue/30 via-aegis-purple/20 to-aegis-darkblue/30">
-        <div class="max-w-4xl mx-auto text-center">
-            <h2 class="text-4xl md:text-5xl font-bold mb-6 leading-tight">
-                Join the Decentralized<br/>Edge Revolution
-            </h2>
-            <p class="text-xl text-gray-300 mb-10 max-w-2xl mx-auto leading-relaxed">
-                Help build the future of internet infrastructure. Run a node, earn rewards, and be part of the community-owned network.
-            </p>
-            <div class="flex flex-col sm:flex-row gap-4 justify-center">
-                <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="px-8 py-4 bg-gradient-to-r from-aegis-teal to-aegis-cyan text-white rounded-lg font-semibold text-lg hover:shadow-lg hover:shadow-aegis-cyan/50 transition-all transform hover:scale-105">
-                    View on GitHub
-                </a>
-                <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="px-8 py-4 border-2 border-aegis-teal text-white rounded-lg font-semibold text-lg hover:bg-aegis-teal/10 transition-all transform hover:scale-105">
-                    Read Documentation
-                </a>
+    <!-- ==================== CTA ==================== -->
+    <section class="py-28 px-5 sm:px-8 relative overflow-hidden">
+        <!-- Gradient background -->
+        <div class="absolute inset-0 bg-gradient-to-br from-aegis-darkblue/20 via-aegis-indigo/10 to-aegis-teal/5" aria-hidden="true"></div>
+        <div class="glow-orb w-[600px] h-[600px] bg-aegis-teal/[0.03] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" aria-hidden="true"></div>
+
+        <div class="relative z-10 max-w-3xl mx-auto text-center">
+            <div class="reveal">
+                <h2 class="heading-xl text-white text-4xl md:text-6xl mb-6">
+                    Join the Decentralized<br>Edge Revolution
+                </h2>
+                <p class="text-lg text-gray-400 mb-10 max-w-xl mx-auto leading-relaxed">
+                    Help build the future of internet infrastructure. Run a node, earn rewards, and be part of the community-owned network.
+                </p>
+                <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="btn-primary text-base">
+                        View on GitHub
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+                    </a>
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="btn-outline text-base">
+                        Read Documentation
+                    </a>
+                </div>
             </div>
         </div>
     </section>
 
     </main>
-    <!-- End Main Content Landmark -->
 
-    <!-- Footer -->
-    <footer class="bg-white border-t border-gray-200 py-12 px-4">
+    <!-- ==================== FOOTER ==================== -->
+    <footer class="border-t border-white/[0.04] py-12 px-5 sm:px-8">
         <div class="max-w-7xl mx-auto">
-            <div class="flex flex-col md:flex-row justify-between items-center space-y-6 md:space-y-0">
-                <div class="flex items-center">
-                    <img src="images/AEGIS-logo.svg" alt="AEGIS" class="h-32 w-32 md:h-48 md:w-48" width="192" height="192">
-                </div>
-
-                <div class="flex flex-wrap justify-center gap-8">
-                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-aegis-teal transition-colors font-medium">GitHub</a>
-                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-aegis-teal transition-colors font-medium">Whitepaper</a>
-                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="text-gray-600 hover:text-aegis-teal transition-colors font-medium">Documentation</a>
-                    <a href="#roadmap" class="text-gray-600 hover:text-aegis-teal transition-colors font-medium">Roadmap</a>
+            <div class="flex flex-col md:flex-row justify-between items-center gap-8">
+                <a href="#" class="shrink-0">
+                    <img src="images/AEGIS-logo.svg" alt="AEGIS" class="h-20 w-20 md:h-32 md:w-32 opacity-60 hover:opacity-100 transition-opacity" width="128" height="128">
+                </a>
+                <div class="flex flex-wrap justify-center gap-6">
+                    <a href="https://github.com/FunwayHQ/project-aegis" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-aegis-teal transition-colors text-sm font-medium">GitHub</a>
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/WHITEPAPER.md" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-aegis-teal transition-colors text-sm font-medium">Whitepaper</a>
+                    <a href="https://github.com/FunwayHQ/project-aegis/blob/main/README.md" target="_blank" rel="noopener noreferrer" class="text-gray-500 hover:text-aegis-teal transition-colors text-sm font-medium">Documentation</a>
+                    <a href="#roadmap" class="text-gray-500 hover:text-aegis-teal transition-colors text-sm font-medium">Roadmap</a>
                 </div>
             </div>
-
-            <div class="mt-12 pt-8 border-t border-gray-200 text-center">
-                <p class="text-gray-600">
-                    Web3-native decentralized edge network powered by blockchain technology
-                </p>
-                <p class="text-gray-500 text-sm mt-4">
-                    © 2025 AEGIS. Decentralized and community-owned. Built with Rust, Solana, and ❤️
-                </p>
+            <div class="mt-10 pt-8 border-t border-white/[0.04] text-center">
+                <p class="text-gray-500 text-sm">Web3-native decentralized edge network powered by blockchain technology</p>
+                <p class="text-gray-600 text-xs mt-3">&copy; 2025 AEGIS. Decentralized and community-owned. Built with Rust, Solana, and care.</p>
             </div>
         </div>
     </footer>
